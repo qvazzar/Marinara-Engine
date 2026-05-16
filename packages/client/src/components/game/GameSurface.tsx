@@ -2153,6 +2153,7 @@ export function GameSurface({
   const [pendingAssetGeneration, setPendingAssetGeneration] = useState<GameAssetGenerationPayload | null>(null);
   const [assetGenerationBlocksScene, setAssetGenerationBlocksScene] = useState(false);
   const [assetGenerationFailed, setAssetGenerationFailed] = useState(false);
+  const [failedNpcAvatarNames, setFailedNpcAvatarNames] = useState<Set<string>>(() => new Set());
   const [imagePromptReviewItems, setImagePromptReviewItems] = useState<GameImagePromptReviewItem[]>([]);
   const [imagePromptReviewSubmitting, setImagePromptReviewSubmitting] = useState(false);
   const imagePromptReviewResolveRef = useRef<((overrides: GameImagePromptOverride[] | null) => void) | null>(null);
@@ -2852,6 +2853,7 @@ export function GameSurface({
       sceneAssetNpcs,
       npcAvatarLookup,
       npcsNeedingAvatars,
+      failedNpcAvatarNames,
     });
   }, [
     activeChatId,
@@ -2859,6 +2861,7 @@ export function GameSurface({
     chatMeta.gameSceneBackground,
     currentBackground,
     gameImageGenerationEnabled,
+    failedNpcAvatarNames,
     npcAvatarLookup,
     npcsNeedingAvatars,
     sceneAssetNpcs,
@@ -2869,6 +2872,28 @@ export function GameSurface({
   useEffect(() => {
     autoAssetGenerationKeyRef.current = null;
   }, [activeChatId]);
+
+  const clearFailedNpcAvatars = useCallback((names: Iterable<string>) => {
+    const normalizedNames = new Set([...names].map(normalizeSceneAssetName).filter(Boolean));
+    if (normalizedNames.size === 0) return;
+    setFailedNpcAvatarNames((current) => {
+      let modified = false;
+      const next = new Set(current);
+      for (const name of normalizedNames) {
+        if (next.delete(name)) modified = true;
+      }
+      return modified ? next : current;
+    });
+  }, []);
+
+  const handleNpcPortraitLoadError = useCallback((npcName: string) => {
+    const normalizedName = normalizeSceneAssetName(npcName);
+    if (!normalizedName) return;
+    setFailedNpcAvatarNames((current) => {
+      if (current.has(normalizedName)) return current;
+      return new Set(current).add(normalizedName);
+    });
+  }, []);
 
   const canRetryTurn = !!latestAssistantMsg?.id && !isStreaming;
   const canRetryScene = !!latestAssistantMsg?.content && !isStreaming && !sceneAnalysis.isPending;
@@ -4006,9 +4031,10 @@ export function GameSurface({
       }
       if (res.generatedNpcAvatars?.length) {
         useGameModeStore.getState().patchNpcAvatars(res.generatedNpcAvatars);
+        clearFailedNpcAvatars(res.generatedNpcAvatars.map((avatar) => avatar.name));
       }
     },
-    [fetchManifest, installGeneratedIllustration],
+    [clearFailedNpcAvatars, fetchManifest, installGeneratedIllustration],
   );
 
   async function applySceneResult(result: import("@marinara-engine/shared").SceneAnalysis, msg: { id: string }) {
@@ -4132,6 +4158,7 @@ export function GameSurface({
     }
     if (result.generatedNpcAvatars?.length) {
       useGameModeStore.getState().patchNpcAvatars(result.generatedNpcAvatars);
+      clearFailedNpcAvatars(result.generatedNpcAvatars.map((avatar) => avatar.name));
     }
 
     const manifest = useGameAssetStore.getState().manifest;
@@ -4808,12 +4835,13 @@ export function GameSurface({
         });
 
         useGameModeStore.getState().patchNpcAvatars([{ name: targetNpc.name, avatarUrl: response.avatarPath }]);
+        clearFailedNpcAvatars([targetNpc.name]);
         toast.success(`${targetNpc.name} portrait updated.`);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : `Failed to update ${npcName} portrait.`);
       }
     },
-    [activeChatId, updateChatMetadata],
+    [activeChatId, clearFailedNpcAvatars, updateChatMetadata],
   );
 
   const handleNpcPortraitGenerate = useCallback(
@@ -4863,6 +4891,7 @@ export function GameSurface({
           (avatar) => avatar.name.trim().toLowerCase() === targetNpc.name.trim().toLowerCase(),
         );
         if (generated) {
+          clearFailedNpcAvatars([targetNpc.name]);
           toast.success(`${targetNpc.name} portrait generated.`);
         } else {
           toast.error(`No portrait was generated for ${targetNpc.name}.`);
@@ -4882,6 +4911,7 @@ export function GameSurface({
       applyGeneratedAssets,
       chatMeta.enableSpriteGeneration,
       chatMeta.gameImageConnectionId,
+      clearFailedNpcAvatars,
       runGameAssetGeneration,
     ],
   );
@@ -8272,6 +8302,7 @@ export function GameSurface({
                           onReadable={handleReadable}
                           onNpcPortraitClick={handleNpcPortraitClick}
                           onNpcPortraitGenerate={handleNpcPortraitGenerate}
+                          onNpcPortraitLoadError={handleNpcPortraitLoadError}
                           npcPortraitGenerationEnabled={
                             chatMeta.enableSpriteGeneration === true &&
                             typeof chatMeta.gameImageConnectionId === "string"
@@ -8351,6 +8382,7 @@ export function GameSurface({
                       onReadable={handleReadable}
                       onNpcPortraitClick={handleNpcPortraitClick}
                       onNpcPortraitGenerate={handleNpcPortraitGenerate}
+                      onNpcPortraitLoadError={handleNpcPortraitLoadError}
                       npcPortraitGenerationEnabled={
                         chatMeta.enableSpriteGeneration === true && typeof chatMeta.gameImageConnectionId === "string"
                       }
