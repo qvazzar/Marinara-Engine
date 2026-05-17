@@ -81,6 +81,19 @@ export function isMessageHiddenFromAI(message: { extra?: unknown }): boolean {
   return parseExtra(message.extra).hiddenFromAI === true;
 }
 
+export function buildUserMessageRegenerationInstruction(message: { content?: unknown }): string {
+  const original = typeof message.content === "string" ? message.content.trim() : "";
+  return [
+    "Regenerate the user's previous message as an alternate swipe.",
+    "Write only the replacement user message text.",
+    "Do not answer as the assistant, continue the assistant side, or describe what the assistant does next.",
+    "",
+    "<original_user_message>",
+    original,
+    "</original_user_message>",
+  ].join("\n");
+}
+
 export function shouldPreferLatestVisibleGameState(input: {
   attachments?: unknown[] | null;
   impersonate?: boolean;
