@@ -35,6 +35,40 @@ interface RuntimeAgentData {
   endToken?: string;
 }
 
+interface ChoiceOptionValue {
+  value: string;
+}
+
+function parseChoiceOptions(options: string): ChoiceOptionValue[] {
+  try {
+    const parsed = JSON.parse(options) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((option) =>
+      option && typeof option === "object" && typeof (option as { value?: unknown }).value === "string"
+        ? [{ value: (option as { value: string }).value }]
+        : [],
+    );
+  } catch {
+    return [];
+  }
+}
+
+function sanitizeChoiceSelection(
+  selected: string | string[] | undefined,
+  options: ChoiceOptionValue[],
+  isMulti: boolean,
+): string | string[] | undefined {
+  if (selected === undefined) return undefined;
+  const validValues = new Set(options.map((option) => option.value));
+  const candidates = Array.isArray(selected) ? selected : [selected];
+
+  if (isMulti) {
+    return candidates.filter((value, index) => validValues.has(value) && candidates.indexOf(value) === index);
+  }
+
+  return candidates.find((value) => validValues.has(value));
+}
+
 // ═══════════════════════════════════════════════
 //  Public Interface
 // ═══════════════════════════════════════════════
@@ -197,19 +231,15 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     const isMulti = cb.multiSelect === "true";
     const isRandom = cb.randomPick === "true";
     const separator = cb.separator || ", ";
-    const selected = input.chatChoices[cb.variableName];
+    const opts = parseChoiceOptions(cb.options);
+    const selected = sanitizeChoiceSelection(input.chatChoices[cb.variableName], opts, isMulti);
 
     if (selected !== undefined) {
       if (isMulti && Array.isArray(selected)) {
         // Multi-select: either random-pick one or join all
         if (selected.length === 0) {
           // Fallback to first option
-          try {
-            const opts = JSON.parse(cb.options) as Array<{ value: string }>;
-            if (opts.length > 0 && opts[0]) variableValues[cb.variableName] = opts[0].value;
-          } catch {
-            /* empty */
-          }
+          if (opts.length > 0 && opts[0]) variableValues[cb.variableName] = opts[0].value;
         } else if (isRandom) {
           // Random pick: select one at random each generation
           variableValues[cb.variableName] = selected[Math.floor(Math.random() * selected.length)] ?? "";
@@ -223,12 +253,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
       }
     } else {
       // Default to first option's value if no selection yet
-      try {
-        const opts = JSON.parse(cb.options) as Array<{ value: string }>;
-        if (opts.length > 0 && opts[0]) variableValues[cb.variableName] = opts[0].value;
-      } catch {
-        /* empty */
-      }
+      if (opts.length > 0 && opts[0]) variableValues[cb.variableName] = opts[0].value;
     }
   }
   // Build macro context (character names and primary card fields resolved from IDs)
