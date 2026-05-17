@@ -13,7 +13,15 @@ import {
   resolveMacros,
   summariesPatchSchema,
 } from "@marinara-engine/shared";
-import type { CharacterData, ChatMemoryChunk, LorebookEntryTimingState } from "@marinara-engine/shared";
+import type {
+  CharacterData,
+  ChatMemoryChunk,
+  ChatMemoryRecallExportChunk,
+  ChatMemoryRecallExportPayload,
+  ChatMemoryRecallImportResult,
+  ExportEnvelope,
+  LorebookEntryTimingState,
+} from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
@@ -50,6 +58,90 @@ import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-appli
 
 type TrackerWrapFormat = "xml" | "markdown" | "none";
 type EntryStateOverrides = Record<string, { ephemeral?: number | null; enabled?: boolean }>;
+const MEMORY_RECALL_IMPORT_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
+const MEMORY_RECALL_IMPORT_BATCH_SIZE = 500;
+
+function toSafeExportName(name: string, fallback: string) {
+  const safe = name
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
+    .replace(/\s+/g, "-")
+    .slice(0, 80);
+  return safe || fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isUsableTimestamp(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && !Number.isNaN(new Date(value).getTime());
+}
+
+function normalizeMemoryEmbedding(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  if (value.length === 0) return null;
+  const vector: number[] = [];
+  for (const item of value) {
+    if (typeof item !== "number" || !Number.isFinite(item)) return null;
+    vector.push(item);
+  }
+  return vector;
+}
+
+function parseMemoryEmbedding(raw: string | null): number[] | null {
+  if (!raw) return null;
+  try {
+    return normalizeMemoryEmbedding(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeMemoryRecallImportChunk(value: unknown, importedAt: string): ChatMemoryRecallExportChunk | null {
+  if (!isRecord(value) || typeof value.content !== "string" || value.content.trim().length === 0) return null;
+  const messageCount =
+    Number.isInteger(value.messageCount) && Number(value.messageCount) > 0 ? Number(value.messageCount) : 1;
+  const firstMessageAt = isUsableTimestamp(value.firstMessageAt) ? value.firstMessageAt : importedAt;
+  const lastMessageAt = isUsableTimestamp(value.lastMessageAt) ? value.lastMessageAt : firstMessageAt;
+  const createdAt = isUsableTimestamp(value.createdAt) ? value.createdAt : importedAt;
+
+  return {
+    content: value.content,
+    embedding: normalizeMemoryEmbedding(value.embedding),
+    messageCount,
+    firstMessageAt,
+    lastMessageAt,
+    createdAt,
+  };
+}
+
+function getMemoryRecallChunkImportKey(
+  chunk: Pick<ChatMemoryRecallExportChunk, "content" | "firstMessageAt" | "lastMessageAt">,
+): string {
+  return JSON.stringify([chunk.firstMessageAt, chunk.lastMessageAt, chunk.content]);
+}
+
+function readMemoryRecallImportPayload(
+  body: unknown,
+): { chunks: ChatMemoryRecallExportChunk[]; skipped: number; sourceChatId: string | null } | null {
+  if (!isRecord(body) || body.type !== "marinara_memory_recall" || body.version !== 1) return null;
+  const data = body.data;
+  if (!isRecord(data) || !Array.isArray(data.chunks)) return null;
+  const sourceChat = data.sourceChat;
+  if (!isRecord(sourceChat) || typeof sourceChat.id !== "string" || sourceChat.id.trim().length === 0) {
+    return null;
+  }
+  const sourceChatId = sourceChat.id.trim();
+
+  const importedAt = new Date().toISOString();
+  const chunks: ChatMemoryRecallExportChunk[] = [];
+  for (const chunk of data.chunks) {
+    const normalized = normalizeMemoryRecallImportChunk(chunk, importedAt);
+    if (normalized) chunks.push(normalized);
+  }
+  return { chunks, skipped: data.chunks.length - chunks.length, sourceChatId };
+}
 
 async function loadLatestChatGameSnapshot(
   app: FastifyInstance,
@@ -644,6 +736,148 @@ export async function chatsRoutes(app: FastifyInstance) {
         }) satisfies ChatMemoryChunk,
     );
   });
+
+  // Export memory-recall chunks for this chat so they can be imported into another chat.
+  app.get<{ Params: { id: string } }>("/:id/memories/export", async (req, reply) => {
+    const chat = await storage.getById(req.params.id);
+    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+
+    const chunks = await app.db
+      .select({
+        content: memoryChunks.content,
+        embedding: memoryChunks.embedding,
+        messageCount: memoryChunks.messageCount,
+        firstMessageAt: memoryChunks.firstMessageAt,
+        lastMessageAt: memoryChunks.lastMessageAt,
+        createdAt: memoryChunks.createdAt,
+      })
+      .from(memoryChunks)
+      .where(eq(memoryChunks.chatId, req.params.id))
+      .orderBy(memoryChunks.firstMessageAt);
+
+    const payload: ChatMemoryRecallExportPayload = {
+      sourceChat: {
+        id: chat.id,
+        name: chat.name,
+        mode: chat.mode,
+        memoryCount: chunks.length,
+      },
+      chunks: chunks.map((chunk) => ({
+        content: chunk.content,
+        embedding: parseMemoryEmbedding(chunk.embedding),
+        messageCount: chunk.messageCount,
+        firstMessageAt: chunk.firstMessageAt,
+        lastMessageAt: chunk.lastMessageAt,
+        createdAt: chunk.createdAt,
+      })),
+    };
+    const envelope: ExportEnvelope<ChatMemoryRecallExportPayload> = {
+      type: "marinara_memory_recall",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      data: payload,
+    };
+
+    return reply
+      .header("Content-Type", "application/json")
+      .header(
+        "Content-Disposition",
+        `attachment; filename="${encodeURIComponent(
+          `${toSafeExportName(chat.name || "chat", "chat")}-memory-recall.marinara.json`,
+        )}"`,
+      )
+      .send(envelope);
+  });
+
+  // Import exported memory-recall chunks into this chat. Imported rows are retargeted to this chat.
+  app.post<{ Params: { id: string }; Querystring: { replace?: string } }>(
+    "/:id/memories/import",
+    { bodyLimit: MEMORY_RECALL_IMPORT_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      const chat = await storage.getById(req.params.id);
+      if (!chat) return reply.status(404).send({ error: "Chat not found" });
+
+      const parsed = readMemoryRecallImportPayload(req.body);
+      if (!parsed) {
+        logger.warn("[memory-recall] Rejected invalid import payload for chat %s", req.params.id);
+        return reply.status(400).send({ error: "Invalid Memory Recall export file" });
+      }
+      if (parsed.chunks.length === 0) {
+        logger.warn("[memory-recall] Rejected import with no usable chunks for chat %s", req.params.id);
+        return reply.status(400).send({ error: "No usable memory chunks found in this export file" });
+      }
+
+      const replace = req.query.replace === "true";
+      const importedSourceChatId =
+        parsed.sourceChatId && parsed.sourceChatId !== req.params.id ? parsed.sourceChatId : null;
+      const existingChunkIds = replace
+        ? await app.db.select({ id: memoryChunks.id }).from(memoryChunks).where(eq(memoryChunks.chatId, req.params.id))
+        : [];
+
+      const existing = replace
+        ? []
+        : await app.db
+            .select({
+              content: memoryChunks.content,
+              firstMessageAt: memoryChunks.firstMessageAt,
+              lastMessageAt: memoryChunks.lastMessageAt,
+            })
+            .from(memoryChunks)
+            .where(eq(memoryChunks.chatId, req.params.id));
+      const existingKeys = new Set(existing.map(getMemoryRecallChunkImportKey));
+
+      let skipped = parsed.skipped;
+      const rowsToInsert: Array<typeof memoryChunks.$inferInsert> = [];
+      for (const chunk of parsed.chunks) {
+        const key = getMemoryRecallChunkImportKey(chunk);
+        if (existingKeys.has(key)) {
+          skipped++;
+          continue;
+        }
+
+        rowsToInsert.push({
+          id: newId(),
+          chatId: req.params.id,
+          content: chunk.content,
+          embedding: chunk.embedding ? JSON.stringify(chunk.embedding) : null,
+          messageCount: chunk.messageCount,
+          sourceChatId: importedSourceChatId,
+          firstMessageAt: chunk.firstMessageAt,
+          lastMessageAt: chunk.lastMessageAt,
+          createdAt: chunk.createdAt,
+        });
+        existingKeys.add(key);
+      }
+
+      for (let i = 0; i < rowsToInsert.length; i += MEMORY_RECALL_IMPORT_BATCH_SIZE) {
+        await app.db.insert(memoryChunks).values(rowsToInsert.slice(i, i + MEMORY_RECALL_IMPORT_BATCH_SIZE));
+      }
+
+      if (replace && existingChunkIds.length > 0) {
+        for (let i = 0; i < existingChunkIds.length; i += MEMORY_RECALL_IMPORT_BATCH_SIZE) {
+          const ids = existingChunkIds.slice(i, i + MEMORY_RECALL_IMPORT_BATCH_SIZE).map((chunk) => chunk.id);
+          await app.db
+            .delete(memoryChunks)
+            .where(and(eq(memoryChunks.chatId, req.params.id), inArray(memoryChunks.id, ids)));
+        }
+      }
+
+      const imported = rowsToInsert.length;
+      logger.info(
+        "[memory-recall] Imported %d memory chunks into chat %s (skipped %d, replaced=%s)",
+        imported,
+        req.params.id,
+        skipped,
+        replace,
+      );
+
+      return {
+        imported,
+        skipped,
+        replaced: replace,
+      } satisfies ChatMemoryRecallImportResult;
+    },
+  );
 
   // Rebuild memory-recall chunks for this chat from the current message log.
   app.post<{ Params: { id: string } }>("/:id/memories/refresh", async (req, reply) => {

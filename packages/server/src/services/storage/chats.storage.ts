@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Chats
 // ──────────────────────────────────────────────
-import { eq, desc, and, lt, gt, inArray } from "drizzle-orm";
+import { eq, desc, and, gt, inArray, isNull } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import {
   chats,
@@ -140,8 +140,16 @@ function parseMessageCursor(before?: string): { createdAt: string; rowid: number
 }
 
 async function invalidateMemoryChunksFrom(db: DB, chatId: string, createdAt: string) {
-  await db.delete(memoryChunks).where(and(eq(memoryChunks.chatId, chatId), gt(memoryChunks.lastMessageAt, createdAt)));
-  await db.delete(memoryChunks).where(and(eq(memoryChunks.chatId, chatId), eq(memoryChunks.lastMessageAt, createdAt)));
+  await db
+    .delete(memoryChunks)
+    .where(
+      and(eq(memoryChunks.chatId, chatId), isNull(memoryChunks.sourceChatId), gt(memoryChunks.lastMessageAt, createdAt)),
+    );
+  await db
+    .delete(memoryChunks)
+    .where(
+      and(eq(memoryChunks.chatId, chatId), isNull(memoryChunks.sourceChatId), eq(memoryChunks.lastMessageAt, createdAt)),
+    );
 }
 
 /** Create the chat storage facade used by routes and importers. */

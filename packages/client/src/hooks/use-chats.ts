@@ -14,7 +14,10 @@ import { lorebookKeys } from "./use-lorebooks";
 import type {
   Chat,
   ChatMemoryChunk,
+  ChatMemoryRecallExportPayload,
+  ChatMemoryRecallImportResult,
   ConversationNote,
+  ExportEnvelope,
   Message,
   MessageSwipe,
   DaySummaryEntry,
@@ -236,6 +239,35 @@ export function useRefreshChatMemories(chatId: string | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.post<{ rebuilt: number }>(`/chats/${chatId}/memories/refresh`),
+    onSuccess: () => {
+      if (chatId) qc.invalidateQueries({ queryKey: chatKeys.memories(chatId) });
+    },
+  });
+}
+
+export function useExportChatMemories(chatId: string | null) {
+  return useMutation({
+    mutationFn: () => {
+      if (!chatId) throw new Error("Chat ID is required");
+      return api.download(`/chats/${chatId}/memories/export`, "memory-recall.marinara.json");
+    },
+  });
+}
+
+export function useImportChatMemories(chatId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      envelope,
+      replace = false,
+    }: {
+      envelope: ExportEnvelope<ChatMemoryRecallExportPayload>;
+      replace?: boolean;
+    }) => {
+      if (!chatId) throw new Error("Chat ID is required");
+      const query = replace ? "?replace=true" : "";
+      return api.post<ChatMemoryRecallImportResult>(`/chats/${chatId}/memories/import${query}`, envelope);
+    },
     onSuccess: () => {
       if (chatId) qc.invalidateQueries({ queryKey: chatKeys.memories(chatId) });
     },
