@@ -8,12 +8,15 @@
 // ──────────────────────────────────────────────
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { LorebookEntry } from "@marinara-engine/shared";
+import type { AgentContext, LorebookEntry } from "@marinara-engine/shared";
+import type { AgentExecConfig } from "../src/services/agents/agent-executor.js";
 import {
   buildCatalog,
   formatCatalogForPrompt,
   parseRouterResponse,
   executeKnowledgeRouter,
+  mergeKnowledgeRouterCandidates,
+  prepareKnowledgeRouterCandidates,
 } from "../src/services/agents/knowledge-router.js";
 
 function makeEntry(overrides: Partial<LorebookEntry> = {}): LorebookEntry {
@@ -277,7 +280,7 @@ test("parseRouterResponse trims whitespace from ids so Map lookups succeed", () 
 // call the LLM and must return an empty injection.
 
 test("executeKnowledgeRouter returns an empty injection when there are no entries (no LLM call)", async () => {
-  const config = {
+  const config: AgentExecConfig = {
     id: "router-1",
     type: "knowledge-router",
     name: "Knowledge Router",
@@ -286,7 +289,7 @@ test("executeKnowledgeRouter returns an empty injection when there are no entrie
     connectionId: null,
     settings: {},
   };
-  const baseContext = {
+  const baseContext: AgentContext = {
     chatId: "chat-1",
     chatMode: "roleplay",
     recentMessages: [],
@@ -302,9 +305,236 @@ test("executeKnowledgeRouter returns an empty injection when there are no entrie
   // Pass null for provider — if the function accidentally tried to use it
   // we'd crash here, so this also guards the early-return.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result = await executeKnowledgeRouter(config, baseContext as any, null as any, "model-x", []);
+  const result = await executeKnowledgeRouter(config, baseContext, null as any, "model-x", []);
   assert.equal(result.success, true);
   assert.equal(result.type, "context_injection");
   assert.deepEqual(result.data, { text: "" });
   assert.equal(result.tokensUsed, 0);
+});
+
+test("mergeKnowledgeRouterCandidates keeps semantic matches first, adds keyword activations, and dedupes", () => {
+  const semanticA = makeEntry({ id: "semantic-a" });
+  const shared = makeEntry({ id: "shared" });
+  const keyword = makeEntry({ id: "keyword" });
+
+  const merged = mergeKnowledgeRouterCandidates(
+    [
+      { entry: semanticA, similarity: 0.9 },
+      { entry: shared, similarity: 0.8 },
+    ],
+    [shared, keyword],
+  );
+
+  assert.deepEqual(
+    merged.map((entry) => entry.id),
+    ["semantic-a", "shared", "keyword"],
+  );
+});
+
+test("prepareKnowledgeRouterCandidates returns semantic top matches plus keyword and constant activations", async () => {
+  const entries = [
+    makeEntry({ id: "semantic", keys: ["unused"], embedding: [1, 0], constant: false }),
+    makeEntry({ id: "keyword", keys: ["moon-gate"], embedding: [0, 1], constant: false }),
+    makeEntry({ id: "constant", keys: [], embedding: null, constant: true }),
+    makeEntry({ id: "other", keys: ["unused"], embedding: [0, 1], constant: false }),
+  ];
+  const context: AgentContext = {
+    chatId: "chat-1",
+    chatMode: "roleplay",
+    recentMessages: [{ role: "user", content: "The moon-gate opens." }],
+    mainResponse: null,
+    gameState: null,
+    characters: [],
+    persona: null,
+    memory: {},
+    activatedLorebookEntries: null,
+    writableLorebookIds: null,
+    chatSummary: null,
+  };
+
+  const candidates = await prepareKnowledgeRouterCandidates(entries, context, {
+    semanticTopK: 1,
+    localEmbedder: async () => [[1, 0]],
+  });
+
+  assert.deepEqual(
+    candidates.map((entry) => entry.id),
+    ["semantic", "keyword", "constant"],
+  );
+});
+
+test("prepareKnowledgeRouterCandidates uses provided activated entries instead of rescanning keywords", async () => {
+  const semantic = makeEntry({ id: "semantic", keys: ["unused"], embedding: [1, 0], constant: false });
+  const wouldRescan = makeEntry({ id: "would-rescan", keys: ["moon-gate"], embedding: [0, 1], constant: false });
+  const alreadyActivated = makeEntry({ id: "already-activated", keys: ["unused"], embedding: null, constant: false });
+  const context: AgentContext = {
+    chatId: "chat-1",
+    chatMode: "roleplay",
+    recentMessages: [{ role: "user", content: "The moon-gate opens." }],
+    mainResponse: null,
+    gameState: null,
+    characters: [],
+    persona: null,
+    memory: {},
+    activatedLorebookEntries: null,
+    writableLorebookIds: null,
+    chatSummary: null,
+  };
+
+  const candidates = await prepareKnowledgeRouterCandidates([semantic, wouldRescan, alreadyActivated], context, {
+    semanticTopK: 1,
+    activatedEntries: [alreadyActivated],
+    localEmbedder: async () => [[1, 0]],
+  });
+
+  assert.deepEqual(
+    candidates.map((entry) => entry.id),
+    ["semantic", "already-activated"],
+  );
+});
+
+test("prepareKnowledgeRouterCandidates can scan router-only entries when activated entries are provided", async () => {
+  const semantic = makeEntry({ id: "semantic", keys: ["unused"], embedding: [1, 0], constant: false });
+  const alreadyActivated = makeEntry({ id: "already-activated", keys: ["unused"], embedding: null, constant: false });
+  const routerOnly = makeEntry({ id: "router-only", keys: ["moon-gate"], embedding: null, constant: false });
+  const context: AgentContext = {
+    chatId: "chat-1",
+    chatMode: "roleplay",
+    recentMessages: [{ role: "user", content: "The moon-gate opens." }],
+    mainResponse: null,
+    gameState: null,
+    characters: [],
+    persona: null,
+    memory: {},
+    activatedLorebookEntries: null,
+    writableLorebookIds: null,
+    chatSummary: null,
+  };
+
+  const candidates = await prepareKnowledgeRouterCandidates([semantic, alreadyActivated, routerOnly], context, {
+    semanticTopK: 1,
+    activatedEntries: [alreadyActivated],
+    keywordScanEntries: [routerOnly],
+    localEmbedder: async () => [[1, 0]],
+  });
+
+  assert.deepEqual(
+    candidates.map((entry) => entry.id),
+    ["semantic", "already-activated", "router-only"],
+  );
+});
+
+test("prepareKnowledgeRouterCandidates falls back to filtered entries when semantic embedding is unavailable", async () => {
+  const entries = [makeEntry({ id: "a", embedding: [1, 0] }), makeEntry({ id: "b", embedding: [0, 1] })];
+  const context: AgentContext = {
+    chatId: "chat-1",
+    chatMode: "roleplay",
+    recentMessages: [{ role: "user", content: "hello" }],
+    mainResponse: null,
+    gameState: null,
+    characters: [],
+    persona: null,
+    memory: {},
+    activatedLorebookEntries: null,
+    writableLorebookIds: null,
+    chatSummary: null,
+  };
+
+  const candidates = await prepareKnowledgeRouterCandidates(entries, context, {
+    localEmbedder: async () => null,
+  });
+
+  assert.deepEqual(
+    candidates.map((entry) => entry.id),
+    ["a", "b"],
+  );
+});
+
+test("prepareKnowledgeRouterCandidates fallback preserves activated and keyword candidates first", async () => {
+  const remaining = makeEntry({ id: "remaining", keys: ["unused"], embedding: [1, 0] });
+  const alreadyActivated = makeEntry({ id: "already-activated", keys: ["unused"], embedding: null });
+  const routerOnly = makeEntry({ id: "router-only", keys: ["moon-gate"], embedding: null });
+  const context: AgentContext = {
+    chatId: "chat-1",
+    chatMode: "roleplay",
+    recentMessages: [{ role: "user", content: "The moon-gate opens." }],
+    mainResponse: null,
+    gameState: null,
+    characters: [],
+    persona: null,
+    memory: {},
+    activatedLorebookEntries: null,
+    writableLorebookIds: null,
+    chatSummary: null,
+  };
+
+  const candidates = await prepareKnowledgeRouterCandidates([remaining, alreadyActivated, routerOnly], context, {
+    activatedEntries: [alreadyActivated],
+    keywordScanEntries: [routerOnly],
+    localEmbedder: async () => null,
+  });
+
+  assert.deepEqual(
+    candidates.map((entry) => entry.id),
+    ["already-activated", "router-only", "remaining"],
+  );
+});
+
+test("prepareKnowledgeRouterCandidates fallback handles semantic embedding errors", async () => {
+  const remaining = makeEntry({ id: "remaining", keys: ["unused"], embedding: [1, 0] });
+  const alreadyActivated = makeEntry({ id: "already-activated", keys: ["unused"], embedding: null });
+  const context: AgentContext = {
+    chatId: "chat-1",
+    chatMode: "roleplay",
+    recentMessages: [{ role: "user", content: "hello" }],
+    mainResponse: null,
+    gameState: null,
+    characters: [],
+    persona: null,
+    memory: {},
+    activatedLorebookEntries: null,
+    writableLorebookIds: null,
+    chatSummary: null,
+  };
+
+  const candidates = await prepareKnowledgeRouterCandidates([remaining, alreadyActivated], context, {
+    activatedEntries: [alreadyActivated],
+    localEmbedder: async () => {
+      throw new Error("embedding service unavailable");
+    },
+  });
+
+  assert.deepEqual(
+    candidates.map((entry) => entry.id),
+    ["already-activated", "remaining"],
+  );
+});
+
+test("prepareKnowledgeRouterCandidates falls back when no valid stored vectors can be scored", async () => {
+  const entries = [
+    makeEntry({ id: "a", keys: ["moon-gate"], embedding: null }),
+    makeEntry({ id: "b", keys: ["unused"], embedding: [1, 0, 0] }),
+  ];
+  const context: AgentContext = {
+    chatId: "chat-1",
+    chatMode: "roleplay",
+    recentMessages: [{ role: "user", content: "The moon-gate opens." }],
+    mainResponse: null,
+    gameState: null,
+    characters: [],
+    persona: null,
+    memory: {},
+    activatedLorebookEntries: null,
+    writableLorebookIds: null,
+    chatSummary: null,
+  };
+
+  const candidates = await prepareKnowledgeRouterCandidates(entries, context, {
+    localEmbedder: async () => [[1, 0]],
+  });
+
+  assert.deepEqual(
+    candidates.map((entry) => entry.id),
+    ["a", "b"],
+  );
 });

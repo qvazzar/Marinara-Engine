@@ -6056,11 +6056,22 @@ function Section({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const toggleOpen = () => setOpen((o) => !o);
+  const handleHeaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleOpen();
+  };
 
   return (
     <div className="border-b border-[var(--border)]">
-      <button
-        onClick={() => setOpen((o) => !o)}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={toggleOpen}
+        onKeyDown={handleHeaderKeyDown}
         className="flex w-full items-center gap-2 px-4 py-3 text-left transition-colors hover:bg-[var(--accent)]/50"
       >
         {icon && <span className="text-[var(--muted-foreground)]">{icon}</span>}
@@ -6079,7 +6090,7 @@ function Section({
           size="0.75rem"
           className={cn("text-[var(--muted-foreground)] transition-transform", open && "rotate-180")}
         />
-      </button>
+      </div>
       {open && <div className="px-6 py-3">{children}</div>}
     </div>
   );

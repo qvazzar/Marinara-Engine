@@ -48,7 +48,7 @@ import {
   filterGameInternalAgentIds,
   resolveGameLorebookScopeExclusions,
 } from "../services/lorebook/game-lorebook-scope.js";
-import { lorebookEntryPassesContextFilters } from "../services/lorebook/keyword-scanner.js";
+import { lorebookEntryPassesContextFilters, type GameStateForScanning } from "../services/lorebook/keyword-scanner.js";
 import { injectAtDepth } from "../services/lorebook/prompt-injector.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
@@ -131,8 +131,9 @@ import { gameStateSnapshots as gameStateSnapshotsTable } from "../db/schema/inde
 import { chats as chatsTable } from "../db/schema/index.js";
 import { eq } from "drizzle-orm";
 import { PROFESSOR_MARI_ID } from "@marinara-engine/shared";
-import { chunkAndEmbedMessages, recallMemories } from "../services/memory-recall.js";
+import { chunkAndEmbedMessages, embedMemoryRecallTexts, recallMemories } from "../services/memory-recall.js";
 import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
+import { warmLorebookEntryEmbeddings } from "../services/lorebook/embeddings.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import {
   findLastIndex,
@@ -498,6 +499,23 @@ async function persistLorebookRuntimeState(args: {
     ...(args.entryStateOverrides !== undefined ? { entryStateOverrides: args.entryStateOverrides } : {}),
     ...(args.entryTimingStates !== undefined ? { entryTimingStates: args.entryTimingStates } : {}),
   });
+}
+
+function rememberKnowledgeRouterActivatedLorebookIds(
+  targetActivated: Set<string>,
+  targetExcludedFromKeywordScan: Set<string>,
+  result: {
+    activatedEntries: Array<{ id: string; matchedKeys: string[] }>;
+    budgetSkippedEntries: Array<{ id: string; matchedKeys: string[] }>;
+  },
+): void {
+  for (const entry of result.activatedEntries) {
+    if (!entry.matchedKeys.some((key) => !key.startsWith("[semantic:"))) continue;
+    targetActivated.add(entry.id);
+  }
+  for (const entry of result.budgetSkippedEntries) {
+    targetExcludedFromKeywordScan.add(entry.id);
+  }
 }
 
 /** Read a character's avatar from disk as base64, or return undefined if unavailable. */
@@ -1425,57 +1443,33 @@ export async function generateRoutes(app: FastifyInstance) {
       sendProgress("embedding");
       const _tEmbed = Date.now();
       let chatContextEmbedding: number[] | null = null;
+      const knowledgeRouterActivatedLorebookEntryIds = new Set<string>();
+      const knowledgeRouterExcludedLorebookEntryIds = new Set<string>();
+      let knowledgeRouterActivationPassCompleted = false;
       try {
-        const activeEntries = await lorebooksStore.listActiveEntries({
+        const activeEntries = (await lorebooksStore.listActiveEntries({
           chatId: input.chatId,
           characterIds: promptCharacterIds,
           personaId,
           activeLorebookIds: chatActiveLorebookIds,
           excludedLorebookIds: gameLorebookScopeExclusions.excludedLorebookIds,
           excludedSourceAgentIds: gameLorebookScopeExclusions.excludedSourceAgentIds,
+        })) as LorebookEntry[];
+        await warmLorebookEntryEmbeddings(app.db, activeEntries, {
+          embeddingSource: memoryRecallEmbeddingSource,
+          batchSize: 32,
         });
-        const hasVectorizedEntries = (activeEntries as Array<Record<string, unknown>>).some(
-          (e) => !e.excludeFromVectorization && e.embedding != null,
-        );
-        if (hasVectorizedEntries) {
-          // Embed the last ~10 messages as context
+        const hasEmbeddableEntries = activeEntries.length > 0;
+        if (hasEmbeddableEntries) {
           const recentMsgs = mappedMessages
             .slice(-10)
             .map((m) => m.content)
             .join("\n");
           if (recentMsgs.trim()) {
-            // Use a dedicated embedding connection if configured:
-            // Priority: chat-level override → connection's embeddingConnectionId → same connection
-            const embeddingConnId =
-              (chatMeta.embeddingConnectionId as string | undefined) ||
-              (conn.embeddingConnectionId as string | undefined);
-            let embedConn = conn;
-            let embedBaseUrl = baseUrl;
-            if (embeddingConnId) {
-              const ec = await connections.getWithKey(embeddingConnId);
-              if (ec) {
-                embedConn = ec;
-                embedBaseUrl = resolveBaseUrl(ec);
-              }
-            }
-            // Use the dedicated embedding base URL if configured
-            if (embedConn.embeddingBaseUrl) {
-              embedBaseUrl = (embedConn.embeddingBaseUrl as string).replace(/\/+$/, "");
-            }
-            const embeddingModel =
-              (embedConn.embeddingModel as string | undefined) || (conn.embeddingModel as string | undefined);
-            if (embeddingModel) {
-              const embeddingProvider = createLLMProvider(
-                embedConn.provider as string,
-                embedBaseUrl,
-                embedConn.apiKey as string,
-                embedConn.maxContext as number | null | undefined,
-                embedConn.openrouterProvider as string | null | undefined,
-                embedConn.maxTokensOverride as number | null | undefined,
-              );
-              const embeddings = await embeddingProvider.embed([recentMsgs], embeddingModel);
-              chatContextEmbedding = embeddings[0] ?? null;
-            }
+            const embeddings = await embedMemoryRecallTexts([recentMsgs], {
+              embeddingSource: memoryRecallEmbeddingSource,
+            });
+            chatContextEmbedding = embeddings[0] ?? null;
           }
         }
       } catch {
@@ -1573,6 +1567,19 @@ export async function generateRoutes(app: FastifyInstance) {
           assembled.lorebookDepthEntriesCount > 0 ||
           !!assembled.updatedEntryStateOverrides ||
           assembled.updatedEntryTimingStates !== undefined;
+        if (assembled.lorebookActivatedEntries || assembled.lorebookBudgetSkippedEntries) {
+          rememberKnowledgeRouterActivatedLorebookIds(
+            knowledgeRouterActivatedLorebookEntryIds,
+            knowledgeRouterExcludedLorebookEntryIds,
+            {
+              activatedEntries: assembled.lorebookActivatedEntries ?? [],
+              budgetSkippedEntries: assembled.lorebookBudgetSkippedEntries ?? [],
+            },
+          );
+          knowledgeRouterActivationPassCompleted = true;
+        } else if (presetHandledLorebooks) {
+          knowledgeRouterActivationPassCompleted = true;
+        }
         finalMessages = assembled.messages;
         temperature = assembled.parameters.temperature;
         maxTokens = assembled.parameters.maxTokens;
@@ -2654,6 +2661,12 @@ export async function generateRoutes(app: FastifyInstance) {
             generationTriggers: lorebookGenerationTriggers,
             resolveContent: resolvePromptMacrosForLorebook,
           });
+          rememberKnowledgeRouterActivatedLorebookIds(
+            knowledgeRouterActivatedLorebookEntryIds,
+            knowledgeRouterExcludedLorebookEntryIds,
+            lorebookResult,
+          );
+          knowledgeRouterActivationPassCompleted = true;
 
           if (lorebookResult.updatedEntryStateOverrides)
             chatMeta.entryStateOverrides = lorebookResult.updatedEntryStateOverrides;
@@ -2704,6 +2717,12 @@ export async function generateRoutes(app: FastifyInstance) {
           generationTriggers: lorebookGenerationTriggers,
           resolveContent: resolvePromptMacrosForLorebook,
         });
+        rememberKnowledgeRouterActivatedLorebookIds(
+          knowledgeRouterActivatedLorebookEntryIds,
+          knowledgeRouterExcludedLorebookEntryIds,
+          lorebookResult,
+        );
+        knowledgeRouterActivationPassCompleted = true;
 
         if (lorebookResult.updatedEntryStateOverrides)
           chatMeta.entryStateOverrides = lorebookResult.updatedEntryStateOverrides;
@@ -3869,6 +3888,12 @@ export async function generateRoutes(app: FastifyInstance) {
               resolveContent: resolvePromptMacrosForLorebook,
             },
           );
+          rememberKnowledgeRouterActivatedLorebookIds(
+            knowledgeRouterActivatedLorebookEntryIds,
+            knowledgeRouterExcludedLorebookEntryIds,
+            lorebookResult,
+          );
+          knowledgeRouterActivationPassCompleted = true;
 
           if (lorebookResult.updatedEntryStateOverrides)
             chatMeta.entryStateOverrides = lorebookResult.updatedEntryStateOverrides;
@@ -4523,7 +4548,17 @@ export async function generateRoutes(app: FastifyInstance) {
       // for routing. The router picks IDs from this list and the selected entries
       // are injected verbatim — no per-entry summarization pass.
       const knowledgeRouterAgent = resolvedAgents.find((a) => a.type === "knowledge-router");
+      const promptCharacterIdSet = new Set(promptCharacterIds);
+      const knowledgeRouterActiveCharacterTags = Array.from(
+        new Set(
+          charInfo
+            .filter((character) => promptCharacterIdSet.has(character.id))
+            .flatMap((character) => character.tags),
+        ),
+      );
       let knowledgeRouterEntries: LorebookEntry[] = [];
+      let knowledgeRouterActivatedEntries: LorebookEntry[] = [];
+      let knowledgeRouterKeywordScanEntries: LorebookEntry[] = [];
       if (knowledgeRouterAgent) {
         try {
           const sourceIds = (knowledgeRouterAgent.settings.sourceLorebookIds as string[]) ?? [];
@@ -4537,16 +4572,13 @@ export async function generateRoutes(app: FastifyInstance) {
               (chatMeta.entryStateOverrides as Record<string, { enabled?: boolean; ephemeral?: number | null }>) ?? {};
             // Skip:
             //   - Disabled entries (off-limits, by global flag or per-chat override).
-            //   - Constant entries (already injected unconditionally by the standard
-            //     activation pipeline — routing them would duplicate work).
             //   - Exhausted ephemeral entries (countdown reached 0 in this chat).
             //   - Entries excluded by character/tag/generation-trigger filters.
-            const activeCharacterTags = Array.from(new Set(charInfo.flatMap((character) => character.tags)));
             knowledgeRouterEntries = entries
               .filter((e: LorebookEntry) => {
                 const ov = entryStateOverrides[e.id];
                 const isEnabled = ov?.enabled ?? e.enabled !== false;
-                if (!isEnabled || e.constant === true) return false;
+                if (!isEnabled) return false;
                 // Project the ephemeral override here so the exhaustion check uses
                 // the per-chat remaining count, not the stale global default.
                 const effectiveEphemeral = ov?.ephemeral !== undefined ? ov.ephemeral : e.ephemeral;
@@ -4554,7 +4586,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 if (
                   !lorebookEntryPassesContextFilters(e, {
                     activeCharacterIds: promptCharacterIds,
-                    activeCharacterTags,
+                    activeCharacterTags: knowledgeRouterActiveCharacterTags,
                     generationTriggers: lorebookGenerationTriggers,
                   })
                 ) {
@@ -4566,6 +4598,16 @@ export async function generateRoutes(app: FastifyInstance) {
                 const ov = entryStateOverrides[e.id];
                 return ov?.ephemeral !== undefined ? { ...e, ephemeral: ov.ephemeral } : e;
               });
+            knowledgeRouterActivatedEntries = knowledgeRouterEntries.filter((entry) =>
+              knowledgeRouterActivatedLorebookEntryIds.has(entry.id),
+            );
+            knowledgeRouterKeywordScanEntries = knowledgeRouterActivationPassCompleted
+              ? knowledgeRouterEntries.filter(
+                  (entry) =>
+                    !knowledgeRouterActivatedLorebookEntryIds.has(entry.id) &&
+                    !knowledgeRouterExcludedLorebookEntryIds.has(entry.id),
+                )
+              : knowledgeRouterEntries;
           }
         } catch (err) {
           // Non-critical: the router simply skips this turn if loading fails. Log
@@ -5262,6 +5304,21 @@ export async function generateRoutes(app: FastifyInstance) {
                   knowledgeRouterAgent!.provider,
                   knowledgeRouterAgent!.model,
                   knowledgeRouterEntries,
+                  {
+                    embeddingSource: memoryRecallEmbeddingSource,
+                    semanticTopK: knowledgeRouterAgent!.settings.semanticTopK,
+                    ...(knowledgeRouterActivationPassCompleted
+                      ? { activatedEntries: knowledgeRouterActivatedEntries }
+                      : {}),
+                    keywordScanEntries: knowledgeRouterKeywordScanEntries,
+                    scanMessages: toLorebookScanMessages(),
+                    scanOptions: {
+                      gameState: gameState as GameStateForScanning | null,
+                      activeCharacterIds: promptCharacterIds,
+                      activeCharacterTags: knowledgeRouterActiveCharacterTags,
+                      generationTriggers: lorebookGenerationTriggers,
+                    },
+                  },
                 );
                 sendAgentEvent(routerResult);
                 logger.debug(`[timing] Knowledge router: ${Date.now() - _tRouter}ms`);

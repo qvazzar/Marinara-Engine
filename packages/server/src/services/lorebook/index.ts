@@ -32,8 +32,8 @@ export interface LorebookScanResult {
   totalEntries: number;
   totalTokensEstimate: number;
   activatedEntryIds: string[];
-  activatedEntries: Array<{ id: string; content: string }>;
-  budgetSkippedEntries: LorebookBudgetSkippedEntry[];
+  activatedEntries: Array<{ id: string; content: string; matchedKeys: string[] }>;
+  budgetSkippedEntries: Array<{ id: string; matchedKeys: string[] }>;
   /** Updated per-chat entry state overrides (ephemeral countdown). Caller should persist to chat metadata. */
   updatedEntryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
   /** Updated per-chat timing states for sticky/cooldown/delay. Caller should persist to chat metadata. */
@@ -914,8 +914,15 @@ export async function processLorebooks(
   return {
     ...result,
     activatedEntryIds: finalActivated.map((a) => a.entry.id),
-    activatedEntries: finalActivated.map((a) => ({ id: a.entry.id, content: a.entry.content })),
-    budgetSkippedEntries: budgetResult.budgetSkippedEntries,
+    activatedEntries: finalActivated.map((a) => ({
+      id: a.entry.id,
+      content: a.entry.content,
+      matchedKeys: a.matchedKeys,
+    })),
+    budgetSkippedEntries: budgetResult.budgetSkippedEntries.map((entry) => ({
+      id: entry.id,
+      matchedKeys: entry.matchedKeys,
+    })),
     ...(updatedOverrides ? { updatedEntryStateOverrides: updatedOverrides } : {}),
     ...(updatedEntryTimingStates ? { updatedEntryTimingStates } : {}),
   };
