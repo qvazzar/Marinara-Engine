@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { getConnectedChatDisplayName } from "../../lib/chat-display";
+import { playNotificationPing } from "../../lib/notification-sound";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useGameStateStore } from "../../stores/game-state.store";
@@ -95,6 +96,7 @@ const TRACKER_FOREGROUND_AVOIDANCE_CLASS =
   "md:pl-[var(--tracker-chat-avoid-left)] md:pr-[var(--tracker-chat-avoid-right)] md:transition-[padding] md:duration-200 md:ease-[cubic-bezier(0.16,1,0.3,1)]";
 const PANEL_CONTAINER =
   "relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in";
+const roleplayNotificationSeenKeys = new Set<string>();
 
 function WeatherEffectsConnected() {
   const gs = useGameStateStore((s) => s.current);
@@ -713,8 +715,54 @@ export function ChatRoleplaySurface({
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
   const chatBackgroundBlur = useUIStore((s) => s.chatBackgroundBlur);
+  const initialLoadSettledRef = useRef(false);
+  const prevMessageKeysRef = useRef<Set<string>>(new Set());
+  const seenMessageKeysRef = useRef(roleplayNotificationSeenKeys);
   const hideEchoChamberOnMobile =
     sidebarOpen || rightPanelOpen || settingsOpen || filesOpen || galleryOpen || wizardOpen;
+
+  useEffect(() => {
+    initialLoadSettledRef.current = false;
+    prevMessageKeysRef.current = new Set();
+  }, [activeChatId]);
+
+  useEffect(() => {
+    if (!messages) return;
+    const currentKeys = new Set(messages.map((message) => `${activeChatId}:${message.id}`));
+
+    if (!initialLoadSettledRef.current) {
+      if (currentKeys.size > 0) {
+        prevMessageKeysRef.current = currentKeys;
+        for (const key of currentKeys) seenMessageKeysRef.current.add(key);
+        initialLoadSettledRef.current = true;
+      }
+      return;
+    }
+
+    const prevKeys = prevMessageKeysRef.current;
+    const seenKeys = seenMessageKeysRef.current;
+    const now = Date.now();
+    const FRESHNESS_MS = 15_000;
+    let hasNewAssistantMessage = false;
+
+    for (const message of messages) {
+      const key = `${activeChatId}:${message.id}`;
+      if (prevKeys.has(key) || seenKeys.has(key)) continue;
+
+      const createdAt = new Date(message.createdAt).getTime();
+      const isFresh = Number.isFinite(createdAt) && now - createdAt < FRESHNESS_MS;
+      if (isFresh && message.role === "assistant") {
+        hasNewAssistantMessage = true;
+      }
+    }
+
+    for (const key of currentKeys) seenKeys.add(key);
+    prevMessageKeysRef.current = currentKeys;
+
+    if (hasNewAssistantMessage && useUIStore.getState().rpNotificationSound) {
+      playNotificationPing();
+    }
+  }, [activeChatId, messages]);
 
   return (
     <div data-component="ChatArea.Roleplay" className="flex flex-1 overflow-hidden">
