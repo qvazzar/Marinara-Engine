@@ -428,6 +428,11 @@ export function isProviderLocalUrlsEnabled() {
   return isEnabledFlag(process.env.PROVIDER_LOCAL_URLS_ENABLED);
 }
 
+export function getEmbeddingRequestTimeoutMs() {
+  const parsed = Number.parseInt(process.env.EMBEDDING_TIMEOUT_MS ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300_000;
+}
+
 export function isImageLocalUrlsEnabled() {
   return isEnabledFlag(process.env.IMAGE_LOCAL_URLS_ENABLED);
 }
