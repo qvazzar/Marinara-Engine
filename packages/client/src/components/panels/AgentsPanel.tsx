@@ -18,7 +18,13 @@ import {
   ToggleRight,
 } from "lucide-react";
 import { useUIStore } from "../../stores/ui.store";
-import { useAgentConfigs, useDeleteAgent, type AgentConfigRow } from "../../hooks/use-agents";
+import {
+  useAgentConfigs,
+  useDeleteAgent,
+  useUpdateAgent,
+  useUpdateAgentByType,
+  type AgentConfigRow,
+} from "../../hooks/use-agents";
 import { useCustomTools, useDeleteCustomTool, type CustomToolRow } from "../../hooks/use-custom-tools";
 import {
   useRegexScripts,
@@ -37,6 +43,8 @@ export function AgentsPanel() {
   const { data: customTools } = useCustomTools();
   const { data: regexScripts } = useRegexScripts();
   const deleteAgent = useDeleteAgent();
+  const updateAgent = useUpdateAgent();
+  const updateAgentByType = useUpdateAgentByType();
   const deleteTool = useDeleteCustomTool();
   const deleteRegex = useDeleteRegexScript();
   const updateRegex = useUpdateRegexScript();
@@ -160,6 +168,16 @@ export function AgentsPanel() {
   const handleCreateRegex = () => {
     openRegexDetail("__new__");
   };
+
+  const toggleAgentEnabled = (agent: { id: string; type: string; custom: boolean; enabled: boolean }) => {
+    if (agent.custom) {
+      updateAgent.mutate({ id: agent.id, enabled: !agent.enabled });
+    } else {
+      updateAgentByType.mutate({ agentType: agent.type, enabled: !agent.enabled });
+    }
+  };
+
+  const agentTogglePending = updateAgent.isPending || updateAgentByType.isPending;
 
   const handleRegexDrop = (targetId: string) => {
     if (!draggedRegexId || draggedRegexId === targetId) return;
@@ -407,6 +425,8 @@ export function AgentsPanel() {
                       enabled: configByType.get(agent.id)?.enabled !== "false",
                       custom: false,
                       openAgentDetail,
+                      onToggleEnabled: toggleAgentEnabled,
+                      togglePending: agentTogglePending,
                     }),
                   )
                 )}
@@ -423,14 +443,28 @@ export function AgentsPanel() {
             {!activeAgents.length ? (
               <p className="px-1 py-2 text-[0.625rem] text-[var(--muted-foreground)]">No active agents.</p>
             ) : (
-              activeAgents.map((agent) => renderAgentCard({ ...agent, openAgentDetail }))
+              activeAgents.map((agent) =>
+                renderAgentCard({
+                  ...agent,
+                  openAgentDetail,
+                  onToggleEnabled: toggleAgentEnabled,
+                  togglePending: agentTogglePending,
+                }),
+              )
             )}
           </PanelSection>
           <PanelSection title="Disabled Agents" icon={<Sparkles size="0.8125rem" />}>
             {!inactiveAgents.length ? (
               <p className="px-1 py-2 text-[0.625rem] text-[var(--muted-foreground)]">No inactive agents.</p>
             ) : (
-              inactiveAgents.map((agent) => renderAgentCard({ ...agent, openAgentDetail }))
+              inactiveAgents.map((agent) =>
+                renderAgentCard({
+                  ...agent,
+                  openAgentDetail,
+                  onToggleEnabled: toggleAgentEnabled,
+                  togglePending: agentTogglePending,
+                }),
+              )
             )}
           </PanelSection>
         </>
@@ -460,6 +494,9 @@ export function AgentsPanel() {
               return (
                 <div
                   key={agent.id}
+                  data-agent-card
+                  data-agent-name={agent.name}
+                  data-agent-enabled={String(agent.enabled !== "false")}
                   className={cn(
                     "flex items-start gap-2.5 rounded-lg p-2 transition-colors hover:bg-[var(--sidebar-accent)]",
                     agent.enabled === "false" && "opacity-55",
@@ -471,6 +508,27 @@ export function AgentsPanel() {
                     <div className="text-[0.625rem] text-[var(--muted-foreground)] line-clamp-2">
                       {agent.description || "No description"}
                     </div>
+                  </button>
+                  <button
+                    className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                    title={agent.enabled === "false" ? "Enable agent" : "Disable agent"}
+                    aria-label={agent.enabled === "false" ? "Enable agent" : "Disable agent"}
+                    disabled={agentTogglePending}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      toggleAgentEnabled({
+                        id: agent.id,
+                        type: agent.type,
+                        custom: true,
+                        enabled: agent.enabled !== "false",
+                      });
+                    }}
+                  >
+                    {agent.enabled === "false" ? (
+                      <ToggleLeft size="0.875rem" />
+                    ) : (
+                      <ToggleRight size="0.875rem" className="text-amber-400" />
+                    )}
                   </button>
                   <button
                     className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--primary)]"
@@ -581,6 +639,8 @@ function renderAgentCard({
   enabled,
   custom,
   openAgentDetail,
+  onToggleEnabled,
+  togglePending = false,
 }: {
   id: string;
   type: string;
@@ -590,13 +650,19 @@ function renderAgentCard({
   enabled: boolean;
   custom: boolean;
   openAgentDetail: (id: string) => void;
+  onToggleEnabled?: (agent: { id: string; type: string; custom: boolean; enabled: boolean }) => void;
+  togglePending?: boolean;
 }) {
-  void enabled;
-
   return (
     <div
       key={id}
-      className="flex items-start gap-2.5 rounded-lg p-2 transition-colors hover:bg-[var(--sidebar-accent)]"
+      data-agent-card
+      data-agent-name={name}
+      data-agent-enabled={String(enabled)}
+      className={cn(
+        "flex items-start gap-2.5 rounded-lg p-2 transition-colors hover:bg-[var(--sidebar-accent)]",
+        !enabled && "opacity-55",
+      )}
     >
       <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
       <button className="min-w-0 flex-1 text-left" onClick={() => openAgentDetail(custom ? id : type)}>
@@ -608,6 +674,24 @@ function renderAgentCard({
           {custom ? "custom" : category}
         </div>
       </button>
+      {onToggleEnabled && (
+        <button
+          className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-50"
+          title={enabled ? "Disable agent" : "Enable agent"}
+          aria-label={enabled ? "Disable agent" : "Enable agent"}
+          disabled={togglePending}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleEnabled({ id, type, custom, enabled });
+          }}
+        >
+          {enabled ? (
+            <ToggleRight size="0.875rem" className="text-amber-400" />
+          ) : (
+            <ToggleLeft size="0.875rem" />
+          )}
+        </button>
+      )}
       <button
         className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--primary)]"
         title="Edit agent"

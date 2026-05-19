@@ -208,6 +208,7 @@ export function AgentEditor() {
   const [localRunInterval, setLocalRunInterval] = useState<number | "">("");
   const [customCadenceInputFocused, setCustomCadenceInputFocused] = useState(false);
   const [localPrompt, setLocalPrompt] = useState("");
+  const [localAgentEnabled, setLocalAgentEnabled] = useState(true);
   const [localResultType, setLocalResultType] = useState<CustomAgentResultType>("context_injection");
   const [localInjectAsSection, setLocalInjectAsSection] = useState(false);
   const [localIncludePreGenInjections, setLocalIncludePreGenInjections] = useState(false);
@@ -252,6 +253,7 @@ export function AgentEditor() {
       setLocalName(builtIn ? builtIn.name : dbConfig.name);
       setLocalDescription(dbConfig.description);
       setLocalPhase(dbConfig.phase as AgentPhase);
+      setLocalAgentEnabled(dbConfig.enabled !== "false");
       setLocalConnectionId(dbConfig.connectionId ?? "");
       const settings = dbConfig.settings
         ? typeof dbConfig.settings === "string"
@@ -284,6 +286,7 @@ export function AgentEditor() {
       setLocalName(builtIn.name);
       setLocalDescription(builtIn.description);
       setLocalPhase(builtIn.phase);
+      setLocalAgentEnabled(true);
       setLocalConnectionId("");
       setLocalImageConnectionId("");
       setLocalContextSize("");
@@ -308,6 +311,7 @@ export function AgentEditor() {
       setLocalName("New Agent");
       setLocalDescription("");
       setLocalPhase("post_processing");
+      setLocalAgentEnabled(true);
       setLocalConnectionId("");
       setLocalImageConnectionId("");
       setLocalContextSize("");
@@ -473,7 +477,7 @@ export function AgentEditor() {
       name: localName,
       description: localDescription,
       phase: savedPhase,
-      enabled: true,
+      enabled: localAgentEnabled,
       connectionId: localConnectionId || null,
       promptTemplate: localPrompt,
       settings: {
@@ -529,6 +533,7 @@ export function AgentEditor() {
     localName,
     localDescription,
     localPhase,
+    localAgentEnabled,
     localResultType,
     localConnectionId,
     localImageConnectionId,
@@ -731,7 +736,42 @@ export function AgentEditor() {
             />
           </FieldGroup>
 
-          {/* ── Pipeline Phase ── */}
+          {/* Agent Status */}
+          <FieldGroup
+            label="Agent Status"
+            icon={<Activity size="0.875rem" className="text-[var(--primary)]" />}
+            help="Controls whether this agent can run. Add as Prompt Section only controls whether saved output appears in prompt presets."
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setLocalAgentEnabled((enabled) => !enabled);
+                markDirty();
+              }}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-xl p-3 text-left ring-1 transition-all",
+                localAgentEnabled
+                  ? "bg-[var(--primary)]/10 text-[var(--foreground)] ring-[var(--primary)]/40"
+                  : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-[var(--border)]",
+              )}
+            >
+              {localAgentEnabled ? (
+                <ToggleRight size="1rem" className="shrink-0 text-amber-400" />
+              ) : (
+                <ToggleLeft size="1rem" className="shrink-0" />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">{localAgentEnabled ? "Enabled" : "Disabled"}</span>
+                <span className="block text-xs text-[var(--muted-foreground)]">
+                  {localAgentEnabled
+                    ? "This agent can run when its chat settings allow it."
+                    : "This agent is globally disabled and will appear under Disabled Agents."}
+                </span>
+              </span>
+            </button>
+          </FieldGroup>
+
+          {/* Agent Pipeline Phase */}
           <FieldGroup
             label="Pipeline Phase"
             icon={<Zap size="0.875rem" className="text-[var(--primary)]" />}
