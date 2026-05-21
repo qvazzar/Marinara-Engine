@@ -6,7 +6,7 @@
 // sidecar runtime.
 // ──────────────────────────────────────────────
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BrainCircuit,
   Check,
@@ -180,6 +180,8 @@ export function ModelDownloadModal({ open, onClose }: Props) {
   const [temperatureInput, setTemperatureInput] = useState(String(config.temperature));
   const [topPInput, setTopPInput] = useState(String(config.topP));
   const [topKInput, setTopKInput] = useState(String(config.topK));
+  const modalScrollRef = useRef<HTMLDivElement>(null);
+  const previousScrollLayoutRef = useRef({ isBlockingSetup: false, showRuntimeSettings: false });
 
   const activeBackend = runtime.backend ?? config.backend;
   const isSystemRuntime = runtime.source === "system";
@@ -287,6 +289,19 @@ export function ModelDownloadModal({ open, onClose }: Props) {
               ? "Using system runtime"
               : "Installed"
             : "Not downloaded yet";
+
+  useEffect(() => {
+    const previous = previousScrollLayoutRef.current;
+    previousScrollLayoutRef.current = { isBlockingSetup, showRuntimeSettings };
+
+    if (!open) return;
+
+    const runtimeSettingsOpened = showRuntimeSettings && !previous.showRuntimeSettings;
+    const setupVisibilityChanged = isBlockingSetup !== previous.isBlockingSetup;
+    if (!runtimeSettingsOpened && !setupVisibilityChanged) return;
+
+    modalScrollRef.current?.scrollTo({ top: 0 });
+  }, [isBlockingSetup, open, showRuntimeSettings]);
 
   const handleSkip = () => {
     markPrompted();
@@ -413,7 +428,13 @@ export function ModelDownloadModal({ open, onClose }: Props) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Local AI Model" width="max-w-2xl">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Local AI Model"
+      width="max-w-2xl"
+      contentRef={modalScrollRef}
+    >
       <div className="flex flex-col gap-5">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-500/10">
