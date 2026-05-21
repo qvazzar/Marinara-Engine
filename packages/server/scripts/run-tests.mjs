@@ -42,7 +42,12 @@ const result = spawnSync(process.execPath, [tsxCli, "--test", ...TEST_GLOBS], {
 });
 
 if (result.error) {
-  console.error(result.error);
+  // Deliberately not the shared Pino logger: this script runs under plain
+  // `node` (which can't import the TypeScript logger module), and it sets
+  // `LOG_LEVEL=silent` above — routing through Pino would swallow this spawn
+  // failure entirely. A direct `process.stderr` write keeps the failure
+  // visible without a bare `console.*` call.
+  process.stderr.write(`${result.error.stack ?? result.error}\n`);
   process.exit(1);
 }
 process.exit(result.status ?? 1);

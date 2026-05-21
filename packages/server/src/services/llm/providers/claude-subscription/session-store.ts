@@ -54,8 +54,10 @@ export class ResumeSessionStore implements SessionStore {
   }
 }
 
-// Resolved + created once per process. The SDK spawns its subprocess with
-// `cwd` set to this directory, so it must exist before the first query.
+// Caches the resolved scratch-dir path. `mkdirSync` still runs on every
+// `resumeScratchCwd()` call (a cheap near-no-op once the dir exists) so a
+// directory pruned after process start is recreated rather than handed back
+// as a dead `cwd`.
 let cachedScratchCwd: string | null = null;
 
 /**
@@ -74,8 +76,7 @@ let cachedScratchCwd: string | null = null;
  * path for the request.
  */
 export function resumeScratchCwd(): string {
-  if (cachedScratchCwd) return cachedScratchCwd;
-  const dir = resolve(getDataDir(), "claude-subscription-scratch");
+  const dir = cachedScratchCwd ?? resolve(getDataDir(), "claude-subscription-scratch");
   mkdirSync(dir, { recursive: true });
   cachedScratchCwd = dir;
   return dir;

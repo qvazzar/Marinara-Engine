@@ -93,6 +93,17 @@ function installFakeSdk(): CapturedQuery[] {
   return captured;
 }
 
+// A connection-supplied `customParameters` payload that tries to smuggle the
+// three reserved SDK keys. Shared by the two security tests below so they both
+// attack with an identical forged payload. The forged `sessionStore` would
+// inject an attacker-controlled transcript if customParameters were allowed
+// to win; `uuid: "FORGED"` is the sentinel each test asserts never lands.
+const FORGED_RESERVED_PARAMS = {
+  resume: "attacker-forged-session-id",
+  cwd: "/etc/passwd",
+  sessionStore: { load: async () => [{ type: "user", uuid: "FORGED" }] },
+};
+
 describe("ClaudeSubscriptionProvider — resume path wiring", () => {
   afterEach(() => {
     __setSdkForTesting(null);
@@ -234,13 +245,7 @@ describe("ClaudeSubscriptionProvider — resume path wiring", () => {
       {
         model: "claude-test-model",
         stream: false,
-        customParameters: {
-          resume: "attacker-forged-session-id",
-          cwd: "/etc/passwd",
-          // A forged store that would inject an attacker-controlled transcript
-          // if customParameters were allowed to win.
-          sessionStore: { load: async () => [{ type: "user", uuid: "FORGED" }] },
-        },
+        customParameters: FORGED_RESERVED_PARAMS,
       },
     );
 
@@ -255,6 +260,33 @@ describe("ClaudeSubscriptionProvider — resume path wiring", () => {
       !call.resumeEntries!.some((e) => e["uuid"] === "FORGED"),
       "forged sessionStore must not reach the SDK",
     );
+  });
+
+  it("scrubs forged reserved keys on the single-turn path (resume never engages)", async () => {
+    // The reserved-key scrub must run unconditionally, not only when the
+    // resume path engages. A single-turn request has no prior history, so
+    // resume stays disabled — but a connection's customParameters could still
+    // smuggle a forged resume/cwd/sessionStore straight to the SDK if the
+    // scrub were gated behind the resume guard. All three must be stripped
+    // and never re-added here.
+    const captured = installFakeSdk();
+
+    const provider = new ClaudeSubscriptionProvider("", "");
+    await drainProviderChat(
+      provider,
+      [{ role: "user", content: "single turn message" }],
+      {
+        model: "claude-test-model",
+        stream: false,
+        customParameters: FORGED_RESERVED_PARAMS,
+      },
+    );
+
+    const call = captured[0]!;
+    assert.equal(call.options["resume"], undefined, "forged resume must be scrubbed when resume doesn't engage");
+    assert.equal(call.options["cwd"], undefined, "forged cwd must be scrubbed when resume doesn't engage");
+    assert.equal(call.options["sessionStore"], undefined, "forged sessionStore must be scrubbed when resume doesn't engage");
+    assert.equal(call.resumeEntries, null, "no transcript should be materialized — the forged store never reached the SDK");
   });
 
   it("skips the resume path entirely for single-turn requests (empty history)", async () => {
@@ -395,7 +427,10 @@ describe("ClaudeSubscriptionProvider — resume path is platform-agnostic", () =
   // Windows to break. Forcing win32 must NOT divert to the fold path — this
   // is the inverse of the old win32 fold-path fallback test, and pins that
   // the platform gate is gone for good.
-  let priorPlatform: NodeJS.Platform;
+  // Snapshot at describe-eval time — before any hook mutates `process.platform`
+  // — so `afterEach` always has a real platform to restore, even if the test
+  // throws before the override below is in place.
+  const priorPlatform: NodeJS.Platform = process.platform;
   afterEach(() => {
     __setSdkForTesting(null);
     if (process.platform !== priorPlatform) {
@@ -404,7 +439,6 @@ describe("ClaudeSubscriptionProvider — resume path is platform-agnostic", () =
   });
 
   it("engages the resume path on win32 (no platform gate)", async () => {
-    priorPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32", configurable: true });
     const captured = installFakeSdk();
 

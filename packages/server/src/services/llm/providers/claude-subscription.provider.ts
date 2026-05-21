@@ -45,6 +45,16 @@ const CACHE_WRITE_COST_MULTIPLIER = 1.25;
 const CACHE_READ_COST_MULTIPLIER = 0.1;
 
 /**
+ * SDK option keys the resume path owns exclusively. A connection's
+ * `customParameters` must never set these: a forged `resume`/`sessionStore`
+ * could inject an attacker-controlled transcript, and a forged `cwd` controls
+ * where the SDK subprocess runs. They are stripped unconditionally after
+ * `applyCustomParameters` and re-applied only from provider-derived values
+ * (see `chat()`).
+ */
+const RESERVED_SDK_OPTION_KEYS = ["resume", "cwd", "sessionStore"] as const;
+
+/**
  * Lazy import wrapper. The SDK is heavy and pulls in optional native pieces;
  * keeping the import inside `chat()` avoids loading it for the (common) case
  * where no `claude_subscription` connection has been used yet.
@@ -367,16 +377,17 @@ export class ClaudeSubscriptionProvider extends BaseLLMProvider {
       ...(this.apiKey ? { ANTHROPIC_API_KEY: this.apiKey } : {}),
     };
 
-    this.applyCustomParameters(sdkOptions as Record<string, unknown>, options);
+    const reserved = sdkOptions as Record<string, unknown>;
+    this.applyCustomParameters(reserved, options);
 
-    // resume + cwd + sessionStore are RESERVED keys: load-bearing for the
-    // resume path's contract (the SDK loads the injected history from
-    // `sessionStore.load()` and resumes the session by ID). A connection's
-    // customParameters with a stray resume/cwd/sessionStore would otherwise
-    // silently break the wiring. Write them AFTER applyCustomParameters so
-    // they always win.
+    // RESERVED keys are load-bearing for the resume path's contract: the SDK
+    // loads the injected history from `sessionStore.load()` and resumes the
+    // session by ID. Strip any caller-supplied values unconditionally — a
+    // connection's customParameters must not reach the SDK even on the fold
+    // path and the empty-history resume sub-path, where the guard below stays
+    // closed.
+    for (const key of RESERVED_SDK_OPTION_KEYS) delete reserved[key];
     if (resumeSessionId && resumeCwd && sessionStore) {
-      const reserved = sdkOptions as Record<string, unknown>;
       reserved["resume"] = resumeSessionId;
       reserved["cwd"] = resumeCwd;
       reserved["sessionStore"] = sessionStore;
