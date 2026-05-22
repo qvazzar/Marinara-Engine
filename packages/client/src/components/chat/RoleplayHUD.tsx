@@ -543,7 +543,7 @@ function ActionsGroup({
     createPortal(
       <div
         ref={dropdownRef}
-        className="fixed w-72 max-w-[calc(100vw-1rem)] max-h-80 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--popover)] backdrop-blur-xl shadow-xl z-[9999] animate-message-in dark:border-foreground/10 dark:bg-black/80"
+        className="fixed min-h-24 w-72 min-w-64 max-w-[calc(100vw-1rem)] max-h-[calc(100vh-1rem)] resize overflow-auto rounded-xl border border-[var(--border)] bg-[var(--popover)] backdrop-blur-xl shadow-xl z-[9999] animate-message-in dark:border-foreground/10 dark:bg-black/80"
         style={{ top: pos.top, left: pos.left }}
       >
         <Suspense fallback={<DeferredActionsFallback isAgentProcessing={isAgentProcessing} />}>
@@ -823,8 +823,9 @@ function WidgetPopover({
       ref={ref}
       style={pos ? { position: "fixed", top: pos.top, left: pos.left } : { position: "fixed", top: -9999, left: -9999 }}
       className={cn(
-        "z-[9999] max-w-[calc(100vw-1rem)] animate-message-in rounded-xl border border-[var(--border)] bg-[var(--popover)] backdrop-blur-xl shadow-xl dark:border-foreground/10 dark:bg-black/80",
+        "z-[9999] min-h-24 min-w-60 max-w-[calc(100vw-1rem)] animate-message-in resize overflow-auto rounded-xl border border-[var(--border)] bg-[var(--popover)] backdrop-blur-xl shadow-xl dark:border-foreground/10 dark:bg-black/80",
         className,
+        "!max-h-[calc(100vh-1rem)]",
       )}
     >
       {children}
