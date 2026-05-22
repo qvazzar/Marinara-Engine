@@ -13,6 +13,7 @@ import {
   User,
   Bot,
   MessageSquare,
+  Drama,
   Theater,
 } from "lucide-react";
 import { useUIStore } from "../../stores/ui.store";
@@ -38,7 +39,7 @@ const CHAT_MODE_SHORTCUTS = [
   },
   {
     mode: "roleplay" as const,
-    icon: BookOpen,
+    icon: Drama,
     label: "Roleplay",
     shortLabel: "RP",
   },
