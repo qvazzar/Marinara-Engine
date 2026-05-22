@@ -380,6 +380,39 @@ export class OpenAIProvider extends BaseLLMProvider {
     return this.providerKind === "openai-chatgpt";
   }
 
+  private chatCompletionsErrorLabel(): string {
+    switch (this.providerKind) {
+      case "custom":
+        return "Custom OpenAI-compatible endpoint";
+      case "openrouter":
+        return "OpenRouter API";
+      case "nanogpt":
+        return "NanoGPT API";
+      case "xai":
+        return "xAI API";
+      case "mistral":
+        return "Mistral API";
+      case "cohere":
+        return "Cohere OpenAI-compatible API";
+      case "local-sidecar":
+        return "Local sidecar OpenAI-compatible endpoint";
+      case "openai-chatgpt":
+        return "OpenAI ChatGPT endpoint";
+      case "openai":
+      default:
+        return "OpenAI API";
+    }
+  }
+
+  private formatChatCompletionsHttpError(status: number, errorText: string, stream: boolean): string {
+    const detail = sanitizeApiError(errorText);
+    const streamingHint =
+      this.isGenericCustomProvider() && stream && /\bstream(?:ing)?\b/i.test(detail)
+        ? " This custom endpoint rejected token streaming; disable token streaming and retry, or choose a model that supports streaming."
+        : "";
+    return `${this.chatCompletionsErrorLabel()} error ${status}: ${detail}${streamingHint}`;
+  }
+
   private isGpt55Model(model: string): boolean {
     return model.toLowerCase().startsWith("gpt-5.5");
   }
@@ -779,7 +812,7 @@ export class OpenAIProvider extends BaseLLMProvider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`OpenAI API error ${response.status}: ${sanitizeApiError(errorText)}`);
+      throw new Error(this.formatChatCompletionsHttpError(response.status, errorText, effectiveStream));
     }
 
     if (!effectiveStream) {
@@ -991,7 +1024,7 @@ export class OpenAIProvider extends BaseLLMProvider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`OpenAI API error ${response.status}: ${sanitizeApiError(errorText)}`);
+      throw new Error(this.formatChatCompletionsHttpError(response.status, errorText, useStream));
     }
 
     if (!useStream) {
