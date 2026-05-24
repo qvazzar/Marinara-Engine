@@ -3,7 +3,7 @@ use super::super::{
     shared::{materialize_message_swipe_fields, non_negative_i64_value},
 };
 use super::assets::{normalize_legacy_profile_asset_paths, restore_legacy_profile_json_assets};
-use super::insert_profile_import_aliases;
+use super::{finish_profile_import_assets, insert_profile_import_aliases};
 use crate::state::AppState;
 use marinara_core::AppResult;
 use serde_json::{json, Map, Value};
@@ -62,7 +62,11 @@ pub(super) fn import_legacy_profile_tables(
 ) -> AppResult<Value> {
     let files = data.get("fileStorage").and_then(|value| value.get("files"));
     let restored_assets = restore_legacy_profile_json_assets(state, files)?;
-    import_legacy_profile_tables_with_restored_assets(state, tables, restored_assets)
+    let restored_count = restored_assets.restored();
+    finish_profile_import_assets(
+        restored_assets,
+        import_legacy_profile_tables_with_restored_assets(state, tables, restored_count),
+    )
 }
 
 pub(super) fn import_legacy_profile_tables_with_restored_assets(
@@ -71,6 +75,7 @@ pub(super) fn import_legacy_profile_tables_with_restored_assets(
     restored_assets: usize,
 ) -> AppResult<Value> {
     let mut imported = Map::new();
+    let mut replacements = Vec::new();
     for (table, collection) in LEGACY_PROFILE_TABLES {
         let mut rows = table_rows(tables, table);
         match *collection {
@@ -83,9 +88,10 @@ pub(super) fn import_legacy_profile_tables_with_restored_assets(
         for row in &mut rows {
             normalize_legacy_profile_asset_paths(state, row);
         }
-        state.storage.replace_all(collection, rows.clone())?;
         imported.insert((*collection).to_string(), json!(rows.len()));
+        replacements.push((*collection, rows));
     }
+    state.storage.replace_all_many(replacements)?;
     imported.insert("files".to_string(), json!(restored_assets));
     insert_profile_import_aliases(&mut imported);
     Ok(json!({ "success": true, "imported": imported }))

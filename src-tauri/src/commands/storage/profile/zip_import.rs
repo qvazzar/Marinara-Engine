@@ -1,6 +1,6 @@
 use super::assets::{normalize_zip_entry_name, restore_profile_zip_assets};
 use super::{
-    import_profile_collections_with_restored_assets,
+    finish_profile_import_assets, import_profile_collections_with_restored_assets,
     legacy::import_legacy_profile_tables_with_restored_assets,
 };
 use crate::state::AppState;
@@ -32,7 +32,11 @@ pub(super) fn import_profile_zip(state: &AppState, path: &Path) -> AppResult<Val
     if let Some(collections) = data.get("collections").and_then(Value::as_object) {
         let restored_assets =
             restore_profile_zip_assets(state, &mut archive, &names, &profile_prefix, files)?;
-        import_profile_collections_with_restored_assets(state, collections, restored_assets)
+        let restored_count = restored_assets.restored();
+        finish_profile_import_assets(
+            restored_assets,
+            import_profile_collections_with_restored_assets(state, collections, restored_count),
+        )
     } else {
         let tables = data
             .get("fileStorage")
@@ -45,7 +49,11 @@ pub(super) fn import_profile_zip(state: &AppState, path: &Path) -> AppResult<Val
             })?;
         let restored_assets =
             restore_profile_zip_assets(state, &mut archive, &names, &profile_prefix, files)?;
-        import_legacy_profile_tables_with_restored_assets(state, tables, restored_assets)
+        let restored_count = restored_assets.restored();
+        finish_profile_import_assets(
+            restored_assets,
+            import_legacy_profile_tables_with_restored_assets(state, tables, restored_count),
+        )
     }
 }
 

@@ -5,7 +5,7 @@ mod legacy;
 #[path = "profile/zip_import.rs"]
 mod zip_import;
 
-use self::assets::{profile_assets, restore_profile_assets};
+use self::assets::{profile_assets, restore_profile_assets, RestoredProfileAssets};
 use self::legacy::import_legacy_profile_tables;
 use self::zip_import::import_profile_zip;
 use super::shared::*;
@@ -137,7 +137,11 @@ fn import_profile_collections(
     collections: &Map<String, Value>,
 ) -> AppResult<Value> {
     let restored_assets = restore_profile_assets(state, data.get("assets"))?;
-    import_profile_collections_with_restored_assets(state, collections, restored_assets)
+    let restored_count = restored_assets.restored();
+    finish_profile_import_assets(
+        restored_assets,
+        import_profile_collections_with_restored_assets(state, collections, restored_count),
+    )
 }
 
 pub(super) fn import_profile_collections_with_restored_assets(
@@ -146,18 +150,43 @@ pub(super) fn import_profile_collections_with_restored_assets(
     restored_assets: usize,
 ) -> AppResult<Value> {
     let mut imported = Map::new();
+    let mut replacements = Vec::new();
     for collection in PROFILE_COLLECTIONS {
         let rows = collections
             .get(*collection)
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        state.storage.replace_all(collection, rows.clone())?;
         imported.insert((*collection).to_string(), json!(rows.len()));
+        replacements.push((*collection, rows));
     }
+    state.storage.replace_all_many(replacements)?;
     imported.insert("files".to_string(), json!(restored_assets));
     insert_profile_import_aliases(&mut imported);
     Ok(json!({ "success": true, "imported": imported }))
+}
+
+fn finish_profile_import_assets(
+    restored_assets: RestoredProfileAssets,
+    result: AppResult<Value>,
+) -> AppResult<Value> {
+    match result {
+        Ok(value) => {
+            restored_assets.commit();
+            Ok(value)
+        }
+        Err(error) => {
+            if let Err(rollback_error) = restored_assets.rollback() {
+                return Err(AppError::new(
+                    "profile_import_rollback_failed",
+                    format!(
+                        "{error}; additionally failed to roll back profile assets: {rollback_error}"
+                    ),
+                ));
+            }
+            Err(error)
+        }
+    }
 }
 
 fn insert_profile_import_aliases(imported: &mut Map<String, Value>) {
