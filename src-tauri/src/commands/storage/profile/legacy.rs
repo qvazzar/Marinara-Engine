@@ -381,7 +381,7 @@ mod tests {
             ]),
         );
 
-        import_legacy_profile_tables_with_restored_assets(&state, &tables, 0, || Ok(()))
+        import_legacy_profile_tables_with_restored_assets(&state, &tables, 0, None, || Ok(()))
             .expect("legacy profile import should succeed");
 
         let ui = state
@@ -408,7 +408,7 @@ mod tests {
             ]),
         );
 
-        import_legacy_profile_tables_with_restored_assets(&state, &tables, 0, || Ok(()))
+        import_legacy_profile_tables_with_restored_assets(&state, &tables, 0, None, || Ok(()))
             .expect("legacy profile import should preserve malformed rows without matching ui");
 
         assert!(state
