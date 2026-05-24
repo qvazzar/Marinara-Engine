@@ -74,6 +74,13 @@ impl RestoredProfileAssets {
         self.restored
     }
 
+    pub(super) fn install(&mut self) -> AppResult<()> {
+        if let Some(transaction) = self.transaction.as_mut() {
+            transaction.install()?;
+        }
+        Ok(())
+    }
+
     pub(super) fn commit(mut self) {
         if let Some(transaction) = self.transaction.take() {
             transaction.commit();
@@ -287,11 +294,10 @@ fn restore_profile_json_assets_in_root(
 ) -> AppResult<RestoredProfileAssets> {
     let assets = decoded_profile_json_assets(raw_assets, allow_legacy_data_field)?;
     let restored = assets.len();
-    let mut transaction = ProfileAssetTransaction::new(data_dir)?;
+    let transaction = ProfileAssetTransaction::new(data_dir)?;
     for (relative, bytes) in assets {
         transaction.stage_bytes(&relative, &bytes)?;
     }
-    transaction.install()?;
     Ok(RestoredProfileAssets {
         restored,
         transaction: Some(transaction),
@@ -340,7 +346,7 @@ pub(super) fn restore_profile_zip_assets<R: Read + Seek>(
 ) -> AppResult<RestoredProfileAssets> {
     let assets = decoded_profile_zip_assets(raw_assets, names, profile_prefix)?;
     let restored = assets.len();
-    let mut transaction = ProfileAssetTransaction::new(&state.data_dir)?;
+    let transaction = ProfileAssetTransaction::new(&state.data_dir)?;
     for asset in assets {
         match asset.source {
             ProfileAssetSource::Bytes(bytes) => {
@@ -362,7 +368,6 @@ pub(super) fn restore_profile_zip_assets<R: Read + Seek>(
             }
         }
     }
-    transaction.install()?;
     Ok(RestoredProfileAssets {
         restored,
         transaction: Some(transaction),
@@ -830,6 +835,15 @@ mod tests {
 
         assert_eq!(restored.restored(), 2);
         assert_eq!(
+            fs::read(data_dir.join("avatars/stale.png")).unwrap(),
+            b"stale"
+        );
+        assert!(!data_dir.join("avatars/new.png").exists());
+
+        let mut restored = restored;
+        restored.install().unwrap();
+
+        assert_eq!(
             fs::read(data_dir.join("avatars/new.png")).unwrap(),
             b"new avatar"
         );
@@ -890,6 +904,14 @@ mod tests {
 
         let restored =
             restore_profile_json_assets_in_root(&data_dir, Some(&assets), false).unwrap();
+        assert!(!data_dir.join("avatars/new.png").exists());
+        assert_eq!(
+            fs::read(data_dir.join("avatars/stale.png")).unwrap(),
+            b"stale"
+        );
+
+        let mut restored = restored;
+        restored.install().unwrap();
         assert_eq!(
             fs::read(data_dir.join("avatars/new.png")).unwrap(),
             b"new avatar"

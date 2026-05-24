@@ -61,19 +61,24 @@ pub(super) fn import_legacy_profile_tables(
     tables: &Map<String, Value>,
 ) -> AppResult<Value> {
     let files = data.get("fileStorage").and_then(|value| value.get("files"));
-    let restored_assets = restore_legacy_profile_json_assets(state, files)?;
+    let mut restored_assets = restore_legacy_profile_json_assets(state, files)?;
     let restored_count = restored_assets.restored();
-    finish_profile_import_assets(
-        restored_assets,
-        import_legacy_profile_tables_with_restored_assets(state, tables, restored_count),
-    )
+    let result =
+        import_legacy_profile_tables_with_restored_assets(state, tables, restored_count, || {
+            restored_assets.install()
+        });
+    finish_profile_import_assets(restored_assets, result)
 }
 
-pub(super) fn import_legacy_profile_tables_with_restored_assets(
+pub(super) fn import_legacy_profile_tables_with_restored_assets<F>(
     state: &AppState,
     tables: &Map<String, Value>,
     restored_assets: usize,
-) -> AppResult<Value> {
+    install_assets: F,
+) -> AppResult<Value>
+where
+    F: FnOnce() -> AppResult<()>,
+{
     let mut imported = Map::new();
     let mut replacements = Vec::new();
     for (table, collection) in LEGACY_PROFILE_TABLES {
@@ -91,7 +96,9 @@ pub(super) fn import_legacy_profile_tables_with_restored_assets(
         imported.insert((*collection).to_string(), json!(rows.len()));
         replacements.push((*collection, rows));
     }
-    state.storage.replace_all_many(replacements)?;
+    state
+        .storage
+        .replace_all_many_and_then(replacements, install_assets)?;
     imported.insert("files".to_string(), json!(restored_assets));
     insert_profile_import_aliases(&mut imported);
     Ok(json!({ "success": true, "imported": imported }))

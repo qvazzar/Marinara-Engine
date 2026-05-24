@@ -171,11 +171,22 @@ impl FileStorage {
     }
 
     pub fn replace_all_many(&self, replacements: Vec<(&str, Vec<Value>)>) -> AppResult<()> {
+        self.replace_all_many_and_then(replacements, || Ok(()))
+    }
+
+    pub fn replace_all_many_and_then<F>(
+        &self,
+        replacements: Vec<(&str, Vec<Value>)>,
+        after_install: F,
+    ) -> AppResult<()>
+    where
+        F: FnOnce() -> AppResult<()>,
+    {
         let _guard = self
             .lock
             .lock()
             .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
-        self.replace_all_many_locked(replacements)
+        self.replace_all_many_locked(replacements, after_install)
     }
 
     pub fn clear_all(&self) -> AppResult<()> {
@@ -228,7 +239,14 @@ impl FileStorage {
         Ok(())
     }
 
-    fn replace_all_many_locked(&self, replacements: Vec<(&str, Vec<Value>)>) -> AppResult<()> {
+    fn replace_all_many_locked<F>(
+        &self,
+        replacements: Vec<(&str, Vec<Value>)>,
+        after_install: F,
+    ) -> AppResult<()>
+    where
+        F: FnOnce() -> AppResult<()>,
+    {
         let transaction_id = storage_transaction_id();
         let mut pending = Vec::new();
         let mut seen_paths = HashSet::new();
@@ -278,6 +296,7 @@ impl FileStorage {
                 fs::rename(&item.tmp, &item.path)?;
                 installed.push(index);
             }
+            after_install()?;
             Ok(())
         })();
 
@@ -497,6 +516,30 @@ mod tests {
             .expect_err("duplicate collection should reject the batch");
 
         assert_eq!(error.code, "invalid_input");
+        assert_eq!(
+            storage.list("characters").unwrap()[0]["id"],
+            "old-character"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replace_all_many_rolls_back_when_after_install_fails() {
+        let root = temp_storage_root("replace-many-after-install-fails");
+        let storage = FileStorage::new(&root).unwrap();
+        storage
+            .replace_all("characters", vec![json!({ "id": "old-character" })])
+            .unwrap();
+
+        let error = storage
+            .replace_all_many_and_then(
+                vec![("characters", vec![json!({ "id": "new-character" })])],
+                || Err(AppError::new("asset_install_failed", "asset install failed")),
+            )
+            .expect_err("after-install failure should reject the batch");
+
+        assert_eq!(error.code, "asset_install_failed");
         assert_eq!(
             storage.list("characters").unwrap()[0]["id"],
             "old-character"

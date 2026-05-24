@@ -136,19 +136,24 @@ fn import_profile_collections(
     data: &Map<String, Value>,
     collections: &Map<String, Value>,
 ) -> AppResult<Value> {
-    let restored_assets = restore_profile_assets(state, data.get("assets"))?;
+    let mut restored_assets = restore_profile_assets(state, data.get("assets"))?;
     let restored_count = restored_assets.restored();
-    finish_profile_import_assets(
-        restored_assets,
-        import_profile_collections_with_restored_assets(state, collections, restored_count),
-    )
+    let result =
+        import_profile_collections_with_restored_assets(state, collections, restored_count, || {
+            restored_assets.install()
+        });
+    finish_profile_import_assets(restored_assets, result)
 }
 
-pub(super) fn import_profile_collections_with_restored_assets(
+pub(super) fn import_profile_collections_with_restored_assets<F>(
     state: &AppState,
     collections: &Map<String, Value>,
     restored_assets: usize,
-) -> AppResult<Value> {
+    install_assets: F,
+) -> AppResult<Value>
+where
+    F: FnOnce() -> AppResult<()>,
+{
     let mut imported = Map::new();
     let mut replacements = Vec::new();
     for collection in PROFILE_COLLECTIONS {
@@ -160,7 +165,9 @@ pub(super) fn import_profile_collections_with_restored_assets(
         imported.insert((*collection).to_string(), json!(rows.len()));
         replacements.push((*collection, rows));
     }
-    state.storage.replace_all_many(replacements)?;
+    state
+        .storage
+        .replace_all_many_and_then(replacements, install_assets)?;
     imported.insert("files".to_string(), json!(restored_assets));
     insert_profile_import_aliases(&mut imported);
     Ok(json!({ "success": true, "imported": imported }))
@@ -204,4 +211,54 @@ fn profile_collections(state: &AppState) -> AppResult<Map<String, Value>> {
         );
     }
     Ok(collections)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_data_dir(test_name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "marinara-profile-import-{test_name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).expect("temporary profile data dir should be created");
+        path
+    }
+
+    #[test]
+    fn profile_import_rolls_back_collections_when_asset_install_fails() {
+        let data_dir = temp_data_dir("asset-install-fails");
+        let state = AppState::from_data_dir(&data_dir, Vec::new()).unwrap();
+        state
+            .storage
+            .replace_all("characters", vec![json!({ "id": "old-character" })])
+            .unwrap();
+
+        let mut collections = Map::new();
+        collections.insert("characters".to_string(), json!([{ "id": "new-character" }]));
+
+        let error =
+            import_profile_collections_with_restored_assets(&state, &collections, 0, || {
+                Err(AppError::new(
+                    "asset_install_failed",
+                    "asset install failed",
+                ))
+            })
+            .expect_err("asset install failure should reject the import");
+
+        assert_eq!(error.code, "asset_install_failed");
+        assert_eq!(
+            state.storage.list("characters").unwrap()[0]["id"],
+            "old-character"
+        );
+
+        fs::remove_dir_all(data_dir).unwrap();
+    }
 }
