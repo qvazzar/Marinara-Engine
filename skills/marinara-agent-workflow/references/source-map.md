@@ -43,6 +43,6 @@ The JSON and PR proof templates are kept source-shaped. `status-snippets.md` is 
 
 - Repo instruction authority: `AGENTS.md`.
 - Architecture docs: `docs/developer/architecture.html`, `modules.html`, and `impact-areas.html`.
-- Durable bug/work tracking: `updates/`.
+- Durable bug/work tracking: GitHub issues and PRs, not repo-local update files.
 - Current checkout during import: `Pasta-Devs/Marinara-Engine-Refactor`, branch `main`.
 - No root `CHANGELOG.md`, no `.agents/automation/scripts`, and no `.github/ISSUE_TEMPLATE` directory were present during import.

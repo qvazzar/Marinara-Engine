@@ -53,4 +53,4 @@ Ask before saying done:
 - What adjacent legacy or default path could contradict the claim?
 - Did the diff preserve Marinara's owner modules and dependency direction?
 - Did the diff add bloat, repeated conditionals, shotgun surgery, disposable code, or coupling?
-- Are docs, skills, `updates/`, or repo-defined release notes needed for the durable decision?
+- Are docs, skills, or repo-defined release notes needed for the durable decision?

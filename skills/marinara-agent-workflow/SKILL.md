@@ -99,7 +99,7 @@ For generation or memory work, trace the full path from input or persisted data 
 
 Use the best local tools available. If the current agent cannot read files, run commands, inspect screenshots, browse local UI, or fetch current docs, ask for the smallest exact artifact needed or provide the exact command/manual test for the user to run.
 
-For transient proof notes, prefer temporary local notes or command output in the session. Use `updates/` only for durable bug ownership, active work status, reusable debugging lessons, or architecture decisions that should survive the task.
+For transient proof notes, prefer temporary local notes or command output in the session. Do not create repo-local work update files. Durable bug ownership and active work status belong in GitHub issues, PRs, or the final handoff; repo docs and skill references are only for architecture decisions, reusable debugging lessons, or agent guidance that should survive the task.
 
 ## Code Smell Guard
 

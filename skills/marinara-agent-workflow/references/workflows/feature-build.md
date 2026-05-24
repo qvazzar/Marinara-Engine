@@ -54,6 +54,6 @@ Before building, name the likely structural risk: bloat, repeated conditionals, 
 
 The final review blocks on smells that threaten correctness, maintainability, proof, data safety, security, or reviewability. Tiny isolated smells can be called out as review notes.
 
-## Docs And Updates
+## Docs And Release Notes
 
-For user-facing features, update repo-defined docs, `updates/`, or release notes only when the repo has an appropriate source and the change belongs there. If the feature is internal-only or no repo-defined release-note source exists, report `Docs/updates: not needed` with the reason.
+For user-facing features, update repo-defined docs or release notes only when the repo has an appropriate source and the change belongs there. If the feature is internal-only or no repo-defined release-note source exists, report `Docs/release notes: not needed` with the reason.

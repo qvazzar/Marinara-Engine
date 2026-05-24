@@ -15,7 +15,7 @@ Use this when the user gives a bug report, screenshot, failing check, broken UI 
 9. Remove obsolete fake-success, catch-and-ignore, old-shape compatibility, broad default, or placeholder branches exposed by the fix.
 10. Verify the original repro or closest representative path no longer fails.
 11. Run the checks that match the touched area.
-12. Report root cause, files changed, docs/updates status when relevant, verification, related issues not fixed, and manual blockers.
+12. Report root cause, files changed, docs/release-note status when relevant, verification, related issues not fixed, and manual blockers.
 
 ## Proof Rule
 
@@ -33,4 +33,4 @@ The maintainer review must also check shape. A passing repro is not enough if th
 - Backend, engine, or logic bug: focused repro output before and after.
 - Build or type bug: failing command output before and passing command output after.
 - Risky data path: risk claim matrix plus focused proof review.
-- User-facing fix: repo-defined docs, `updates/`, or release-note entry when one exists and the change belongs there, or explicit `Docs/updates: not needed` reason.
+- User-facing fix: repo-defined docs or release-note entry when one exists and the change belongs there, or explicit `Docs/release notes: not needed` reason.

@@ -18,7 +18,7 @@ Before push or PR creation:
 2. Verify remotes and target branch from the current checkout; do not assume `staging`, fork workflow, or team-branch workflow.
 3. Confirm only intentional files will ship.
 4. Verify evidence exists for the PR claim.
-5. Confirm repo-defined docs/updates/release notes are updated for user-facing changes when an appropriate source exists, or explicitly record why not needed.
+5. Confirm repo-defined docs/release notes are updated for user-facing changes when an appropriate source exists, or explicitly record why not needed.
 6. Draft external text exactly.
 
 Open new PRs as draft unless the user or target workflow says it should be ready for review. Never push directly to protected branches or force-push without explicit approval.
@@ -37,7 +37,7 @@ Ask:
 - Does proof demonstrate the real claim?
 - What user path did proof fail to prove?
 - What adjacent legacy/default path could contradict the PR body?
-- Are repo-defined docs/updates/release notes handled when the change is user-facing?
+- Are repo-defined docs/release notes handled when the change is user-facing?
 - Did the author name the owner, impact, callers, contracts, checks, and any risky boundary path before editing?
 - Is the diff narrow, current, and easy to review?
 - Did the diff worsen bloat, ownership, duplication, repeated conditionals, shotgun surgery, dead/speculative code, direct engine-to-Tauri coupling, or cross-mode coupling?
