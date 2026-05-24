@@ -74,6 +74,7 @@ pub(super) fn import_legacy_profile_tables_with_restored_assets(
     for (table, collection) in LEGACY_PROFILE_TABLES {
         let mut rows = table_rows(tables, table);
         match *collection {
+            "app-settings" => normalize_legacy_app_settings(&mut rows),
             "lorebooks" => add_legacy_lorebook_links(&mut rows, tables),
             "chats" => add_legacy_chat_memories(&mut rows, tables),
             "messages" => add_legacy_message_swipes(&mut rows, tables),
@@ -97,6 +98,21 @@ fn table_rows(tables: &Map<String, Value>, table: &str) -> Vec<Value> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default()
+}
+
+fn normalize_legacy_app_settings(rows: &mut [Value]) {
+    for row in rows {
+        let Some(object) = row.as_object_mut() else {
+            continue;
+        };
+        let legacy_key = trimmed_string(object.get("key"));
+        if trimmed_string(object.get("id")).is_none() {
+            if let Some(key) = legacy_key {
+                object.insert("id".to_string(), Value::String(key));
+            }
+        }
+        object.remove("key");
+    }
 }
 
 fn add_legacy_lorebook_links(rows: &mut [Value], tables: &Map<String, Value>) {
@@ -296,6 +312,80 @@ fn diagnostic_string(value: Option<&Value>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::AppState;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_state(label: &str) -> AppState {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("marinara-profile-legacy-{label}-{nonce}"));
+        if path.exists() {
+            std::fs::remove_dir_all(&path).expect("stale temp profile dir should be removable");
+        }
+        AppState::from_data_dir(path, Vec::new()).expect("test app state should initialize")
+    }
+
+    #[test]
+    fn legacy_app_settings_key_rows_import_as_settings_ids() {
+        let state = test_state("app-settings-key");
+        state
+            .storage
+            .upsert_with_id(
+                "app-settings",
+                "ui",
+                json!({ "value": { "theme": "seeded" } }),
+            )
+            .expect("seeded ui settings should write");
+        let mut tables = Map::new();
+        tables.insert(
+            "app_settings".to_string(),
+            json!([
+                {
+                    "key": "ui",
+                    "value": { "theme": "imported" },
+                    "updatedAt": "2026-05-24T00:00:00Z"
+                }
+            ]),
+        );
+
+        import_legacy_profile_tables_with_restored_assets(&state, &tables, 0)
+            .expect("legacy profile import should succeed");
+
+        let ui = state
+            .storage
+            .get("app-settings", "ui")
+            .expect("ui settings lookup should not fail")
+            .expect("imported ui settings should be addressable by id");
+        assert_eq!(ui["id"], "ui");
+        assert_eq!(ui["value"]["theme"], "imported");
+        assert!(!ui.as_object().unwrap().contains_key("key"));
+    }
+
+    #[test]
+    fn legacy_app_settings_blank_key_does_not_create_ui_id() {
+        let state = test_state("app-settings-blank-key");
+        let mut tables = Map::new();
+        tables.insert(
+            "app_settings".to_string(),
+            json!([
+                {
+                    "key": "  ",
+                    "value": { "theme": "not-ui" }
+                }
+            ]),
+        );
+
+        import_legacy_profile_tables_with_restored_assets(&state, &tables, 0)
+            .expect("legacy profile import should preserve malformed rows without matching ui");
+
+        assert!(state
+            .storage
+            .get("app-settings", "ui")
+            .expect("ui settings lookup should not fail")
+            .is_none());
+    }
 
     #[test]
     fn legacy_game_state_snapshot_maps_sqlite_field_names_to_tracker_rows() {

@@ -176,3 +176,64 @@ fn profile_collections(state: &AppState) -> AppResult<Map<String, Value>> {
     }
     Ok(collections)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::AppState;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_state(label: &str) -> AppState {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("marinara-profile-import-{label}-{nonce}"));
+        if path.exists() {
+            std::fs::remove_dir_all(&path).expect("stale temp profile dir should be removable");
+        }
+        AppState::from_data_dir(path, Vec::new()).expect("test app state should initialize")
+    }
+
+    #[test]
+    fn profile_import_legacy_file_storage_app_settings_key_sets_ui_id() {
+        let state = test_state("legacy-file-storage-app-settings");
+        state
+            .storage
+            .upsert_with_id(
+                "app-settings",
+                "ui",
+                json!({ "value": { "theme": "seeded" } }),
+            )
+            .expect("seeded ui settings should write");
+
+        import_profile(
+            &state,
+            json!({
+                "type": "marinara_profile",
+                "version": 1,
+                "data": {
+                    "fileStorage": {
+                        "tables": {
+                            "app_settings": [
+                                {
+                                    "key": "ui",
+                                    "value": { "theme": "imported" }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }),
+        )
+        .expect("legacy file-storage profile import should succeed");
+
+        let ui = state
+            .storage
+            .get("app-settings", "ui")
+            .expect("ui settings lookup should not fail")
+            .expect("imported ui settings should be addressable by id");
+        assert_eq!(ui["id"], "ui");
+        assert_eq!(ui["value"]["theme"], "imported");
+    }
+}
