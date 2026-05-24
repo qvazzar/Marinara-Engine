@@ -5,6 +5,7 @@ import { useStartChatFromCharacter } from "../hooks/use-start-chat-from-characte
 import { getCharacterTitle } from "../../../../shared/lib/character-display";
 import { cn, getAvatarCropStyle, type AvatarCrop } from "../../../../shared/lib/utils";
 import { useUIStore } from "../../../../shared/stores/ui.store";
+import { getCharacterAvatarLoadingMode } from "../lib/character-avatar-loading";
 
 type CharacterData = Record<string, unknown> & {
   name?: string;
@@ -431,7 +432,7 @@ export function CharacterLibraryView() {
                           <img
                             src={char.avatarPath}
                             alt={charName}
-                            loading="lazy"
+                            loading={getCharacterAvatarLoadingMode(char.avatarPath)}
                             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
                             style={getAvatarCropStyle(
                               char.parsed.extensions?.avatarCrop as AvatarCrop
