@@ -28,7 +28,7 @@ import {
   Cookie,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { characterKeys } from "../../../catalog/characters/index";
+import { cacheCharacterListRecordFromResult, characterKeys } from "../../../catalog/characters/index";
 import { lorebookKeys } from "../../../catalog/lorebooks/index";
 import { parsePngCharacterCard } from "../../../../shared/lib/png-parser";
 import { useUIStore } from "../../../../shared/stores/ui.store";
@@ -1397,7 +1397,8 @@ export function BotBrowserView() {
         });
         if (data.success) {
           toast.success(`Imported "${data.name ?? "character"}" successfully!`);
-          qc.invalidateQueries({ queryKey: characterKeys.list() });
+          const cached = cacheCharacterListRecordFromResult(qc, data);
+          if (!cached) qc.invalidateQueries({ queryKey: characterKeys.list() });
           if (data.lorebook) qc.invalidateQueries({ queryKey: lorebookKeys.all });
         } else throw new Error(data.error ?? "Import failed");
       } else {
@@ -1443,7 +1444,8 @@ export function BotBrowserView() {
         const data = await importStCharacter(v2);
         if (data.success) {
           toast.success(`Imported "${data.name ?? card.name}" successfully!`);
-          qc.invalidateQueries({ queryKey: characterKeys.list() });
+          const cached = cacheCharacterListRecordFromResult(qc, data);
+          if (!cached) qc.invalidateQueries({ queryKey: characterKeys.list() });
           if (data.lorebook) qc.invalidateQueries({ queryKey: lorebookKeys.all });
         } else throw new Error(data.error ?? "Import failed");
       }

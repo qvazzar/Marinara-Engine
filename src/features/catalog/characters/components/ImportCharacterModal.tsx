@@ -5,7 +5,7 @@ import { useState, useRef } from "react";
 import { Modal } from "../../../../shared/components/ui/Modal";
 import { Download, FileJson, Image, CheckCircle, XCircle, Loader2, BookOpen } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { characterKeys } from "../hooks/use-characters";
+import { cacheCharacterListRecordFromResult, characterKeys } from "../hooks/use-characters";
 import { lorebookKeys } from "../../lorebooks/index";
 import { importApi } from "../../../../shared/api/import-api";
 import {
@@ -98,6 +98,7 @@ export function ImportCharacterModal({ open, onClose }: Props) {
 
       const nextResults: ImportResultRow[] = [];
       let importedLorebook = false;
+      let importedCharacterMissingCacheRecord = false;
 
       if (stCharacterFiles.length > 0) {
         const form = new FormData();
@@ -130,6 +131,10 @@ export function ImportCharacterModal({ open, onClose }: Props) {
 
         for (const result of batchResult.results) {
           if (result.lorebook?.lorebookId) importedLorebook = true;
+          if (result.success) {
+            const cached = cacheCharacterListRecordFromResult(qc, result);
+            if (!cached) importedCharacterMissingCacheRecord = true;
+          }
           nextResults.push({
             filename: result.filename,
             success: result.success,
@@ -152,6 +157,7 @@ export function ImportCharacterModal({ open, onClose }: Props) {
             success: boolean;
             name?: string;
             error?: string;
+            character?: unknown;
           }>({
             ...item.payload,
             timestampOverrides: {
@@ -160,6 +166,10 @@ export function ImportCharacterModal({ open, onClose }: Props) {
             },
           });
 
+          if (result.success) {
+            const cached = cacheCharacterListRecordFromResult(qc, result);
+            if (!cached) importedCharacterMissingCacheRecord = true;
+          }
           nextResults.push({
             filename: item.file.name,
             success: result.success,
@@ -176,7 +186,12 @@ export function ImportCharacterModal({ open, onClose }: Props) {
 
       for (const file of marinaraPackages) {
         try {
-          const result = await importApi.marinaraFile<{ success: boolean; name?: string; error?: string }>({
+          const result = await importApi.marinaraFile<{
+            success: boolean;
+            name?: string;
+            error?: string;
+            character?: unknown;
+          }>({
             file,
             fields: {
               timestampOverrides: JSON.stringify({
@@ -185,6 +200,10 @@ export function ImportCharacterModal({ open, onClose }: Props) {
               }),
             },
           });
+          if (result.success) {
+            const cached = cacheCharacterListRecordFromResult(qc, result);
+            if (!cached) importedCharacterMissingCacheRecord = true;
+          }
           nextResults.push({
             filename: file.name,
             success: result.success,
@@ -202,7 +221,7 @@ export function ImportCharacterModal({ open, onClose }: Props) {
       setResults(nextResults);
       setStatus("done");
 
-      if (nextResults.some((result) => result.success)) {
+      if (importedCharacterMissingCacheRecord) {
         qc.invalidateQueries({ queryKey: characterKeys.list() });
       }
       if (importedLorebook) {

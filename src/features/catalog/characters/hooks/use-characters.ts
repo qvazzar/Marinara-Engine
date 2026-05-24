@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // React Query: Character, Group & Persona hooks
 // ──────────────────────────────────────────────
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { characterKeys, spriteKeys } from "../query-keys";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { invokeTauri } from "../../../../shared/api/tauri-client";
@@ -10,6 +10,51 @@ import type { CharacterCardVersion } from "../../../../engine/contracts/types/ch
 import type { SpriteCapabilities, SpriteCleanupEngine } from "../../../../shared/types/sprite-capabilities";
 
 export { characterKeys, spriteKeys } from "../query-keys";
+
+type CharacterListRecord = Record<string, unknown> & { id?: string };
+
+function isCharacterListRecord(value: unknown): value is CharacterListRecord & { id: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      typeof (value as { id?: unknown }).id === "string",
+  );
+}
+
+export function upsertCharacterListRecord(current: unknown[] | undefined, record: unknown): unknown[] | undefined {
+  if (!isCharacterListRecord(record)) return current;
+  if (!Array.isArray(current)) return current;
+
+  const existingIndex = current.findIndex((item) => isCharacterListRecord(item) && item.id === record.id);
+  if (existingIndex === -1) return [record, ...current];
+
+  return current.map((item, index) =>
+    index === existingIndex && isCharacterListRecord(item) ? { ...item, ...record } : item,
+  );
+}
+
+export function removeCharacterListRecord(current: unknown[] | undefined, id: string): unknown[] | undefined {
+  if (!Array.isArray(current)) return current;
+  return current.filter((item) => !isCharacterListRecord(item) || item.id !== id);
+}
+
+export function cacheCharacterListRecordFromResult(
+  queryClient: Pick<QueryClient, "getQueryData" | "setQueryData">,
+  result: unknown,
+): boolean {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return false;
+  const record = (result as { character?: unknown }).character;
+  if (!isCharacterListRecord(record)) return false;
+
+  const current = queryClient.getQueryData<unknown[] | undefined>(characterKeys.list());
+  if (!Array.isArray(current)) return false;
+
+  queryClient.setQueryData<unknown[] | undefined>(characterKeys.list(), (value) =>
+    upsertCharacterListRecord(value, record),
+  );
+  return true;
+}
 
 // ── Characters ──
 
@@ -35,7 +80,10 @@ export function useCreateCharacter() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: Record<string, unknown>) => storageApi.create("characters", data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.list() }),
+    onSuccess: (character) => {
+      const updated = cacheCharacterListRecordFromResult(qc, { character });
+      if (!updated) qc.invalidateQueries({ queryKey: characterKeys.list() });
+    },
   });
 }
 
@@ -110,7 +158,20 @@ export function useDeleteCharacter() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => storageApi.delete("characters", id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.list() }),
+    onSuccess: (result, id) => {
+      if (result?.deleted !== true) {
+        qc.invalidateQueries({ queryKey: characterKeys.list() });
+        return;
+      }
+
+      const current = qc.getQueryData<unknown[] | undefined>(characterKeys.list());
+      if (!Array.isArray(current)) {
+        qc.invalidateQueries({ queryKey: characterKeys.list() });
+        return;
+      }
+
+      qc.setQueryData<unknown[] | undefined>(characterKeys.list(), (value) => removeCharacterListRecord(value, id));
+    },
   });
 }
 
@@ -118,7 +179,10 @@ export function useDuplicateCharacter() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => invokeTauri("storage_duplicate", { entity: "characters", id }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.list() }),
+    onSuccess: (character) => {
+      const updated = cacheCharacterListRecordFromResult(qc, { character });
+      if (!updated) qc.invalidateQueries({ queryKey: characterKeys.list() });
+    },
   });
 }
 
