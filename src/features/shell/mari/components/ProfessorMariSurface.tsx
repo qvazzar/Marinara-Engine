@@ -80,6 +80,17 @@ function toConversationMessage(message: MariMessage): Message {
   };
 }
 
+function formatErrorDetails(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const record = error as Record<string, unknown>;
+  const details = "details" in record ? record.details : record;
+  try {
+    return JSON.stringify(details, null, 2);
+  } catch {
+    return String(details);
+  }
+}
+
 export function ProfessorMariSurface() {
   const { data: rawConnections } = useConnections();
   const { data: rawPersonas } = usePersonas();
@@ -95,6 +106,7 @@ export function ProfessorMariSurface() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [sendErrorDetails, setSendErrorDetails] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -202,6 +214,7 @@ export function ProfessorMariSurface() {
     setDraft("");
     setAttachments([]);
     setSendError(null);
+    setSendErrorDetails(null);
     setSending(true);
     requestAnimationFrame(() => inputRef.current?.focus());
     let response;
@@ -234,7 +247,9 @@ export function ProfessorMariSurface() {
         mariApi,
       );
     } catch (error) {
+      console.error("Professor Mari failed to respond", error);
       setSendError(error instanceof Error ? error.message : "Professor Mari failed to respond.");
+      setSendErrorDetails(formatErrorDetails(error));
       setSending(false);
       return;
     }
@@ -312,7 +327,17 @@ export function ProfessorMariSurface() {
           {sending && (
             <div className="px-4 py-2 text-xs text-[var(--muted-foreground)]">Professor Mari is thinking...</div>
           )}
-          {sendError && <div className="px-4 py-2 text-xs text-red-500">{sendError}</div>}
+          {sendError && (
+            <div className="px-4 py-2 text-xs text-red-500">
+              <div>{sendError}</div>
+              {sendErrorDetails && (
+                <details className="mt-2 max-w-3xl rounded-md border border-red-500/20 bg-red-950/10 p-2 text-[0.6875rem] text-red-400">
+                  <summary className="cursor-pointer font-medium">Debug details</summary>
+                  <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words">{sendErrorDetails}</pre>
+                </details>
+              )}
+            </div>
+          )}
           <div ref={messagesEndRef} className="h-1" />
         </div>
       </div>

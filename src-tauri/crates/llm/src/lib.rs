@@ -284,8 +284,10 @@ fn should_send_top_k(request: &LlmRequest) -> bool {
 fn provider_error_text(details: &Value) -> Option<String> {
     [
         details.pointer("/error/message").and_then(Value::as_str),
+        details.pointer("/response/error/message").and_then(Value::as_str),
         details.get("message").and_then(Value::as_str),
         details.pointer("/error").and_then(Value::as_str),
+        details.pointer("/response/error").and_then(Value::as_str),
     ]
     .into_iter()
     .flatten()
@@ -530,7 +532,7 @@ async fn complete_openai_compatible_rich(request: LlmRequest) -> AppResult<LlmCo
     }
     apply_openai_parameters(&mut body, &request);
     let client = reqwest::Client::new();
-    let mut req = client.post(url).json(&body);
+    let mut req = client.post(&url).json(&body);
     if !request.connection.api_key.trim().is_empty() {
         req = req.bearer_auth(request.connection.api_key.trim());
     }
@@ -543,7 +545,7 @@ async fn complete_openai_compatible_rich(request: LlmRequest) -> AppResult<LlmCo
         .send()
         .await
         .map_err(|error| AppError::new("llm_network_error", error.to_string()))?;
-    parse_json_response_rich(response).await
+    parse_json_response_rich(response, llm_debug_context(&request, &url, &body)).await
 }
 
 async fn stream_openai_compatible(
@@ -1455,14 +1457,78 @@ fn response_reasoning_text(choice: &Value, message: &Value) -> String {
     .unwrap_or_default()
 }
 
-async fn parse_json_response_rich(response: reqwest::Response) -> AppResult<LlmCompletion> {
+fn llm_debug_context(request: &LlmRequest, endpoint: &str, body: &Value) -> Value {
+    let messages = request_messages(request)
+        .iter()
+        .map(|message| {
+            json!({
+                "role": message.role,
+                "contentChars": message.content.chars().count(),
+                "imageCount": message.images.len(),
+                "hasToolCallId": message.tool_call_id.is_some(),
+                "hasToolCalls": message.tool_calls.is_some(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let tool_names = request
+        .tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    json!({
+        "provider": request.connection.provider,
+        "model": request.connection.model,
+        "endpoint": endpoint,
+        "messageCount": messages.len(),
+        "messages": messages,
+        "toolCount": request.tools.len(),
+        "toolNames": tool_names,
+        "parameters": request.parameters,
+        "bodyKeys": body.as_object().map(|object| object.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
+    })
+}
+
+fn text_excerpt(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+fn response_debug_details(context: Value, response: Value) -> Value {
+    json!({
+        "context": context,
+        "response": response,
+    })
+}
+
+async fn parse_json_response_rich(
+    response: reqwest::Response,
+    debug_context: Value,
+) -> AppResult<LlmCompletion> {
     let status = response.status();
-    let json: Value = response
-        .json()
+    let body_text = response
+        .text()
         .await
         .map_err(|error| AppError::new("llm_response_error", error.to_string()))?;
+    let json: Value = serde_json::from_str(&body_text).map_err(|error| {
+        AppError::with_details(
+            "llm_response_error",
+            format!("Provider response was not valid JSON: {error}"),
+            json!({
+                "context": debug_context.clone(),
+                "responseText": text_excerpt(&body_text, 4096),
+            }),
+        )
+    })?;
     if !status.is_success() {
-        return Err(provider_http_error(status, json));
+        return Err(provider_http_error(
+            status,
+            response_debug_details(debug_context, json),
+        ));
+    }
+    if json.get("error").is_some() && json.get("choices").is_none() {
+        return Err(provider_http_error(
+            status,
+            response_debug_details(debug_context, json),
+        ));
     }
     let choice = json
         .get("choices")
@@ -1472,7 +1538,7 @@ async fn parse_json_response_rich(response: reqwest::Response) -> AppResult<LlmC
             AppError::with_details(
                 "llm_response_error",
                 "Provider response did not contain a completion choice",
-                json.clone(),
+                response_debug_details(debug_context.clone(), json.clone()),
             )
         })?;
     let message = choice.get("message").unwrap_or(choice);
@@ -1505,13 +1571,13 @@ async fn parse_json_response_rich(response: reqwest::Response) -> AppResult<LlmC
             return Err(AppError::with_details(
                 "llm_response_error",
                 "Provider returned reasoning but no final assistant text. Increase Max Output Tokens or lower Reasoning Effort in this connection's generation controls.",
-                json,
+                response_debug_details(debug_context, json),
             ));
         }
         return Err(AppError::with_details(
             "llm_response_error",
             "Provider response did not contain assistant text or tool calls",
-            json,
+            response_debug_details(debug_context, json),
         ));
     }
     Ok(LlmCompletion {
