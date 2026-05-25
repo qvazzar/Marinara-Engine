@@ -1,5 +1,6 @@
 import type { AvatarCrop } from "../../../../shared/lib/utils";
 import { cn, getAvatarCropStyle, parseAvatarCropJson } from "../../../../shared/lib/utils";
+import { getCharacterAvatarLoadingMode } from "../lib/character-avatar-loading";
 
 function isAvatarCrop(value: unknown): value is AvatarCrop {
   return (
@@ -39,7 +40,7 @@ export function CharacterAvatarImage({
     <img
       src={src}
       alt={alt}
-      loading="lazy"
+      loading={getCharacterAvatarLoadingMode(src)}
       draggable={false}
       className={cn("h-full w-full object-cover", className)}
       style={getAvatarCropStyle(resolveAvatarCrop(crop))}
