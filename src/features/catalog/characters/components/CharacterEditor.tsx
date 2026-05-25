@@ -2147,13 +2147,13 @@ function SpritesTab({
   const cleanupEngineReason =
     spriteCapabilities?.cleanupEngine?.reason ?? "Sprite cleanup is not available.";
 
-  const normalizeExpressionForCategory = (raw: string) => {
+  const normalizeExpressionForCategory = (raw: string, forCategory: SpriteCategory = category) => {
     const cleaned = raw
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, "_");
     if (!cleaned) return "";
-    if (category === "full-body") {
+    if (forCategory === "full-body") {
       return cleaned.startsWith("full_") ? cleaned : `full_${cleaned}`;
     }
     return cleaned.replace(/^full_/, "");
@@ -2208,13 +2208,14 @@ function SpritesTab({
     setFolderProgress({ done: 0, total: imageFiles.length });
     try {
       const uploads: Array<{ expression: string; image: string }> = [];
+      const folderCategory = category;
       let skipped = 0;
 
       for (let i = 0; i < imageFiles.length; i++) {
         const file = imageFiles[i]!;
         // Derive expression name from filename (strip extension, lowercase, sanitize)
         const expression = file.name.replace(/\.[^.]+$/, "").trim();
-        const normalized = normalizeExpressionForCategory(expression);
+        const normalized = normalizeExpressionForCategory(expression, folderCategory);
         if (!normalized) {
           skipped += 1;
           setFolderProgress({ done: i + 1, total: imageFiles.length });
