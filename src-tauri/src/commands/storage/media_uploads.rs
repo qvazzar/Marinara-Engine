@@ -143,30 +143,6 @@ fn percent_encode_asset_path(value: &str) -> String {
     encoded
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn file_path_asset_url_matches_tauri_encoding_on_windows() {
-        let path = Path::new(r"C:\Users\Mari\My Avatar.png");
-
-        let url = file_path_asset_url(path);
-
-        if cfg!(windows) {
-            assert_eq!(
-                url,
-                "http://asset.localhost/C%3A%5CUsers%5CMari%5CMy%20Avatar.png"
-            );
-        } else {
-            assert_eq!(
-                url,
-                "asset://localhost/C%3A%5CUsers%5CMari%5CMy%20Avatar.png"
-            );
-        }
-    }
-}
-
 pub(crate) fn remove_managed_record_file(
     state: &AppState,
     folder: &str,
@@ -330,4 +306,28 @@ pub(crate) fn unique_file_path(target: &Path) -> AppResult<PathBuf> {
         }
     }
     Err(AppError::invalid_input("Could not allocate image filename"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_path_asset_url_matches_tauri_encoding_on_windows() {
+        let path = Path::new(r"C:\Users\Mari\My Avatar.png");
+
+        let url = file_path_asset_url(path);
+
+        if cfg!(windows) {
+            assert_eq!(
+                url,
+                "http://asset.localhost/C%3A%5CUsers%5CMari%5CMy%20Avatar.png"
+            );
+        } else {
+            assert_eq!(
+                url,
+                "asset://localhost/C%3A%5CUsers%5CMari%5CMy%20Avatar.png"
+            );
+        }
+    }
 }
