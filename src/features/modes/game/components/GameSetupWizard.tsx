@@ -1290,14 +1290,15 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
                             >
                               <option value="">Choose playlist...</option>
                               {spotifyPlaylistsQuery.data.playlists.map((playlist) => {
+                                const unavailable = playlist.owned === false;
                                 const suffix =
                                   typeof playlist.trackCount === "number"
                                     ? ` (${playlist.trackCount})`
-                                    : playlist.owned === false
-                                      ? " (followed — unavailable)"
+                                    : unavailable
+                                      ? " (followed - unavailable)"
                                       : "";
                                 return (
-                                  <option key={playlist.id} value={playlist.id}>
+                                  <option key={playlist.id} value={playlist.id} disabled={unavailable}>
                                     {playlist.name}
                                     {suffix}
                                   </option>

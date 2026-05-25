@@ -2825,6 +2825,7 @@ export function GameSurface({
       narration: string,
       context: Record<string, unknown>,
       playerAction?: string | null,
+      options?: { suppressErrors?: boolean },
     ): Promise<SceneSpotifyTrackCandidate[]> => {
       if (!useSpotifyGameMusic || !activeChatId) return [];
       setSpotifyRetryPending(true);
@@ -2839,6 +2840,9 @@ export function GameSurface({
         return result.enabled ? (result.tracks ?? []) : [];
       } catch (error) {
         console.warn("[spotify/game] Failed to prepare scene music candidates:", error);
+        if (!options?.suppressErrors) {
+          throw error;
+        }
         return [];
       } finally {
         setSpotifyRetryPending(false);
@@ -3673,7 +3677,15 @@ export function GameSurface({
           {
             onSuccess: (r) => {
               onComplete();
-              applySceneResult(r, msg);
+              void applySceneResult(r, msg).catch((err) => {
+                console.warn("[scene-wrapup] applying scene result failed:", err);
+                setSceneAnalysisFailed(true);
+                applyInlineTags(tags, assets, msg);
+                if (sceneReadyMsgIdRef.current !== msg.id) {
+                  sceneReadyMsgIdRef.current = msg.id;
+                  setSceneReadyTick((t) => t + 1);
+                }
+              });
             },
             onError: (err) => {
               onComplete();
@@ -3690,7 +3702,7 @@ export function GameSurface({
       } else {
         // No scene model at all: parse inline tags from the main model
         if (useSpotifyGameMusic) {
-          void fetchSpotifySceneCandidates(tags.cleanContent, analysisContext).then((availableSpotifyTracks) => {
+          void fetchSpotifySceneCandidates(tags.cleanContent, analysisContext, null, { suppressErrors: true }).then((availableSpotifyTracks) => {
             const fallback = availableSpotifyTracks[0];
             if (!fallback) return;
             void playSpotifySceneTrack({
@@ -3722,7 +3734,7 @@ export function GameSurface({
     };
 
     if (useSpotifyGameMusic && sceneConnId) {
-      void fetchSpotifySceneCandidates(tags.cleanContent, sceneContext).then((availableSpotifyTracks) => {
+      void fetchSpotifySceneCandidates(tags.cleanContent, sceneContext, null, { suppressErrors: true }).then((availableSpotifyTracks) => {
         runSceneAnalysis({
           ...sceneContext,
           availableSpotifyTracks,
@@ -4479,7 +4491,7 @@ export function GameSurface({
       toast.success("Spotify scene music refreshed.", { duration: 1800 });
     } catch (error) {
       console.warn("[spotify/game] Retry failed:", error);
-      toast.error("Spotify scene music retry failed.");
+      toast.error(error instanceof Error ? error.message : "Spotify scene music retry failed.");
     } finally {
       setSpotifyRetryPending(false);
     }

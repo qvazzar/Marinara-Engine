@@ -1,6 +1,6 @@
 import type { Chat } from "../../../../engine/contracts/types/chat";
 import type { CombatAttack, CombatEnemy, CombatInitState, CombatMechanic, CombatPartyMember, EncounterSettings } from "../../../../engine/contracts/types/combat-encounter";
-import type { Combatant, CombatPlayerAction, GameActiveState, GameCheckpoint, GameMap, GameNpc, GameSetupConfig, HudWidget, SessionSummary } from "../../../../engine/contracts/types/game";
+import type { Combatant, CombatPlayerAction, GameActiveState, GameCheckpoint, GameMap, GameNpc, GameSetupConfig, GameSpotifySourceType, HudWidget, SessionSummary } from "../../../../engine/contracts/types/game";
 import type { RPGAttributes } from "../../../../engine/contracts/types/game-state";
 import { ApiError, type JsonRepairRequest } from "../../../../shared/api/api-errors";
 import { gameAssetsApi } from "../../../../shared/api/assets-api";
@@ -23,6 +23,7 @@ import { addCombatEntry, addEventEntry, addInventoryEntry, addLocationEntry, add
 import { withActiveGameMapMeta } from "../../../../engine/modes/game/world/map-position.service";
 import { createInitialTime, formatGameTime, advanceTime as advanceGameTime, type GameTime } from "../../../../engine/modes/game/world/time.service";
 import { generateWeather, inferBiome, type WeatherState } from "../../../../engine/modes/game/world/weather.service";
+import type { SceneSpotifyTrackCandidate } from "../../../../engine/contracts/types/scene";
 
 export interface CreateGameResponse {
   sessionChat: Chat;
@@ -700,11 +701,39 @@ function spotifyQuery(payload: Record<string, unknown>): string {
   return words.length ? words.join(" ") : "cinematic adventure soundtrack";
 }
 
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function spotifySourceType(value: unknown): GameSpotifySourceType {
+  return value === "playlist" || value === "artist" || value === "any" ? value : "liked";
+}
+
 function recentSpotifyTracks(payload: Record<string, unknown>): string[] {
   const context = asRecord(payload.context);
   return Array.isArray(context.recentSpotifyTracks)
     ? context.recentSpotifyTracks.filter((uri): uri is string => typeof uri === "string" && uri.startsWith("spotify:track:"))
     : [];
+}
+
+function spotifyCandidateTracks(response: unknown): SceneSpotifyTrackCandidate[] {
+  const record = asRecord(response);
+  return Array.isArray(record.tracks)
+    ? record.tracks.filter((track): track is SceneSpotifyTrackCandidate => {
+        const candidate = asRecord(track);
+        return !!stringValue(candidate.uri) && !!stringValue(candidate.name) && !!stringValue(candidate.artist);
+      })
+    : [];
+}
+
+function filterRecentSpotifyCandidates(
+  tracks: SceneSpotifyTrackCandidate[],
+  recentTrackUris: string[],
+): SceneSpotifyTrackCandidate[] {
+  if (tracks.length === 0 || recentTrackUris.length === 0) return tracks;
+  const recent = new Set(recentTrackUris);
+  const fresh = tracks.filter((track) => !recent.has(track.uri));
+  return fresh.length ? fresh : tracks;
 }
 
 async function llmJson(input: {
@@ -1515,15 +1544,35 @@ export const gameApi = {
   },
 
   async spotifyCandidates(payload: Record<string, unknown>) {
-    try {
-      return await spotifyApi.searchTracks({
-        query: spotifyQuery(payload),
-        limit: Math.max(1, Math.min(50, Number(payload.limit ?? 50))),
-        recentTrackUris: recentSpotifyTracks(payload),
+    const limit = Math.max(1, Math.min(50, Number(payload.limit ?? 50)));
+    const recentTrackUris = recentSpotifyTracks(payload);
+    const chatId = stringValue(payload.chatId);
+    const meta = chatId ? chatMeta(await getChat(chatId)) : {};
+    const sourceType = spotifySourceType(meta.gameSpotifySourceType);
+    let response: unknown;
+
+    if (sourceType === "liked") {
+      response = await spotifyApi.playlistTracks({ playlistId: "liked", limit, recentTrackUris });
+    } else if (sourceType === "playlist" && stringValue(meta.gameSpotifyPlaylistId)) {
+      response = await spotifyApi.playlistTracks({
+        playlistId: stringValue(meta.gameSpotifyPlaylistId),
+        limit,
+        recentTrackUris,
       });
-    } catch (error) {
-      return { enabled: false, tracks: [], error: error instanceof Error ? error.message : "Spotify search failed" };
+    } else {
+      const query =
+        sourceType === "artist" && stringValue(meta.gameSpotifyArtist)
+          ? `artist:${stringValue(meta.gameSpotifyArtist)} ${spotifyQuery(payload)}`
+          : spotifyQuery(payload);
+      response = await spotifyApi.searchTracks({ query, limit, recentTrackUris });
     }
+
+    return {
+      ...(asRecord(response)),
+      enabled: true,
+      tracks: filterRecentSpotifyCandidates(spotifyCandidateTracks(response), recentTrackUris),
+      sourceType,
+    };
   },
 
   async spotifyPlay(payload: { track: unknown; deviceId?: string | null }) {

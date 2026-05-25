@@ -11,6 +11,7 @@ const DJ_MARI_MAX_TRACKS: usize = 50;
 const DJ_MARI_OUTPUT_TOKENS: u64 = 8192;
 const RECENT_CHAT_MESSAGE_LIMIT: usize = 8;
 const LIKED_SONG_EXAMPLE_LIMIT: u32 = 50;
+const SPOTIFY_SEARCH_PAGE_LIMIT: u32 = 10;
 const SPOTIFY_MIN_TITLE_SIMILARITY: f64 = 0.7;
 const SPOTIFY_MIN_ARTIST_SIMILARITY: f64 = 0.2;
 const SPOTIFY_MIN_MATCH_SCORE: f64 = 70.0;
@@ -114,30 +115,48 @@ async fn search_tracks(state: &AppState, body: Value) -> AppResult<Value> {
         .unwrap_or_default();
     let route = ParsedPath::new("");
     let credentials = resolve_credentials(state, &route, &body).await?;
-    let params = form_urlencoded(&[
-        ("q", query),
-        ("type", "track"),
-        ("limit", &limit.to_string()),
-    ]);
-    let response = spotify_api(&credentials, &format!("/search?{params}"), "GET", None).await?;
-    if !(200..300).contains(&response.status) {
-        return Err(AppError::with_details(
-            "spotify_api_error",
-            "Spotify track search failed",
-            json!({ "status": response.status, "body": response.body }),
-        ));
+    let mut items = Vec::new();
+    let mut offset = 0;
+    while items.len() < limit as usize {
+        let page_limit = (limit - items.len() as u32).min(SPOTIFY_SEARCH_PAGE_LIMIT);
+        let limit_param = page_limit.to_string();
+        let offset_param = offset.to_string();
+        let params = form_urlencoded(&[
+            ("q", query),
+            ("type", "track"),
+            ("limit", &limit_param),
+            ("offset", &offset_param),
+        ]);
+        let response =
+            spotify_api(&credentials, &format!("/search?{params}"), "GET", None).await?;
+        if !(200..300).contains(&response.status) {
+            let message = spotify_error_message(&response.body, "Spotify track search failed");
+            return Err(AppError::with_details(
+                "spotify_api_error",
+                format!("{message} (HTTP {})", response.status),
+                json!({ "status": response.status, "body": response.body }),
+            ));
+        }
+        let page_items = response
+            .json
+            .get("tracks")
+            .and_then(|tracks| tracks.get("items"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let count = page_items.len() as u32;
+        items.extend(page_items);
+        if count < page_limit {
+            break;
+        }
+        offset += count;
     }
     let recent = recent
         .iter()
         .map(|uri| uri.as_str())
         .collect::<std::collections::HashSet<_>>();
-    let mut tracks = response
-        .json
-        .get("tracks")
-        .and_then(|tracks| tracks.get("items"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
+    let mut tracks = items
+        .clone()
         .into_iter()
         .filter_map(map_track_candidate)
         .filter(|track| {
@@ -148,13 +167,7 @@ async fn search_tracks(state: &AppState, body: Value) -> AppResult<Value> {
         })
         .collect::<Vec<_>>();
     if tracks.is_empty() {
-        tracks = response
-            .json
-            .get("tracks")
-            .and_then(|tracks| tracks.get("items"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default()
+        tracks = items
             .into_iter()
             .filter_map(map_track_candidate)
             .collect();
@@ -197,15 +210,21 @@ async fn playlist_tracks(state: &AppState, body: Value) -> AppResult<Value> {
         format!("/me/tracks?limit={limit}&offset={offset}")
     } else {
         format!(
-            "/playlists/{}/tracks?limit={limit}&offset={offset}",
+            "/playlists/{}/items?limit={limit}&offset={offset}",
             percent_encode_component(playlist_id)
         )
     };
     let response = spotify_api(&credentials, &path, "GET", None).await?;
     if !(200..300).contains(&response.status) {
+        let message = spotify_error_message(&response.body, "Spotify playlist tracks failed");
+        let message = if response.status == 403 && playlist_id != "liked" {
+            format!("{message}. Spotify only exposes playlist contents for playlists you own or collaborate on.")
+        } else {
+            message
+        };
         return Err(AppError::with_details(
             "spotify_api_error",
-            "Spotify playlist tracks failed",
+            format!("{message} (HTTP {})", response.status),
             json!({ "status": response.status, "body": response.body }),
         ));
     }
@@ -216,7 +235,12 @@ async fn playlist_tracks(state: &AppState, body: Value) -> AppResult<Value> {
         .cloned()
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|item| item.get("track").cloned().or(Some(item)))
+        .filter_map(|item| {
+            item.get("item")
+                .cloned()
+                .or_else(|| item.get("track").cloned())
+                .or(Some(item))
+        })
         .filter_map(map_track_candidate)
         .collect::<Vec<_>>();
     Ok(json!({
