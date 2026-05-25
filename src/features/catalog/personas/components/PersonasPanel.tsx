@@ -57,10 +57,10 @@ type PersonaRow = {
   avatarPath: string | null;
   isActive: string | boolean;
   createdAt: string;
-  tags?: string;
+  tags?: string[];
 };
 
-type PersonaGroupRow = { id: string; name: string; description: string; personaIds: string };
+type PersonaGroupRow = { id: string; name: string; description: string; personaIds: string[] };
 
 type SortOption = "name-asc" | "name-desc" | "newest" | "oldest" | "tokens";
 
@@ -137,13 +137,7 @@ export function PersonasPanel() {
 
   const rawList = useMemo(() => (personas as PersonaRow[] | undefined) ?? [], [personas]);
 
-  const parseTags = (p: PersonaRow): string[] => {
-    try {
-      return p.tags ? JSON.parse(p.tags) : [];
-    } catch {
-      return [];
-    }
-  };
+  const parseTags = (p: PersonaRow): string[] => (Array.isArray(p.tags) ? p.tags : []);
 
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
@@ -169,7 +163,7 @@ export function PersonasPanel() {
         const affected = rawList.filter((p) => parseTags(p).includes(tag));
         for (const p of affected) {
           const newTags = parseTags(p).filter((t) => t !== tag);
-          await updatePersona.mutateAsync({ id: p.id, tags: JSON.stringify(newTags) });
+          await updatePersona.mutateAsync({ id: p.id, tags: newTags });
         }
         if (activeTag === tag) setActiveTag(null);
       } catch {
@@ -190,11 +184,7 @@ export function PersonasPanel() {
     return (personaGroupsRaw as PersonaGroupRow[]).map((g) => ({
       ...g,
       memberIds: (() => {
-        try {
-          return JSON.parse(g.personaIds);
-        } catch {
-          return [];
-        }
+        return Array.isArray(g.personaIds) ? g.personaIds : [];
       })() as string[],
     }));
   }, [personaGroupsRaw]);

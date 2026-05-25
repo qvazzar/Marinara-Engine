@@ -131,31 +131,145 @@ pub(crate) fn swipe_index_value(message: &Value) -> i64 {
 
 pub(crate) fn normalize_character_data_for_storage(data: &Value) -> AppResult<Value> {
     match data {
-        Value::String(raw) => Ok(Value::String(raw.clone())),
-        Value::Object(_) => Ok(Value::String(serde_json::to_string(data)?)),
-        _ => Err(AppError::invalid_input(
-            "Character data must be an object or JSON string",
-        )),
+        Value::Object(_) => Ok(data.clone()),
+        _ => Err(AppError::invalid_input("Character data must be a JSON object")),
     }
 }
 
 pub(crate) fn normalize_update_patch(collection: &str, patch: Value) -> AppResult<Value> {
-    if collection != "characters" {
-        return Ok(patch);
-    }
-
     let mut object = ensure_object(patch)?;
-    if let Some(data) = object.get("data") {
-        object.insert(
-            "data".to_string(),
-            normalize_character_data_for_storage(data)?,
-        );
-    }
+    normalize_typed_json_fields(collection, &mut object)?;
     Ok(Value::Object(object))
 }
 
-pub(crate) fn with_entity_defaults(collection: &str, body: Value) -> Value {
-    let mut object = ensure_object(body).unwrap_or_default();
+pub(crate) fn normalize_typed_json_fields(collection: &str, object: &mut Map<String, Value>) -> AppResult<()> {
+    match collection {
+        "characters" => {
+            if let Some(data) = object.get("data") {
+                object.insert("data".to_string(), normalize_character_data_for_storage(data)?);
+            }
+        }
+        "chats" => {
+            normalize_json_array_fields(object, &["characterIds", "activeLorebookIds", "activeAgentIds", "activeToolIds", "memories"])?;
+            normalize_nullable_json_object_fields(object, &["metadata", "gameState"])?;
+        }
+        "messages" => {
+            normalize_json_array_fields(object, &["swipes", "images", "attachments"])?;
+            normalize_nullable_json_object_fields(object, &["extra"])?;
+        }
+        "character-groups" => {
+            normalize_json_array_fields(object, &["characterIds"])?;
+        }
+        "persona-groups" => {
+            normalize_json_array_fields(object, &["personaIds"])?;
+        }
+        "lorebooks" => {
+            normalize_json_array_fields(object, &["tags", "characterIds", "personaIds"])?;
+        }
+        "lorebook-entries" => {
+            normalize_json_array_fields(object, &["keys", "secondaryKeys"])?;
+        }
+        "connections" => {
+            normalize_json_object_fields(object, &["defaultParameters", "capabilities", "providerMetadata"])?;
+        }
+        "custom-tools" => {
+            normalize_json_object_fields(object, &["parametersSchema"])?;
+        }
+        "game-state-snapshots" => {
+            normalize_json_array_fields(object, &["presentCharacters", "recentEvents"])?;
+            normalize_nullable_json_object_fields(object, &["playerStats", "personaStats", "metadata"])?;
+        }
+        "game-checkpoints" => {
+            normalize_nullable_json_object_fields(object, &["snapshot", "gameState", "metadata"])?;
+        }
+        "chat-presets" => {
+            normalize_json_object_fields(object, &["parameters"])?;
+        }
+        "prompts" => {
+            normalize_json_array_fields(object, &["sectionOrder", "groupOrder", "variableOrder"])?;
+            normalize_json_object_fields(object, &["variableValues", "parameters", "defaultChoices"])?;
+            normalize_json_array_fields(object, &["variableGroups"])?;
+        }
+        "prompt-sections" => {
+            normalize_nullable_json_object_fields(object, &["markerConfig"])?;
+        }
+        "prompt-variables" => {
+            normalize_json_array_fields(object, &["options"])?;
+        }
+        "personas" => {
+            normalize_json_array_fields(object, &["tags", "altDescriptions", "savedStatusOptions"])?;
+            normalize_nullable_json_object_fields(object, &["avatarCrop", "personaStats"])?;
+        }
+        "agents" => {
+            normalize_json_object_fields(object, &["settings"])?;
+        }
+        "regex-scripts" => {
+            normalize_json_array_fields(object, &["placement", "trimStrings"])?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn normalize_json_array_fields(object: &mut Map<String, Value>, fields: &[&str]) -> AppResult<()> {
+    for field in fields {
+        let Some(value) = object.get(*field) else { continue };
+        let normalized = normalize_json_field(value, Value::is_array, "array", field)?;
+        object.insert((*field).to_string(), normalized);
+    }
+    Ok(())
+}
+
+fn normalize_json_object_fields(object: &mut Map<String, Value>, fields: &[&str]) -> AppResult<()> {
+    for field in fields {
+        let Some(value) = object.get(*field) else { continue };
+        let normalized = normalize_json_field(value, Value::is_object, "object", field)?;
+        object.insert((*field).to_string(), normalized);
+    }
+    Ok(())
+}
+
+fn normalize_nullable_json_object_fields(object: &mut Map<String, Value>, fields: &[&str]) -> AppResult<()> {
+    for field in fields {
+        let Some(value) = object.get(*field) else { continue };
+        if value.is_null() {
+            continue;
+        }
+        let normalized = normalize_json_field(value, Value::is_object, "object or null", field)?;
+        object.insert((*field).to_string(), normalized);
+    }
+    Ok(())
+}
+
+fn normalize_json_field(
+    value: &Value,
+    predicate: fn(&Value) -> bool,
+    expected: &str,
+    field: &str,
+) -> AppResult<Value> {
+    if predicate(value) {
+        return Ok(value.clone());
+    }
+    if let Some(raw) = value.as_str() {
+        if raw.trim().is_empty() {
+            return Ok(match expected {
+                "array" => json!([]),
+                "object or null" => Value::Null,
+                _ => json!({}),
+            });
+        }
+        let parsed: Value = serde_json::from_str(raw).map_err(|_| {
+            AppError::invalid_input(format!("{field} must be a JSON {expected}, not a JSON string"))
+        })?;
+        if predicate(&parsed) {
+            return Ok(parsed);
+        }
+    }
+    Err(AppError::invalid_input(format!("{field} must be a JSON {expected}")))
+}
+
+pub(crate) fn with_entity_defaults(collection: &str, body: Value) -> AppResult<Value> {
+    let mut object = ensure_object(body)?;
     match collection {
         "chats" => {
             object
@@ -174,12 +288,8 @@ pub(crate) fn with_entity_defaults(collection: &str, body: Value) -> Value {
                 .or_insert(Value::Bool(true));
         }
         "characters" => {
-            if let Some(data) = object.get_mut("data") {
-                if data.is_object() {
-                    *data = Value::String(
-                        serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string()),
-                    );
-                }
+            if let Some(data) = object.get("data") {
+                normalize_character_data_for_storage(data)?;
             } else {
                 let mut data = Map::new();
                 let name = object
@@ -208,13 +318,7 @@ pub(crate) fn with_entity_defaults(collection: &str, body: Value) -> Value {
                 data.insert("alternate_greetings".to_string(), json!([]));
                 data.insert("extensions".to_string(), json!({ "altDescriptions": [] }));
                 data.insert("character_book".to_string(), Value::Null);
-                object.insert(
-                    "data".to_string(),
-                    Value::String(
-                        serde_json::to_string(&Value::Object(data))
-                            .unwrap_or_else(|_| "{}".to_string()),
-                    ),
-                );
+                object.insert("data".to_string(), Value::Object(data));
             }
             object
                 .entry("comment".to_string())
@@ -265,6 +369,7 @@ pub(crate) fn with_entity_defaults(collection: &str, body: Value) -> Value {
                 .or_insert(Value::Null);
         }
         "personas" => {
+            normalize_typed_json_fields(collection, &mut object)?;
             object
                 .entry("description".to_string())
                 .or_insert(Value::String(String::new()));
@@ -291,27 +396,52 @@ pub(crate) fn with_entity_defaults(collection: &str, body: Value) -> Value {
                 .or_insert(Value::Bool(false));
             object
                 .entry("tags".to_string())
-                .or_insert(Value::String("[]".to_string()));
+                .or_insert_with(|| json!([]));
+            object
+                .entry("altDescriptions".to_string())
+                .or_insert_with(|| json!([]));
+            object.entry("avatarCrop".to_string()).or_insert(Value::Null);
         }
         "prompts" => {
+            normalize_typed_json_fields(collection, &mut object)?;
             object
                 .entry("description".to_string())
                 .or_insert(Value::String(String::new()));
             object
+                .entry("sectionOrder".to_string())
+                .or_insert_with(|| json!([]));
+            object
+                .entry("groupOrder".to_string())
+                .or_insert_with(|| json!([]));
+            object
+                .entry("variableGroups".to_string())
+                .or_insert_with(|| json!([]));
+            object
+                .entry("variableValues".to_string())
+                .or_insert_with(|| json!({}));
+            object
                 .entry("parameters".to_string())
+                .or_insert_with(|| json!({}));
+            object
+                .entry("defaultChoices".to_string())
                 .or_insert_with(|| json!({}));
             object
                 .entry("isDefault".to_string())
                 .or_insert(Value::Bool(false));
         }
+        "prompt-sections" | "prompt-variables" => {
+            normalize_typed_json_fields(collection, &mut object)?;
+        }
         "agents" => {
+            normalize_typed_json_fields(collection, &mut object)?;
             object
                 .entry("enabled".to_string())
                 .or_insert(Value::Bool(true));
         }
         _ => {}
     }
-    Value::Object(object)
+    normalize_typed_json_fields(collection, &mut object)?;
+    Ok(Value::Object(object))
 }
 
 #[cfg(test)]
@@ -319,7 +449,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn character_update_patch_serializes_object_data() {
+    fn character_update_patch_preserves_object_data() {
         let patch = normalize_update_patch(
             "characters",
             json!({
@@ -331,29 +461,18 @@ mod tests {
         )
         .expect("patch should normalize");
 
-        let data = patch
-            .get("data")
-            .and_then(Value::as_str)
-            .expect("character data should be serialized");
-        let parsed: Value =
-            serde_json::from_str(data).expect("serialized data should be valid JSON");
-        assert_eq!(parsed["name"], "Professor Mari");
-        assert_eq!(parsed["tags"], json!(["guide"]));
+        assert_eq!(patch["data"]["name"], "Professor Mari");
+        assert_eq!(patch["data"]["tags"], json!(["guide"]));
     }
 
-    #[test]
-    fn character_update_patch_preserves_string_data() {
-        let raw = r#"{"name":"Professor Mari"}"#;
-        let patch = normalize_update_patch("characters", json!({ "data": raw }))
-            .expect("patch should normalize");
-        assert_eq!(patch["data"], raw);
-    }
 
     #[test]
     fn character_update_patch_rejects_invalid_data_shape() {
-        let error = normalize_update_patch("characters", json!({ "data": true }))
-            .expect_err("invalid character data should fail");
-        assert_eq!(error.code, "invalid_input");
+        for invalid in [json!(true), json!("{\"name\":\"Professor Mari\"}"), json!([]), Value::Null] {
+            let error = normalize_update_patch("characters", json!({ "data": invalid }))
+                .expect_err("invalid character data should fail");
+            assert_eq!(error.code, "invalid_input");
+        }
     }
 
     #[test]

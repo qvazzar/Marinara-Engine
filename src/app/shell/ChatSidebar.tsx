@@ -158,25 +158,18 @@ export function ChatSidebar({
     >();
     if (!allCharacters) return map;
     for (const char of allCharacters as Array<{ id: string; data: unknown; avatarPath: string | null }>) {
-      try {
-        const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-        const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-        const extensions =
-          record.extensions && typeof record.extensions === "object"
-            ? (record.extensions as Record<string, unknown>)
-            : {};
-        const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : "Unknown";
-        const conversationStatus =
-          typeof extensions.conversationStatus === "string" ? extensions.conversationStatus : undefined;
-        map.set(char.id, {
-          name,
-          avatarUrl: char.avatarPath ?? null,
-          avatarCrop: (extensions.avatarCrop as AvatarCropValue | undefined) ?? null,
-          conversationStatus,
-        });
-      } catch {
-        map.set(char.id, { name: "Unknown", avatarUrl: null });
-      }
+      const record = char.data && typeof char.data === "object" ? (char.data as Record<string, unknown>) : {};
+      const extensions =
+        record.extensions && typeof record.extensions === "object" ? (record.extensions as Record<string, unknown>) : {};
+      const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : "Unknown";
+      const conversationStatus =
+        typeof extensions.conversationStatus === "string" ? extensions.conversationStatus : undefined;
+      map.set(char.id, {
+        name,
+        avatarUrl: char.avatarPath ?? null,
+        avatarCrop: (extensions.avatarCrop as AvatarCropValue | undefined) ?? null,
+        conversationStatus,
+      });
     }
     return map;
   }, [allCharacters]);

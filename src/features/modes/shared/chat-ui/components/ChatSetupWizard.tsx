@@ -131,14 +131,8 @@ function formatPersonaLabel(persona: PersonaDisplayInfo): string {
 }
 
 function getCharacterAvatarCrop(character: { data: unknown }): AvatarCrop | null {
-  try {
-    const parsed = typeof character.data === "string" ? JSON.parse(character.data) : character.data;
-    return (parsed as { extensions?: { avatarCrop?: AvatarCrop | null } } | null)?.extensions?.avatarCrop ?? null;
-  } catch {
-    return null;
-  }
+  return (character.data as { extensions?: { avatarCrop?: AvatarCrop | null } } | null)?.extensions?.avatarCrop ?? null;
 }
-
 function CharacterAvatarImage({
   character,
   src,
@@ -330,7 +324,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
 
   const characters = useMemo(
     () =>
-      (allCharacters ?? []) as Array<{ id: string; data: string; comment?: string | null; avatarPath: string | null }>,
+      (allCharacters ?? []) as Array<{ id: string; data: unknown; comment?: string | null; avatarPath: string | null }>,
     [allCharacters],
   );
   const personas = (allPersonas ?? []) as Array<{
@@ -371,7 +365,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   }, [metadata.chatParameters]);
 
   const chatCharIds: string[] = useMemo(() => {
-    return typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : (chat.characterIds ?? []);
+    return chat.characterIds ?? [];
   }, [chat.characterIds]);
 
   const [search, setSearch] = useState("");
@@ -385,7 +379,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   }, [characters]);
 
   const getCharacterInfo = useCallback(
-    (c: { id?: string; data: string; comment?: string | null }) => {
+    (c: { id?: string; data: unknown; comment?: string | null }) => {
       if (c.id && charInfoMap.has(c.id)) return charInfoMap.get(c.id)!;
       return parseCharacterDisplayData(c);
     },
@@ -393,7 +387,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   );
 
   const charName = useCallback(
-    (c: { id?: string; data: string; comment?: string | null }) => getCharacterInfo(c).name,
+    (c: { id?: string; data: unknown; comment?: string | null }) => getCharacterInfo(c).name,
     [getCharacterInfo],
   );
 
@@ -872,7 +866,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   }>;
   const characters = useMemo(
     () =>
-      (allCharacters ?? []) as Array<{ id: string; data: string; comment?: string | null; avatarPath: string | null }>,
+      (allCharacters ?? []) as Array<{ id: string; data: unknown; comment?: string | null; avatarPath: string | null }>,
     [allCharacters],
   );
   const connectionOptions = useMemo(
@@ -908,7 +902,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   }, [metadata.chatParameters]);
 
   const chatCharIds: string[] = useMemo(() => {
-    return typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : (chat.characterIds ?? []);
+    return chat.characterIds ?? [];
   }, [chat.characterIds]);
 
   const activeLorebookIds: string[] = useMemo(() => metadata.activeLorebookIds ?? [], [metadata.activeLorebookIds]);
@@ -923,7 +917,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   }, [characters]);
 
   const charName = useCallback(
-    (c: { id?: string; data: string; comment?: string | null }) => {
+    (c: { id?: string; data: unknown; comment?: string | null }) => {
       if (c.id && charInfoMap.has(c.id)) return charInfoMap.get(c.id)!.name;
       return parseCharacterDisplayData(c).name;
     },
@@ -931,7 +925,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   );
 
   const charTitle = useCallback(
-    (c: { id?: string; data: string; comment?: string | null }) => {
+    (c: { id?: string; data: unknown; comment?: string | null }) => {
       if (c.id && charInfoMap.has(c.id)) return getCharacterTitle(charInfoMap.get(c.id)!);
       return getCharacterTitle(parseCharacterDisplayData(c));
     },
@@ -1006,34 +1000,30 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
           onSuccess: () => {
             const char = characters.find((c) => c.id === charId);
             if (!char) return;
-            try {
-              const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-              const firstMes = (parsed as { first_mes?: string }).first_mes;
-              const altGreetings = (parsed as { alternate_greetings?: string[] }).alternate_greetings ?? [];
-              if (firstMes) {
-                createMessage
-                  .mutateAsync({ role: "assistant", content: firstMes, characterId: charId })
-                  .then(async (msg) => {
-                    if (msg?.id && altGreetings.length > 0) {
-                      for (const greeting of altGreetings) {
-                        if (greeting.trim()) {
-                          await invokeTauri("chat_message_add_swipe", {
-                            chatId: chat.id,
-                            messageId: msg.id,
-                            body: {
+            const parsed = char.data;
+            const firstMes = (parsed as { first_mes?: string }).first_mes;
+            const altGreetings = (parsed as { alternate_greetings?: string[] }).alternate_greetings ?? [];
+            if (firstMes) {
+              createMessage
+                .mutateAsync({ role: "assistant", content: firstMes, characterId: charId })
+                .then(async (msg) => {
+                  if (msg?.id && altGreetings.length > 0) {
+                    for (const greeting of altGreetings) {
+                      if (greeting.trim()) {
+                        await invokeTauri("chat_message_add_swipe", {
+                          chatId: chat.id,
+                          messageId: msg.id,
+                          body: {
                             content: greeting,
                             silent: true,
-                            },
-                          });
-                        }
+                          },
+                        });
                       }
-                      queryClient.invalidateQueries({ queryKey: chatKeys.messages(chat.id) });
                     }
-                  })
-                  .catch(() => {});
-              }
-            } catch {
-              /* ignore */
+                    queryClient.invalidateQueries({ queryKey: chatKeys.messages(chat.id) });
+                  }
+                })
+                .catch(() => {});
             }
           },
         });

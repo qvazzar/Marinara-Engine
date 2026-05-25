@@ -105,10 +105,9 @@ interface PersonaFormData {
   dialogueColor: string;
   boxColor: string;
   trackerCardColors: TrackerCardColorConfig;
-  personaStats: string;
+  personaStats: PersonaStatsData | null;
   altDescriptions: AltDescriptionEntry[];
   tags: string[];
-  /** Avatar crop region parsed from the persona row's JSON-encoded `avatarCrop`. */
   avatarCrop: AvatarCrop | null;
 }
 
@@ -122,17 +121,16 @@ interface PersonaRow {
   backstory: string;
   appearance: string;
   avatarPath: string | null;
-  /** JSON-encoded AvatarCrop, or empty string when unset. */
-  avatarCrop?: string;
+  avatarCrop?: AvatarCrop | null;
   isActive: string | boolean;
   nameColor?: string;
   dialogueColor?: string;
   boxColor?: string;
   trackerCardColors?: string;
   [TRACKER_CARD_COLOR_PREVIEW_BASE_FIELD]?: string;
-  personaStats?: string;
-  altDescriptions?: string;
-  tags?: string;
+  personaStats?: Record<string, unknown> | string;
+  altDescriptions?: AltDescriptionEntry[];
+  tags?: string[];
 }
 
 export function PersonaEditor() {
@@ -183,47 +181,30 @@ export function PersonaEditor() {
 
     loadedPersonaIdRef.current = rawPersona.id;
 
-    let parsedAltDescs: AltDescriptionEntry[] = [];
-    try {
-      const raw = rawPersona.altDescriptions;
-      if (raw) parsedAltDescs = JSON.parse(raw);
-    } catch {
-      /* ignore */
-    }
+    const parsedAltDescs: AltDescriptionEntry[] = Array.isArray(rawPersona.altDescriptions) ? rawPersona.altDescriptions : [];
 
     let parsedAvatarCrop: AvatarCrop | null = null;
-    try {
-      const raw = rawPersona.avatarCrop;
-      if (raw) {
-        const obj = JSON.parse(raw);
-        // Defensive: malformed crop data is dropped so the editor falls back to defaults.
-        if (obj && typeof obj === "object") {
-          // Validate geometry — finite, positive, within normalized bounds.
-          // Anything malformed is dropped so the editor falls back to defaults
-          // instead of producing NaN transforms or an off-screen overlay.
-          if (
-            Number.isFinite(obj.srcX) &&
-            Number.isFinite(obj.srcY) &&
-            Number.isFinite(obj.srcWidth) &&
-            Number.isFinite(obj.srcHeight) &&
-            obj.srcWidth > 0 &&
-            obj.srcHeight > 0 &&
-            obj.srcX >= 0 &&
-            obj.srcY >= 0 &&
-            obj.srcX + obj.srcWidth <= 1.001 &&
-            obj.srcY + obj.srcHeight <= 1.001
-          ) {
-            parsedAvatarCrop = {
-              srcX: obj.srcX,
-              srcY: obj.srcY,
-              srcWidth: obj.srcWidth,
-              srcHeight: obj.srcHeight,
-            };
-          }
-        }
+    const obj = rawPersona.avatarCrop;
+    if (obj && typeof obj === "object") {
+      if (
+        Number.isFinite(obj.srcX) &&
+        Number.isFinite(obj.srcY) &&
+        Number.isFinite(obj.srcWidth) &&
+        Number.isFinite(obj.srcHeight) &&
+        obj.srcWidth > 0 &&
+        obj.srcHeight > 0 &&
+        obj.srcX >= 0 &&
+        obj.srcY >= 0 &&
+        obj.srcX + obj.srcWidth <= 1.001 &&
+        obj.srcY + obj.srcHeight <= 1.001
+      ) {
+        parsedAvatarCrop = {
+          srcX: obj.srcX,
+          srcY: obj.srcY,
+          srcWidth: obj.srcWidth,
+          srcHeight: obj.srcHeight,
+        };
       }
-    } catch {
-      /* ignore — empty / malformed crop just stays null */
     }
 
     const savedTrackerCardColors =
@@ -243,15 +224,12 @@ export function PersonaEditor() {
       dialogueColor: rawPersona.dialogueColor ?? "",
       boxColor: rawPersona.boxColor ?? "",
       trackerCardColors: parseTrackerCardColorConfig(savedTrackerCardColors),
-      personaStats: rawPersona.personaStats ?? "",
+      personaStats:
+        rawPersona.personaStats && typeof rawPersona.personaStats === "object"
+          ? (rawPersona.personaStats as unknown as PersonaStatsData)
+          : null,
       altDescriptions: parsedAltDescs,
-      tags: (() => {
-        try {
-          return rawPersona.tags ? JSON.parse(rawPersona.tags) : [];
-        } catch {
-          return [];
-        }
-      })(),
+      tags: Array.isArray(rawPersona.tags) ? rawPersona.tags : [],
       avatarCrop: parsedAvatarCrop,
     });
     setAvatarPreview(rawPersona.avatarPath);
@@ -271,11 +249,10 @@ export function PersonaEditor() {
       await updatePersona.mutateAsync({
         id: personaId,
         ...rest,
-        altDescriptions: JSON.stringify(altDescriptions),
-        tags: JSON.stringify(tags),
+        altDescriptions,
+        tags,
         trackerCardColors: serializeTrackerCardColorConfig(formData.trackerCardColors),
-        // Persist as JSON string; empty string means "no crop".
-        avatarCrop: avatarCrop ? JSON.stringify(avatarCrop) : "",
+        avatarCrop: avatarCrop ?? null,
       });
       setDirty(false);
     } finally {
@@ -1622,18 +1599,10 @@ function PersonaStatsTab({
   formData: PersonaFormData;
   updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
 }) {
-  const parsed: PersonaStatsData = formData.personaStats
-    ? (() => {
-        try {
-          return JSON.parse(formData.personaStats) as PersonaStatsData;
-        } catch {
-          return DEFAULT_PERSONA_STATS;
-        }
-      })()
-    : DEFAULT_PERSONA_STATS;
+  const parsed: PersonaStatsData = formData.personaStats ?? DEFAULT_PERSONA_STATS;
 
   const save = (next: PersonaStatsData) => {
-    updateField("personaStats", JSON.stringify(next));
+    updateField("personaStats", next);
   };
 
   const updateBar = (index: number, field: string, value: string | number) => {

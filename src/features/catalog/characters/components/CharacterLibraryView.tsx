@@ -24,7 +24,7 @@ type SortOption = "name-asc" | "name-desc" | "newest" | "oldest" | "favorites";
 
 type CharacterRow = {
   id: string;
-  data: string;
+  data: Partial<CharacterData>;
   comment?: string | null;
   avatarPath: string | null;
   createdAt: string;
@@ -38,12 +38,7 @@ type ParsedCharacterRow = CharacterRow & {
 };
 
 function parseCharacterRow(char: CharacterRow): ParsedCharacterRow {
-  try {
-    const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-    return { ...char, parsed: (parsed as ParsedCharacterRow["parsed"]) ?? {} };
-  } catch {
-    return { ...char, parsed: { name: "Unknown", description: "" } };
-  }
+  return { ...char, parsed: (char.data as ParsedCharacterRow["parsed"]) ?? {} };
 }
 
 function getText(value: unknown) {

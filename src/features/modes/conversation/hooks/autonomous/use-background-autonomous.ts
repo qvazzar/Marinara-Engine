@@ -31,7 +31,7 @@ interface RawChat {
 
 interface RawCharacter {
   id: string;
-  data?: string | { name?: string };
+  data?: { name?: string; extensions?: { avatarCrop?: AvatarCropValue | null } };
   avatarPath?: string | null;
 }
 
@@ -165,7 +165,7 @@ export function useBackgroundAutonomousPolling() {
                   // Find the triggering character's name
                   const charRow = await storageApi.get<RawCharacter>("characters", characterId);
                   if (charRow) {
-                    const data = typeof charRow.data === "string" ? JSON.parse(charRow.data) : charRow.data;
+                    const data = charRow.data;
                     if (data?.name) charName = data.name;
                     charAvatarCrop = data?.extensions?.avatarCrop ?? null;
                     charAvatar = charRow.avatarPath ?? null;

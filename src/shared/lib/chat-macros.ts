@@ -30,23 +30,14 @@ function getRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function appendActiveAltDescriptions(description: string, altDescriptions: unknown): string {
-  try {
-    const parsed =
-      typeof altDescriptions === "string"
-        ? altDescriptions.trim()
-          ? (JSON.parse(altDescriptions) as Array<{ active?: boolean; content?: string }>)
-          : []
-        : Array.isArray(altDescriptions)
-          ? (altDescriptions as Array<{ active?: boolean; content?: string }>)
-          : [];
-    const activeDescriptions = parsed
-      .filter((item) => item?.active && typeof item.content === "string" && item.content.trim().length > 0)
-      .map((item) => item.content!.trim());
-    if (activeDescriptions.length === 0) return description;
-    return [description, ...activeDescriptions].filter((part) => part.trim().length > 0).join("\n");
-  } catch {
-    return description;
-  }
+  const parsed = Array.isArray(altDescriptions)
+    ? (altDescriptions as Array<{ active?: boolean; content?: string }>)
+    : [];
+  const activeDescriptions = parsed
+    .filter((item) => item?.active && typeof item.content === "string" && item.content.trim().length > 0)
+    .map((item) => item.content!.trim());
+  if (activeDescriptions.length === 0) return description;
+  return [description, ...activeDescriptions].filter((part) => part.trim().length > 0).join("\n");
 }
 
 export function getChatCharacterIds(chat: { characterIds?: unknown } | null | undefined): string[] {
@@ -77,8 +68,7 @@ export function parseCharacterMacroData(
   if (!raw) return null;
 
   try {
-    const parsed = typeof raw.data === "string" ? JSON.parse(raw.data) : raw.data;
-    const data = getRecord(parsed);
+    const data = getRecord(raw.data);
     if (!data) return { id: raw.id, name: "Unknown" };
     const extensions = getRecord(data.extensions);
     return {

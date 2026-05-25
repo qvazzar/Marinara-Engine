@@ -322,7 +322,7 @@ export function ChatSettingsDrawer({
   const personas = useMemo(() => (allPersonas ?? []) as DrawerPersona[], [allPersonas]);
 
   const chatCharIds: string[] = useMemo(
-    () => (typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : (chat.characterIds ?? [])),
+    () => chat.characterIds ?? [],
     [chat.characterIds],
   );
 
@@ -550,7 +550,7 @@ export function ChatSettingsDrawer({
     () =>
       (allCharacters ?? []) as Array<{
         id: string;
-        data: string;
+        data: unknown;
         comment?: string | null;
         avatarPath: string | null;
       }>,
@@ -561,7 +561,7 @@ export function ChatSettingsDrawer({
     () =>
       chatCharIds
         .map((characterId) => characters.find((character) => character.id === characterId))
-        .filter((character): character is { id: string; data: string; avatarPath: string | null } => !!character),
+        .filter((character): character is { id: string; data: unknown; avatarPath: string | null } => !!character),
     [chatCharIds, characters],
   );
 
@@ -616,7 +616,7 @@ export function ChatSettingsDrawer({
   }, [charInfoMap]);
 
   const getCharacterInfo = useCallback(
-    (c: { id?: string; data: string; comment?: string | null }) => {
+    (c: { id?: string; data: unknown; comment?: string | null }) => {
       if (c.id && charInfoMap.has(c.id)) return charInfoMap.get(c.id)!;
       return parseCharacterDisplayData(c);
     },
@@ -624,27 +624,22 @@ export function ChatSettingsDrawer({
   );
 
   const charName = useCallback(
-    (c: { id?: string; data: string; comment?: string | null }) => getCharacterInfo(c).name,
+    (c: { id?: string; data: unknown; comment?: string | null }) => getCharacterInfo(c).name,
     [getCharacterInfo],
   );
 
   const charTitle = useCallback(
-    (c: { id?: string; data: string; comment?: string | null }) => getCharacterTitle(getCharacterInfo(c)),
+    (c: { id?: string; data: unknown; comment?: string | null }) => getCharacterTitle(getCharacterInfo(c)),
     [getCharacterInfo],
   );
 
   const charAvatarCrop = useCallback((c: { data: unknown }) => {
-    try {
-      const parsed = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-      return (
-        ((parsed as { extensions?: { avatarCrop?: AvatarCrop | null } } | null)?.extensions?.avatarCrop as
-          | AvatarCrop
-          | null
-          | undefined) ?? null
-      );
-    } catch {
-      return null;
-    }
+    return (
+      ((c.data as { extensions?: { avatarCrop?: AvatarCrop | null } } | null)?.extensions?.avatarCrop as
+        | AvatarCrop
+        | null
+        | undefined) ?? null
+    );
   }, []);
 
   // ── First message confirm state ──
@@ -730,20 +725,16 @@ export function ChatSettingsDrawer({
             if (isConversation) return;
             const char = characters.find((c) => c.id === charId);
             if (!char) return;
-            try {
-              const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-              const firstMes = (parsed as { first_mes?: string }).first_mes;
-              const altGreetings = (parsed as { alternate_greetings?: string[] }).alternate_greetings ?? [];
-              if (firstMes) {
-                setFirstMesConfirm({
-                  charId,
-                  charName: charName(char),
-                  message: firstMes,
-                  alternateGreetings: altGreetings,
-                });
-              }
-            } catch {
-              /* ignore parse errors */
+            const parsed = char.data;
+            const firstMes = (parsed as { first_mes?: string }).first_mes;
+            const altGreetings = (parsed as { alternate_greetings?: string[] }).alternate_greetings ?? [];
+            if (firstMes) {
+              setFirstMesConfirm({
+                charId,
+                charName: charName(char),
+                message: firstMes,
+                alternateGreetings: altGreetings,
+              });
             }
           },
         },

@@ -121,7 +121,7 @@ interface AltDescriptionEntry {
 
 interface ParsedCharacter {
   id: string;
-  data: string;
+  data: CharacterData;
   comment: string;
   avatarPath: string | null;
   spriteFolderPath: string | null;
@@ -224,18 +224,10 @@ export function CharacterEditor() {
 
     loadedCharacterIdRef.current = char.id;
 
-    try {
-      const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-      setFormData(parsed as CharacterData);
-      setCharacterComment(char.comment ?? "");
-      setAvatarPreview(char.avatarPath);
-      setDirtyState(false);
-    } catch {
-      setFormData(null);
-      setCharacterComment("");
-      setAvatarPreview(null);
-      setDirtyState(false);
-    }
+    setFormData(char.data ?? null);
+    setCharacterComment(char.comment ?? "");
+    setAvatarPreview(char.avatarPath);
+    setDirtyState(false);
   }, [rawCharacter, setDirtyState]);
 
   const updateField = useCallback(<K extends keyof CharacterData>(key: K, value: CharacterData[K]) => {
@@ -465,7 +457,7 @@ export function CharacterEditor() {
 
     const rpgStats = formData.extensions.rpgStats as RPGStatsConfig | undefined;
     const personaStats = rpgStats
-      ? JSON.stringify({
+      ? {
           enabled: !!rpgStats.enabled,
           bars: [
             { name: "Satiety", value: 100, max: 100, color: "#f59e0b" },
@@ -474,8 +466,8 @@ export function CharacterEditor() {
             { name: "Mood", value: 100, max: 100, color: "#ec4899" },
           ],
           rpgStats,
-        })
-      : "";
+        }
+      : null;
 
     try {
       const created = (await createPersona.mutateAsync({
@@ -493,8 +485,8 @@ export function CharacterEditor() {
           parseTrackerCardColorConfig(formData.extensions.trackerCardColors),
         ),
         personaStats,
-        altDescriptions: "[]",
-        tags: JSON.stringify(formData.tags ?? []),
+        altDescriptions: [],
+        tags: formData.tags ?? [],
       })) as { id?: string };
 
       const personaId = created?.id;

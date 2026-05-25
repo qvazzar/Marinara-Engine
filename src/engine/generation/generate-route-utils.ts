@@ -478,10 +478,10 @@ export function parseGameStateRow(row: Record<string, unknown>): GameState {
     location: row.location as string | null,
     weather: row.weather as string | null,
     temperature: row.temperature as string | null,
-    presentCharacters: JSON.parse((row.presentCharacters as string) ?? "[]"),
-    recentEvents: JSON.parse((row.recentEvents as string) ?? "[]"),
-    playerStats: row.playerStats ? JSON.parse(row.playerStats as string) : null,
-    personaStats: row.personaStats ? JSON.parse(row.personaStats as string) : null,
+    presentCharacters: Array.isArray(row.presentCharacters) ? row.presentCharacters : [],
+    recentEvents: Array.isArray(row.recentEvents) ? row.recentEvents : [],
+    playerStats: row.playerStats && typeof row.playerStats === "object" ? (row.playerStats as GameState["playerStats"]) : null,
+    personaStats: Array.isArray(row.personaStats) ? (row.personaStats as GameState["personaStats"]) : null,
     createdAt: row.createdAt as string,
   };
 }

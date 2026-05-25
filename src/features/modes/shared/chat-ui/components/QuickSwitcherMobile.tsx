@@ -77,7 +77,7 @@ export function QuickSwitcherMobile() {
     for (const g of groupRows) {
       let memberIds: string[] = [];
       try {
-        memberIds = JSON.parse(g.personaIds);
+        memberIds = Array.isArray(g.personaIds) ? g.personaIds : [];
       } catch {
         memberIds = [];
       }

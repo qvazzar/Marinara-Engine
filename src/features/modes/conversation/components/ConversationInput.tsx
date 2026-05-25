@@ -1426,7 +1426,7 @@ export function ConversationInput({
       }
       await updatePersona.mutateAsync({
         id: activePersona.id,
-        savedStatusOptions: JSON.stringify(nextOptions.slice(0, SAVED_STATUS_LIMIT)),
+        savedStatusOptions: nextOptions.slice(0, SAVED_STATUS_LIMIT),
       });
     },
     [activePersona, updatePersona],

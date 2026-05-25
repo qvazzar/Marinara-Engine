@@ -26,7 +26,7 @@ type UseChatSurfaceDataOptions = {
 
 type CharacterRow = {
   id: string;
-  data: string;
+  data: Record<string, any>;
   comment?: string | null;
   avatarPath: string | null;
 };
@@ -40,7 +40,7 @@ type PersonaRow = {
   scenario?: string;
   backstory?: string;
   appearance?: string;
-  altDescriptions?: string;
+  altDescriptions?: Array<{ active?: boolean; content?: string }>;
   avatarPath?: string | null;
   avatarCrop?: string;
   nameColor?: string;
@@ -62,9 +62,8 @@ function parseChatCharacterIds(chat: Chat | null | undefined): string[] {
   return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : [];
 }
 
-function parseCharacterData(data: string): Record<string, any> {
-  const parsed = typeof data === "string" ? JSON.parse(data) : data;
-  return parsed && typeof parsed === "object" ? parsed : {};
+function parseCharacterData(data: Record<string, any>): Record<string, any> {
+  return data && typeof data === "object" ? data : {};
 }
 
 function buildPersonaInfo(
@@ -82,16 +81,11 @@ function buildPersonaInfo(
   if (!persona) return undefined;
 
   let description = persona.description ?? "";
-  if (persona.altDescriptions) {
-    try {
-      const altDescriptions = JSON.parse(persona.altDescriptions) as Array<{ active?: boolean; content?: string }>;
-      for (const altDescription of altDescriptions) {
-        if (altDescription?.active && typeof altDescription.content === "string" && altDescription.content.trim()) {
-          description = [description, altDescription.content.trim()].filter(Boolean).join("\n");
-        }
+  if (Array.isArray(persona.altDescriptions)) {
+    for (const altDescription of persona.altDescriptions) {
+      if (altDescription?.active && typeof altDescription.content === "string" && altDescription.content.trim()) {
+        description = [description, altDescription.content.trim()].filter(Boolean).join("\n");
       }
-    } catch {
-      /* ignore malformed persona alt-description JSON */
     }
   }
 

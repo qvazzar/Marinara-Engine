@@ -391,11 +391,11 @@ export function useCreatePersona() {
       dialogueColor?: string;
       boxColor?: string;
       trackerCardColors?: string;
-      personaStats?: string;
-      altDescriptions?: string;
-      tags?: string;
-      savedStatusOptions?: string;
-      avatarCrop?: string;
+      personaStats?: unknown;
+      altDescriptions?: unknown[];
+      tags?: string[];
+      savedStatusOptions?: string[];
+      avatarCrop?: unknown;
     }) => storageApi.create("personas", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.personas }),
   });
@@ -420,11 +420,11 @@ export function useUpdatePersona() {
       dialogueColor?: string;
       boxColor?: string;
       trackerCardColors?: string;
-      personaStats?: string;
-      altDescriptions?: string;
-      tags?: string;
-      savedStatusOptions?: string;
-      avatarCrop?: string;
+      personaStats?: unknown;
+      altDescriptions?: unknown[];
+      tags?: string[];
+      savedStatusOptions?: string[];
+      avatarCrop?: unknown;
     }) => storageApi.update("personas", id, data),
     onSuccess: (updatedPersona, variables) => {
       qc.setQueryData<unknown[] | undefined>(characterKeys.personas, (old) => {

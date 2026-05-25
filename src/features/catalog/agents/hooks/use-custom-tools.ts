@@ -9,7 +9,7 @@ export interface CustomToolRow {
   id: string;
   name: string;
   description: string;
-  parametersSchema: string;
+  parametersSchema: Record<string, unknown>;
   executionType: string;
   webhookUrl: string | null;
   staticResult: string | null;

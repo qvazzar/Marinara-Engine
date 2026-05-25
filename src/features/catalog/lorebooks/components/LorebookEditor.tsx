@@ -308,14 +308,10 @@ export function LorebookEditor() {
   const folders = useMemo(() => (rawFolders ?? []) as LorebookFolder[], [rawFolders]);
   const characters = useMemo(() => {
     if (!rawCharacters) return [] as Array<{ id: string; name: string; tags: string[] }>;
-    return (rawCharacters as Array<{ id: string; data: string | Record<string, unknown> }>).map((c) => {
-      try {
-        const parsed = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-        const tags = Array.isArray(parsed?.tags) ? parsed.tags.map(String).filter(Boolean) : [];
-        return { id: c.id, name: parsed?.name ?? "Unknown", tags };
-      } catch {
-        return { id: c.id, name: "Unknown", tags: [] };
-      }
+    return (rawCharacters as Array<{ id: string; data: Record<string, unknown> }>).map((c) => {
+      const parsed = c.data;
+      const tags = Array.isArray(parsed?.tags) ? parsed.tags.map(String).filter(Boolean) : [];
+      return { id: c.id, name: typeof parsed?.name === "string" ? parsed.name : "Unknown", tags };
     });
   }, [rawCharacters]);
   const characterTags = useMemo(

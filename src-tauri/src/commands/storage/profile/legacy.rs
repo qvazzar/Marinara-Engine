@@ -3,7 +3,7 @@ use super::super::{
     shared::{
         materialize_message_swipe_fields, non_negative_i64_value,
         normalize_legacy_text_array_fields, normalize_legacy_text_bool_fields,
-        string_array_from_value,
+        normalize_typed_json_fields, string_array_from_value,
     },
 };
 use super::assets::{normalize_legacy_profile_asset_paths, restore_legacy_profile_json_assets};
@@ -95,12 +95,14 @@ where
         let mut rows = table_rows(tables, table);
         match *collection {
             "app-settings" => normalize_legacy_app_settings(&mut rows),
+            "characters" => normalize_legacy_character_data(&mut rows),
             "lorebooks" => add_legacy_lorebook_links(&mut rows, tables),
             "chats" => add_legacy_chat_memories(&mut rows, tables),
             "messages" => add_legacy_message_swipes(&mut rows, tables),
             "game-state-snapshots" => normalize_legacy_game_state_snapshots(&mut rows),
             _ => {}
         }
+        normalize_legacy_profile_json_fields(collection, &mut rows)?;
         for row in &mut rows {
             normalize_legacy_profile_asset_paths(state, staging_root, row);
         }
@@ -121,6 +123,40 @@ fn table_rows(tables: &Map<String, Value>, table: &str) -> Vec<Value> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default()
+}
+
+fn normalize_legacy_profile_json_fields(collection: &str, rows: &mut [Value]) -> AppResult<()> {
+    if collection == "characters" {
+        normalize_legacy_character_data(rows);
+        return Ok(());
+    }
+    for row in rows {
+        if let Some(object) = row.as_object_mut() {
+            normalize_typed_json_fields(collection, object)?;
+        }
+    }
+    Ok(())
+}
+
+fn normalize_legacy_character_data(rows: &mut [Value]) {
+    for row in rows {
+        let Some(object) = row.as_object_mut() else {
+            continue;
+        };
+        match object.get("data") {
+            Some(Value::Object(_)) => {}
+            Some(Value::String(raw)) => {
+                let parsed = serde_json::from_str::<Value>(raw)
+                    .ok()
+                    .filter(Value::is_object)
+                    .unwrap_or_else(|| json!({}));
+                object.insert("data".to_string(), parsed);
+            }
+            Some(_) | None => {
+                object.insert("data".to_string(), json!({}));
+            }
+        }
+    }
 }
 
 fn normalize_legacy_app_settings(rows: &mut [Value]) {

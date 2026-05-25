@@ -288,7 +288,7 @@ pub(super) fn import_st_preset_payload(
                     "singleUserMessage": false
                 }
             }),
-        ),
+        )?,
     )?;
     let preset_id = preset
         .get("id")

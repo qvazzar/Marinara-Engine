@@ -155,7 +155,7 @@ fn storage_create(state: &AppState, args: &Map<String, Value>) -> AppResult<Valu
     let entity = required_string(args, "entity")?;
     state.storage.create(
         entity,
-        shared::with_entity_defaults(entity, optional_value(args, "value")),
+        shared::with_entity_defaults(entity, optional_value(args, "value"))?,
     )
 }
 

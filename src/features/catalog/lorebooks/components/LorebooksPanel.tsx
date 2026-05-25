@@ -100,13 +100,9 @@ export function LorebooksPanel() {
   const characterNameById = useMemo(() => {
     const map = new Map<string, string>();
     if (!rawCharacters) return map;
-    for (const c of rawCharacters as Array<{ id: string; data: string | Record<string, unknown> }>) {
-      try {
-        const d = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-        map.set(c.id, d?.name ?? "Unknown");
-      } catch {
-        map.set(c.id, "Unknown");
-      }
+    for (const c of rawCharacters as Array<{ id: string; data: Record<string, unknown> }>) {
+      const d = c.data;
+      map.set(c.id, typeof d?.name === "string" ? d.name : "Unknown");
     }
     return map;
   }, [rawCharacters]);

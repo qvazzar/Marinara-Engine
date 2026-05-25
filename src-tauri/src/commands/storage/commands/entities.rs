@@ -91,7 +91,7 @@ pub fn storage_create(
 ) -> Result<Value, AppError> {
     state
         .storage
-        .create(&entity, shared::with_entity_defaults(&entity, value))
+        .create(&entity, shared::with_entity_defaults(&entity, value)?)
 }
 
 #[tauri::command]

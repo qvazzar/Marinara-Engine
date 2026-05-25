@@ -39,17 +39,13 @@ export function RecentChats() {
       { name: string; avatarUrl: string | null; avatarCrop?: AvatarCropValue | null }
     >();
     if (!allCharacters) return map;
-    for (const char of allCharacters as Array<{ id: string; data: string; avatarPath: string | null }>) {
-      try {
-        const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-        map.set(char.id, {
-          name: parsed.name ?? "Unknown",
-          avatarUrl: char.avatarPath ?? null,
-          avatarCrop: parsed.extensions?.avatarCrop ?? null,
-        });
-      } catch {
-        map.set(char.id, { name: "Unknown", avatarUrl: null });
-      }
+    for (const char of allCharacters as Array<{ id: string; data: Record<string, any>; avatarPath: string | null }>) {
+      const parsed = char.data ?? {};
+      map.set(char.id, {
+        name: parsed.name ?? "Unknown",
+        avatarUrl: char.avatarPath ?? null,
+        avatarCrop: parsed.extensions?.avatarCrop ?? null,
+      });
     }
     return map;
   }, [allCharacters]);
@@ -91,7 +87,7 @@ function RecentChatChip({
 
   const charIds: string[] = useMemo(() => {
     if (!chat.characterIds) return [];
-    return typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : chat.characterIds;
+    return chat.characterIds;
   }, [chat.characterIds]);
 
   const firstAvatar = useMemo(() => {

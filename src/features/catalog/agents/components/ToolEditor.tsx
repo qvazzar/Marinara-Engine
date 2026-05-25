@@ -76,25 +76,20 @@ export function ToolEditor() {
       setLocalExecType(dbTool.executionType === "webhook" ? "webhook" : "static");
       setLocalWebhookUrl(dbTool.webhookUrl ?? "");
       setLocalStaticResult(dbTool.staticResult ?? "");
-      // Parse params from schema
-      try {
-        const schema = JSON.parse(dbTool.parametersSchema || "{}");
-        const props = schema.properties ?? {};
-        const req: string[] = schema.required ?? [];
-        setLocalParams(
-          Object.entries(props).map(([name, p]) => {
-            const prop = p as { type?: string; description?: string };
-            return {
-              name,
-              type: prop.type ?? "string",
-              description: prop.description ?? "",
-              required: req.includes(name),
-            };
-          }),
-        );
-      } catch {
-        setLocalParams([]);
-      }
+      const schema = dbTool.parametersSchema ?? {};
+      const props = (schema.properties as Record<string, unknown> | undefined) ?? {};
+      const req: string[] = Array.isArray(schema.required) ? schema.required.filter((value): value is string => typeof value === "string") : [];
+      setLocalParams(
+        Object.entries(props).map(([name, p]) => {
+          const prop = p as { type?: string; description?: string };
+          return {
+            name,
+            type: prop.type ?? "string",
+            description: prop.description ?? "",
+            required: req.includes(name),
+          };
+        }),
+      );
     } else if (isNew) {
       setLocalName("");
       setLocalDesc("");

@@ -94,13 +94,9 @@ pub(super) fn import_marinara_file(state: &AppState, body: Value) -> AppResult<V
 fn data_string_name(record: &Value) -> Option<String> {
     record
         .get("data")
+        .and_then(|data| data.get("name"))
         .and_then(Value::as_str)
-        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-        .and_then(|data| {
-            data.get("name")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        })
+        .map(ToOwned::to_owned)
 }
 
 fn data_image_string(value: Option<&Value>) -> Option<String> {
@@ -299,7 +295,7 @@ fn import_marinara_character(state: &AppState, data: Value) -> AppResult<Value> 
         let mut character_data = data.get("data").cloned().unwrap_or_else(|| json!({}));
         strip_stale_embedded_lorebook_pointer(&mut character_data);
         let mut record = json!({
-            "data": serde_json::to_string(&character_data)?,
+            "data": character_data,
             "comment": data
                 .get("metadata")
                 .and_then(|metadata| metadata.get("comment"))
@@ -351,7 +347,16 @@ fn import_marinara_character(state: &AppState, data: Value) -> AppResult<Value> 
 
     let mut source = data.clone();
     remove_fields(&mut source, &["id", "sprites", "gallery", "metadata"]);
-    let mut record_value = with_entity_defaults("characters", source.clone());
+    if let Some(object) = source.as_object_mut() {
+        if let Some(Value::String(raw)) = object.get("data") {
+            let parsed = serde_json::from_str::<Value>(raw)
+                .ok()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({}));
+            object.insert("data".to_string(), parsed);
+        }
+    }
+    let mut record_value = with_entity_defaults("characters", source.clone())?;
     if let Some(avatar) = data.get("avatar").and_then(Value::as_str) {
         if let Some(record) = record_value.as_object_mut() {
             record.insert("avatarPath".to_string(), Value::String(avatar.to_string()));
@@ -392,7 +397,7 @@ fn import_marinara_character(state: &AppState, data: Value) -> AppResult<Value> 
 fn import_marinara_persona(state: &AppState, data: Value) -> AppResult<Value> {
     let mut source = data.clone();
     remove_fields(&mut source, &["id", "metadata", "avatar", "sprites"]);
-    let mut record_value = with_entity_defaults("personas", source);
+    let mut record_value = with_entity_defaults("personas", source)?;
     if let Some(avatar) = data.get("avatar").and_then(Value::as_str) {
         if let Some(record) = record_value.as_object_mut() {
             record.insert("avatarPath".to_string(), Value::String(avatar.to_string()));
@@ -449,7 +454,7 @@ fn import_marinara_lorebook(
             "excludeFromVectorization",
         ],
     );
-    let mut lorebook = with_entity_defaults("lorebooks", lorebook_data.clone());
+    let mut lorebook = with_entity_defaults("lorebooks", lorebook_data.clone())?;
     if let Some(image) = data
         .get("avatar")
         .or_else(|| data.get("image"))
@@ -563,7 +568,7 @@ fn import_marinara_preset(
         &mut preset_data,
         &["sections", "groups", "choiceBlocks", "variables"],
     );
-    let mut record_value = with_entity_defaults("prompts", preset_data.clone());
+    let mut record_value = with_entity_defaults("prompts", preset_data.clone())?;
     let mut timestamp_payload = preset_data.clone();
     hydrate_metadata_timestamps(&mut timestamp_payload);
     apply_timestamp_overrides(&mut record_value, &Value::Null, &timestamp_payload);

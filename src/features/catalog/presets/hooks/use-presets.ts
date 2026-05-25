@@ -40,10 +40,7 @@ const promptOrderField: Record<PromptNestedKind, string> = {
 const presetOrderQueues = new Map<string, Promise<void>>();
 
 function parseOrderIds(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((id): id is string => typeof id === "string");
-  if (typeof value !== "string" || !value.trim()) return [];
-  const parsed = JSON.parse(value) as unknown;
-  return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
 }
 
 async function runPresetOrderUpdate<T>(presetId: string, task: () => Promise<T>): Promise<T> {
@@ -372,7 +369,7 @@ export function useReorderSections() {
       if (prev?.preset?.sectionOrder) {
         qc.setQueryData(presetKeys.full(presetId), {
           ...prev,
-          preset: { ...prev.preset, sectionOrder: JSON.stringify(sectionIds) },
+          preset: { ...prev.preset, sectionOrder: sectionIds },
         });
       }
       return { prev };

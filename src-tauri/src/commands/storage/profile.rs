@@ -157,11 +157,12 @@ where
     let mut imported = Map::new();
     let mut replacements = Vec::new();
     for collection in PROFILE_COLLECTIONS {
-        let rows = collections
+        let mut rows = collections
             .get(*collection)
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        normalize_profile_json_fields(collection, &mut rows)?;
         imported.insert((*collection).to_string(), json!(rows.len()));
         replacements.push((*collection, rows));
     }
@@ -171,6 +172,32 @@ where
     imported.insert("files".to_string(), json!(restored_assets));
     insert_profile_import_aliases(&mut imported);
     Ok(json!({ "success": true, "imported": imported }))
+}
+
+fn normalize_profile_json_fields(collection: &str, rows: &mut [Value]) -> AppResult<()> {
+    for row in rows {
+        let Some(object) = row.as_object_mut() else {
+            continue;
+        };
+        if collection == "characters" {
+            match object.get("data") {
+                Some(Value::Object(_)) => {}
+                Some(Value::String(raw)) => {
+                    let parsed = serde_json::from_str::<Value>(raw)
+                        .ok()
+                        .filter(Value::is_object)
+                        .unwrap_or_else(|| json!({}));
+                    object.insert("data".to_string(), parsed);
+                }
+                Some(_) | None => {
+                    object.insert("data".to_string(), json!({}));
+                }
+            }
+        } else {
+            normalize_typed_json_fields(collection, object)?;
+        }
+    }
+    Ok(())
 }
 
 fn finish_profile_import_assets(

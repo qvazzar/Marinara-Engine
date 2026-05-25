@@ -1876,7 +1876,7 @@ export function AgentEditor() {
                     tool={{
                       name: tool.name,
                       description: tool.description,
-                      parameters: JSON.parse(tool.parametersSchema || "{}"),
+                      parameters: tool.parametersSchema as unknown as ToolDefinition["parameters"],
                     }}
                     enabled={localEnabledTools.includes(tool.name)}
                     onToggle={(name) => {

@@ -54,7 +54,7 @@ import { CharacterAvatarImage } from "./CharacterAvatarImage";
 
 type CharacterRow = {
   id: string;
-  data: string;
+  data: Record<string, any>;
   comment?: string | null;
   avatarPath: string | null;
   createdAt: string;
@@ -161,24 +161,17 @@ export function CharactersPanel() {
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<Set<string>>(new Set());
   const [exportingSelected, setExportingSelected] = useState(false);
 
-  const chatCharacterIds: string[] = activeChat
-    ? ((typeof activeChat.characterIds === "string" ? JSON.parse(activeChat.characterIds) : activeChat.characterIds) ??
-      [])
-    : [];
+  const chatCharacterIds: string[] = activeChat ? (activeChat.characterIds ?? []) : [];
 
   const isConversation = (activeChat as unknown as { mode?: string })?.mode === "conversation";
 
-  // Parse character data and filter by search
+  // Character data is stored as raw JSON objects.
   const parsedCharacters = useMemo(() => {
     if (!characters) return [];
-    return (characters as CharacterRow[]).map((char) => {
-      try {
-        const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-        return { ...char, parsed };
-      } catch {
-        return { ...char, parsed: { name: "Unknown", description: "" } };
-      }
-    });
+    return (characters as CharacterRow[]).map((char) => ({
+      ...char,
+      parsed: char.data ?? { name: "Unknown", description: "" },
+    }));
   }, [characters]) as ParsedCharacterRow[];
 
   const charMap = useMemo(() => {
@@ -336,7 +329,7 @@ export function CharactersPanel() {
       ...g,
       memberIds: (() => {
         try {
-          return JSON.parse(g.characterIds);
+          return Array.isArray(g.characterIds) ? g.characterIds : [];
         } catch {
           return [];
         }
@@ -358,16 +351,12 @@ export function CharactersPanel() {
           const charList = (characters ?? []) as CharacterRow[];
           const char = charList.find((c) => c.id === charId);
           if (!char) return;
-          try {
-            const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-            const firstMes = (parsed as { first_mes?: string }).first_mes;
-            const altGreetings = (parsed as { alternate_greetings?: string[] }).alternate_greetings ?? [];
-            const name = (parsed as { name?: string }).name ?? "Unknown";
-            if (firstMes) {
-              setFirstMesConfirm({ charId, charName: name, message: firstMes, alternateGreetings: altGreetings });
-            }
-          } catch {
-            /* ignore */
+          const parsed = char.data;
+          const firstMes = (parsed as { first_mes?: string }).first_mes;
+          const altGreetings = (parsed as { alternate_greetings?: string[] }).alternate_greetings ?? [];
+          const name = (parsed as { name?: string }).name ?? "Unknown";
+          if (firstMes) {
+            setFirstMesConfirm({ charId, charName: name, message: firstMes, alternateGreetings: altGreetings });
           }
         },
       },
@@ -389,17 +378,13 @@ export function CharactersPanel() {
           for (const charId of newlyAdded) {
             const char = charList.find((c) => c.id === charId);
             if (!char) continue;
-            try {
-              const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-              const firstMes = (parsed as { first_mes?: string }).first_mes;
-              const altGreetings = (parsed as { alternate_greetings?: string[] }).alternate_greetings ?? [];
-              const name = (parsed as { name?: string }).name ?? "Unknown";
-              if (firstMes) {
-                setFirstMesConfirm({ charId, charName: name, message: firstMes, alternateGreetings: altGreetings });
-                break; // show one at a time
-              }
-            } catch {
-              /* ignore */
+            const parsed = char.data;
+            const firstMes = (parsed as { first_mes?: string }).first_mes;
+            const altGreetings = (parsed as { alternate_greetings?: string[] }).alternate_greetings ?? [];
+            const name = (parsed as { name?: string }).name ?? "Unknown";
+            if (firstMes) {
+              setFirstMesConfirm({ charId, charName: name, message: firstMes, alternateGreetings: altGreetings });
+              break; // show one at a time
             }
           }
         },

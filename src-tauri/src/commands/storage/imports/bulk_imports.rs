@@ -610,7 +610,7 @@ fn import_persona_payload(
     }
     state
         .storage
-        .create("personas", with_entity_defaults("personas", Value::Object(object)))
+        .create("personas", with_entity_defaults("personas", Value::Object(object))?)
         .map(|record| json!({ "success": true, "id": record.get("id").cloned().unwrap_or(Value::Null), "name": record.get("name").cloned().unwrap_or(Value::Null), "persona": record }))
 }
 

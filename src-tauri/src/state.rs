@@ -1,6 +1,7 @@
 use marinara_assets::AssetService;
 use marinara_core::{AppError, AppResult};
 use marinara_storage::FileStorage;
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -8,6 +9,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::watch;
 
 use crate::seed_defaults::seed_bundled_defaults;
+use crate::storage_commands::shared::normalize_typed_json_fields;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -54,6 +56,7 @@ impl AppState {
         let game_assets = AssetService::new(data_dir.join("game-assets"))?;
         let backgrounds = AssetService::new(data_dir.join("backgrounds"))?;
         Self::seed_defaults(&storage, &game_assets, &backgrounds, default_data_roots)?;
+        migrate_storage_json_fields(&storage)?;
 
         Ok(Self {
             storage,
@@ -143,4 +146,64 @@ impl AppState {
             Ok(false)
         }
     }
+}
+
+fn migrate_storage_json_fields(storage: &FileStorage) -> AppResult<()> {
+    for collection in [
+        "characters",
+        "character-groups",
+        "personas",
+        "persona-groups",
+        "lorebooks",
+        "lorebook-entries",
+        "prompts",
+        "prompt-sections",
+        "prompt-variables",
+        "chat-presets",
+        "agents",
+        "connections",
+        "chats",
+        "messages",
+        "custom-tools",
+        "regex-scripts",
+        "game-state-snapshots",
+        "game-checkpoints",
+    ] {
+        migrate_collection_json_fields(storage, collection)?;
+    }
+    Ok(())
+}
+
+fn migrate_collection_json_fields(storage: &FileStorage, collection: &str) -> AppResult<()> {
+    let rows = storage.list(collection)?;
+    let mut changed = false;
+    let mut normalized_rows = Vec::with_capacity(rows.len());
+    for mut row in rows {
+        let before = row.clone();
+        if let Some(object) = row.as_object_mut() {
+            if collection == "characters" {
+                match object.get("data") {
+                    Some(Value::Object(_)) => {}
+                    Some(Value::String(raw)) => {
+                        let parsed = serde_json::from_str::<Value>(raw)
+                            .ok()
+                            .filter(Value::is_object)
+                            .unwrap_or_else(|| json!({}));
+                        object.insert("data".to_string(), parsed);
+                    }
+                    Some(_) | None => {
+                        object.insert("data".to_string(), json!({}));
+                    }
+                }
+            } else {
+                normalize_typed_json_fields(collection, object)?;
+            }
+        }
+        changed = changed || row != before;
+        normalized_rows.push(row);
+    }
+    if changed {
+        storage.replace_all(collection, normalized_rows)?;
+    }
+    Ok(())
 }
