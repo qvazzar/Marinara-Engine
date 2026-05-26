@@ -71,10 +71,13 @@ function normalizeRemoteRuntimeUrl(raw: string): RuntimeTarget | null {
 }
 
 export function remoteRuntimeTarget(): RuntimeTarget | null {
+  const raw = useUIStore.getState().remoteRuntimeUrl;
   try {
-    return normalizeRemoteRuntimeUrl(useUIStore.getState().remoteRuntimeUrl);
+    return normalizeRemoteRuntimeUrl(raw);
   } catch {
-    return null;
+    throw new ApiError("Invalid Remote Runtime URL. Check Settings and enter a valid runtime URL.", 400, {
+      code: "invalid_remote_runtime_url",
+    });
   }
 }
 
