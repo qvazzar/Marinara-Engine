@@ -10,10 +10,11 @@ import type { ConnectionRow, ConnectionTestResult } from "../types";
 export { connectionKeys } from "../query-keys";
 
 
-export function useConnections() {
+export function useConnections(enabled = true) {
   return useQuery({
     queryKey: connectionKeys.list(),
     queryFn: () => storageApi.list<ConnectionRow>("connections"),
+    enabled,
     staleTime: 5 * 60_000,
   });
 }

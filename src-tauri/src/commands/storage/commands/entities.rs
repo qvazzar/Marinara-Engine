@@ -134,8 +134,20 @@ fn message_page_options(options: Option<&Value>) -> Option<(usize, Option<String
 }
 
 #[tauri::command]
-pub fn storage_get(
+pub async fn storage_get(
     state: State<'_, AppState>,
+    entity: String,
+    id: String,
+    options: Option<Value>,
+) -> Result<Value, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || storage_get_inner(&state, entity, id, options))
+        .await
+        .map_err(|error| AppError::new("task_join_error", error.to_string()))?
+}
+
+fn storage_get_inner(
+    state: &AppState,
     entity: String,
     id: String,
     options: Option<Value>,

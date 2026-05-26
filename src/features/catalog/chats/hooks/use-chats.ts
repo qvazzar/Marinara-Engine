@@ -189,6 +189,23 @@ export function useChatSummaries() {
   });
 }
 
+export function useRecentChatSummaries(limit = 3) {
+  return useQuery({
+    queryKey: chatKeys.recentSummaries(limit),
+    queryFn: () =>
+      storageApi.list<ChatListItem>("chats", {
+        fields: CHAT_SUMMARY_FIELDS,
+        fieldSelections: { metadata: CHAT_SUMMARY_METADATA_FIELDS },
+        orderBy: "updatedAt",
+        descending: true,
+        limit,
+      }),
+    staleTime: 10_000,
+    refetchOnMount: false,
+    refetchOnReconnect: true,
+  });
+}
+
 export function useChat(id: string | null) {
   return useQuery({
     queryKey: chatKeys.detail(id ?? ""),
