@@ -149,6 +149,7 @@ export interface TTSVoicesResponse {
   fallback?: boolean;
   /** Present when a live provider lookup failed and Marinara returned fallback voices. */
   providerError?: string;
+  /** Machine-readable error classification when providerError is present. */
   providerErrorCode?: string;
   source: TTSSource;
 }

@@ -103,7 +103,7 @@ export function useFetchModels() {
     mutationFn: (id: string) =>
       invokeTauri<{
         models: Array<{ id: string; name: string; fallback?: boolean; fromProvider?: boolean; providerError?: string }>;
-        fromProvider?: boolean;
+        fromProvider: boolean;
         fallback?: boolean;
         providerError?: string;
         providerErrorCode?: string;
