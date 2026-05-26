@@ -31,6 +31,7 @@ import { ChatBranchSelector } from "../../shared/chat-ui/index";
 import { ActiveWorldInfoButton, ActiveWorldInfoModal } from "../../../runtime/visuals/index";
 import { useChatStore } from "../../../../shared/stores/chat.store";
 import { useUIStore } from "../../../../shared/stores/ui.store";
+import { showConversationLocalNotification } from "../../../../shared/lib/local-notifications";
 import { playNotificationPing } from "../../../../shared/lib/notification-sound";
 import { getAvatarCropStyle, type AvatarCropValue } from "../../../../shared/lib/utils";
 import { characterKeys } from "../../../catalog/characters/index";
@@ -132,6 +133,14 @@ function isHiddenFromUser(message: Message) {
   } catch {
     return false;
   }
+}
+
+function getAssistantNotificationName(message: Message, characterMap: CharacterMap, characterNames: string[]) {
+  if (message.characterId) {
+    const name = characterMap.get(message.characterId)?.name?.trim();
+    if (name) return name;
+  }
+  return characterNames.length === 1 ? characterNames[0] : "Character";
 }
 
 const LIST_LINE_RE = /^\s*(?:[-*+]|\d+\.)\s/;
@@ -671,7 +680,7 @@ export function ConversationView({
     // Find newly arrived split child lines (key has __line1, __line2, etc.)
     const newSplitChildren: string[] = [];
     // Find newly arrived non-split assistant messages (for notification sound)
-    let hasNewAssistantMessage = false;
+    let newAssistantMessage: Message | null = null;
 
     for (const key of currentKeys) {
       if (!prevKeys.has(key) && !seenGlobal.has(key)) {
@@ -689,12 +698,15 @@ export function ConversationView({
           newSplitChildren.push(key);
         } else if (/__block0$/.test(key)) {
           // First block of a split message — counts as new assistant message
-          hasNewAssistantMessage = true;
+          const item = renderedItems.find((i) => i.type === "message" && i.key === key);
+          if (!newAssistantMessage && item?.type === "message" && item.msg.role === "assistant") {
+            newAssistantMessage = item.msg;
+          }
         } else {
           // Check if it's a new assistant message (not a split)
           const item = renderedItems.find((i) => i.type === "message" && i.key === key);
           if (item && item.type === "message" && item.msg.role === "assistant") {
-            hasNewAssistantMessage = true;
+            newAssistantMessage ??= item.msg;
           }
         }
       }
@@ -705,8 +717,16 @@ export function ConversationView({
     prevRenderedKeysRef.current = currentKeys;
 
     // Play notification for the first new message appearance
-    if (hasNewAssistantMessage && useUIStore.getState().convoNotificationSound) {
-      playNotificationPing();
+    if (newAssistantMessage) {
+      const uiState = useUIStore.getState();
+      if (uiState.convoNotificationSound) {
+        playNotificationPing();
+      }
+      void showConversationLocalNotification({
+        enabled: uiState.conversationBrowserNotifications,
+        characterName: getAssistantNotificationName(newAssistantMessage, characterMap, characterNames),
+        tag: `marinara-conversation-${chatId}`,
+      });
     }
 
     if (newSplitChildren.length === 0) {
@@ -755,7 +775,7 @@ export function ConversationView({
     // No cleanup return here — timers are managed via staggerTimersRef and
     // must survive effect re-runs caused by query refetches. Cleanup on
     // unmount is handled by a separate effect below.
-  }, [renderedItems]);
+  }, [characterMap, characterNames, chatId, renderedItems]);
 
   // Clean up stagger timers on unmount only (empty deps = unmount cleanup)
   useEffect(() => {

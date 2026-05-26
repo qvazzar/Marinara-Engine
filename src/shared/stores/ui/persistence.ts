@@ -138,6 +138,7 @@ export function partializeUiState(state: UIState) {
     userActivity: state.userActivity,
     convoNotificationSound: state.convoNotificationSound,
     rpNotificationSound: state.rpNotificationSound,
+    conversationBrowserNotifications: state.conversationBrowserNotifications,
     customConversationPrompt: state.customConversationPrompt,
     scheduleGenerationPreferences: state.scheduleGenerationPreferences,
     impersonatePromptTemplate: state.impersonatePromptTemplate,

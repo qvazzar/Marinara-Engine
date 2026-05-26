@@ -185,6 +185,7 @@ export const useUIStore = create<UIState>()(
       },
       convoNotificationSound: true,
       rpNotificationSound: true,
+      conversationBrowserNotifications: false,
       customConversationPrompt: null,
       scheduleGenerationPreferences: "",
       learnedGameSetupOptions: DEFAULT_GAME_SETUP_LEARNED_OPTIONS,
@@ -445,6 +446,7 @@ export const useUIStore = create<UIState>()(
         })),
       setConvoNotificationSound: (v) => set({ convoNotificationSound: v }),
       setRpNotificationSound: (v) => set({ rpNotificationSound: v }),
+      setConversationBrowserNotifications: (v) => set({ conversationBrowserNotifications: v }),
       setCustomConversationPrompt: (v) => set({ customConversationPrompt: v }),
       setScheduleGenerationPreferences: (v) => set({ scheduleGenerationPreferences: v }),
       rememberGameSetupOptions: (options, text) =>

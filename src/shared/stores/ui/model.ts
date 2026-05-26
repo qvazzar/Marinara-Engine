@@ -373,6 +373,8 @@ export interface UIState {
   // ── Sound ──
   convoNotificationSound: boolean;
   rpNotificationSound: boolean;
+  /** When true, show native local notifications for new Conversation messages while Marinara is unfocused. */
+  conversationBrowserNotifications: boolean;
 
   // ── Custom Conversation Prompt ──
   /** User's custom default system prompt for new conversations (null = built-in default). */
@@ -546,6 +548,7 @@ export interface UIState {
   setConvoGradientField: (scheme: "dark" | "light", field: "from" | "to", value: string) => void;
   setConvoNotificationSound: (v: boolean) => void;
   setRpNotificationSound: (v: boolean) => void;
+  setConversationBrowserNotifications: (v: boolean) => void;
   setCustomConversationPrompt: (v: string | null) => void;
   setScheduleGenerationPreferences: (v: string) => void;
   rememberGameSetupOptions: (
