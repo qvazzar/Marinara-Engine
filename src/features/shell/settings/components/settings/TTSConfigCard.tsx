@@ -509,6 +509,7 @@ export function TTSConfigCard() {
   const voiceOptions: VoiceOption[] =
     voicesData?.voiceOptions ?? voices.map((voiceId): VoiceOption => ({ id: voiceId, name: voiceId }));
   const voicesFromProvider = voicesData?.fromProvider ?? false;
+  const voicesProviderError = voicesData?.providerError;
   const elevenLabsMatchedMaleVoiceOptions = useMemo(
     () =>
       voiceOptions.filter((option) => isElevenLabsVoiceForGender(option, "male", ELEVENLABS_DEFAULT_MALE_VOICE_NAMES)),
@@ -897,6 +898,11 @@ export function TTSConfigCard() {
                   <RefreshCw size="0.75rem" className={cn(fetchingVoices && "animate-spin")} />
                 </button>
               </div>
+              {voicesProviderError && !fetchingVoices && (
+                <p className="text-[0.625rem] text-[var(--destructive)]">
+                  Provider voice lookup failed: {voicesProviderError}. Showing fallback voices.
+                </p>
+              )}
               {!voicesFromProvider && source === "openai" && voices.length > 0 && (
                 <p className="text-[0.625rem] text-[var(--muted-foreground)]">
                   Showing OpenAI built-in voices — save & enable to load from your provider

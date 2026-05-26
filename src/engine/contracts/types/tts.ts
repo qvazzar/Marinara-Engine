@@ -145,5 +145,10 @@ export interface TTSVoicesResponse {
   }>;
   /** True when the list came from the provider; false = local fallback or no provider voices */
   fromProvider: boolean;
+  /** True when Marinara is showing a local fallback voice catalog. */
+  fallback?: boolean;
+  /** Present when a live provider lookup failed and Marinara returned fallback voices. */
+  providerError?: string;
+  providerErrorCode?: string;
   source: TTSSource;
 }

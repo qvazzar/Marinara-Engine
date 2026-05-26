@@ -100,7 +100,14 @@ export function useTestImageGeneration() {
 
 export function useFetchModels() {
   return useMutation({
-    mutationFn: (id: string) => invokeTauri<{ models: Array<{ id: string; name: string }> }>("connection_models", { id }),
+    mutationFn: (id: string) =>
+      invokeTauri<{
+        models: Array<{ id: string; name: string; fallback?: boolean; fromProvider?: boolean; providerError?: string }>;
+        fromProvider?: boolean;
+        fallback?: boolean;
+        providerError?: string;
+        providerErrorCode?: string;
+      }>("connection_models", { id }),
   });
 }
 
