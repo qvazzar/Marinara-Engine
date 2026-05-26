@@ -20,7 +20,6 @@ import {
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import type { Message, MessageExtra } from "../../../../engine/contracts/types/chat";
 import { useUIStore } from "../../../../shared/stores/ui.store";
-import { useChatStore } from "../../../../shared/stores/chat.store";
 import { cn, copyToClipboard, getAvatarCropStyle, parseAvatarCropJson } from "../../../../shared/lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../../../shared/lib/markdown";
 import { chatKeys } from "../../../catalog/chats/index";
@@ -337,14 +336,13 @@ export const ConversationMessage = memo(function ConversationMessage({
   const [imageLightbox, setImageLightbox] = useState<{ url: string; prompt?: string | null } | null>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const lastMessageTapAtRef = useRef(0);
-  const hasInput = useChatStore((s) => s.currentInput.trim().length > 0);
   const guideGenerations = useUIStore((s) => s.guideGenerations);
   const chatFontSize = useUIStore((s) => s.chatFontSize);
   const showMessageNumbers = useUIStore((s) => s.showMessageNumbers);
   const collapseHiddenMessages = useUIStore((s) => s.summaryPopoverSettings.collapseHiddenMessages);
   const editMessagesOnDoubleClick = useUIStore((s) => s.editMessagesOnDoubleClick);
   const messageTextStyle = useMemo<CSSProperties>(() => ({ fontSize: `${chatFontSize}px` }), [chatFontSize]);
-  const isGuided = guideGenerations && hasInput;
+  const isGuided = guideGenerations;
   const regenerateButtonTitle = isGuided ? "Regenerate (guided)" : "Regenerate";
   const regenerateGuidedClass = isGuided
     ? "text-[var(--primary)] bg-[var(--primary)]/15 ring-1 ring-[var(--primary)]/30 hover:text-[var(--primary)] hover:bg-[var(--primary)]/20"

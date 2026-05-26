@@ -47,7 +47,6 @@ export function useChatTimelineActions({
   enabledAgentTypes = new Set<string>(),
   refreshWorldStateOnTimelineChange = false,
 }: UseChatTimelineActionsOptions) {
-  const currentInput = useChatStore((state) => state.currentInput);
   const guideGenerations = useUIStore((state) => state.guideGenerations);
   const isStreamingGlobal = useChatStore((state) => state.isStreaming);
   const streamingChatId = useChatStore((state) => state.streamingChatId);
@@ -350,14 +349,16 @@ export function useChatTimelineActions({
         return;
       }
       try {
-        const hasInput = currentInput ? currentInput.trim().length > 0 : false;
+        const currentInput = useChatStore.getState().currentInput;
+        const generationGuide = currentInput.trim();
+        const hasInput = generationGuide.length > 0;
         await generate(
           guideGenerations && hasInput
             ? {
                 chatId: activeChatId,
                 connectionId: null,
                 regenerateMessageId: messageId,
-                generationGuide: buildGuidedGenerationInstructionMessage(currentInput.toString()),
+                generationGuide: buildGuidedGenerationInstructionMessage(generationGuide),
                 generationGuideSource: "guide",
               }
             : { chatId: activeChatId, connectionId: null, regenerateMessageId: messageId },
@@ -366,7 +367,7 @@ export function useChatTimelineActions({
         /* Error toast is shown by the generate hook. */
       }
     },
-    [activeChatId, currentInput, generate, guideGenerations, isStreaming],
+    [activeChatId, generate, guideGenerations, isStreaming],
   );
 
   const handleRetryFailedAgents = useCallback(async () => {

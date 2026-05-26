@@ -51,7 +51,6 @@ import { useShallow } from "zustand/react/shallow";
 import { createMessageMacroResolver } from "../../../../../shared/lib/chat-macros";
 import { useApplyRegex } from "../../../../catalog/agents/regex-application";
 import { useUIStore } from "../../../../../shared/stores/ui.store";
-import { useChatStore } from "../../../../../shared/stores/chat.store";
 import { useTranslate } from "../../../../../shared/hooks/use-translate";
 import { storageApi } from "../../../../../shared/api/storage-api";
 import { ttsService } from "../../../../../shared/lib/tts-service";
@@ -754,8 +753,7 @@ export const ChatMessage = memo(function ChatMessage({
       editMessagesOnDoubleClick: s.editMessagesOnDoubleClick,
     })),
   );
-  const hasInput = useChatStore((s) => s.currentInput.trim().length > 0);
-  const isGuided = guideGenerations && hasInput;
+  const isGuided = guideGenerations;
   const regenerateButtonTitle = isGuided ? "Regenerate (guided)" : "Regenerate";
   const regenerateGuidedClass = isGuided
     ? "text-[var(--primary)] bg-[var(--primary)]/15 ring-1 ring-[var(--primary)]/30 hover:text-[var(--primary)]"
