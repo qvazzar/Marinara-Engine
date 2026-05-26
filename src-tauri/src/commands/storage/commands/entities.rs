@@ -211,33 +211,35 @@ pub async fn storage_delete(
     force: Option<bool>,
 ) -> Result<Value, AppError> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || storage_delete_inner(&state, entity, id, force))
-        .await
-        .map_err(|error| AppError::new("task_join_error", error.to_string()))?
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_entity(&state, &entity, &id, force.unwrap_or(false))
+    })
+    .await
+    .map_err(|error| AppError::new("task_join_error", error.to_string()))?
 }
 
-fn storage_delete_inner(
+pub(crate) fn delete_entity(
     state: &AppState,
-    entity: String,
-    id: String,
-    force: Option<bool>,
+    entity: &str,
+    id: &str,
+    force: bool,
 ) -> Result<Value, AppError> {
     if entity == "connections" {
-        return crate::connection_refs::delete_connection(state, &id, force.unwrap_or(false));
+        return crate::connection_refs::delete_connection(state, id, force);
     }
     if entity == "chats" {
-        let existed = state.storage.get("chats", &id)?.is_some();
+        let existed = state.storage.get("chats", id)?.is_some();
         if existed {
-            chats::delete_chat_with_messages(state, &id)?;
+            chats::delete_chat_with_messages(state, id)?;
         }
         return Ok(json!({ "deleted": existed }));
     }
-    if is_protected_record(&entity, &id) {
+    if is_protected_record(entity, id) {
         return Err(AppError::invalid_input(
             "Protected records cannot be deleted",
         ));
     }
-    let existing = owned_record_for_delete(state, &entity, &id)?;
+    let existing = owned_record_for_delete(state, entity, id)?;
     let message_chat_id = if entity == "messages" {
         existing
             .as_ref()
@@ -247,13 +249,13 @@ fn storage_delete_inner(
     } else {
         None
     };
-    let deleted = state.storage.delete(&entity, &id)?;
+    let deleted = state.storage.delete(entity, id)?;
     if deleted {
         if let Some(record) = existing.as_ref() {
-            remove_owned_media(state, &entity, record);
+            remove_owned_media(state, entity, record);
         }
         if let Some(chat_id) = message_chat_id {
-            game_state_snapshots::delete_tracker_snapshots_for_message(state, &chat_id, &id)?;
+            game_state_snapshots::delete_tracker_snapshots_for_message(state, &chat_id, id)?;
             game_state_snapshots::sync_chat_game_state_to_visible_tracker(state, &chat_id)?;
         }
     }

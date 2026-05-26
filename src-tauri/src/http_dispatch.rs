@@ -1,8 +1,6 @@
-use crate::builtins::is_protected_record;
 use crate::state::AppState;
 use crate::storage_commands::{
-    avatars, backgrounds, chats, generation, images, imports, llm, lorebook_images, profile,
-    shared, sprites,
+    backgrounds, chats, entity_commands, generation, images, imports, llm, profile, shared, sprites,
 };
 use marinara_core::{AppError, AppResult};
 use serde::Deserialize;
@@ -223,33 +221,12 @@ fn storage_update(state: &AppState, args: &Map<String, Value>) -> AppResult<Valu
 fn storage_delete(state: &AppState, args: &Map<String, Value>) -> AppResult<Value> {
     let entity = required_string(args, "entity")?;
     let id = required_string(args, "id")?;
-    if entity == "connections" {
-        return crate::connection_refs::delete_connection(
-            state,
-            id,
-            args.get("force").and_then(Value::as_bool).unwrap_or(false),
-        );
-    }
-    if entity == "chats" {
-        let existed = state.storage.get("chats", id)?.is_some();
-        if existed {
-            chats::delete_chat_with_messages(state, id)?;
-        }
-        return Ok(json!({ "deleted": existed }));
-    }
-    if is_protected_record(entity, id) {
-        return Err(AppError::invalid_input(
-            "Protected records cannot be deleted",
-        ));
-    }
-    let existing = media_owned_record(state, entity, id)?;
-    let deleted = state.storage.delete(entity, id)?;
-    if deleted {
-        if let Some(record) = existing.as_ref() {
-            remove_owned_media(state, entity, record);
-        }
-    }
-    Ok(json!({ "deleted": deleted }))
+    entity_commands::delete_entity(
+        state,
+        entity,
+        id,
+        args.get("force").and_then(Value::as_bool).unwrap_or(false),
+    )
 }
 
 fn storage_duplicate(state: &AppState, args: &Map<String, Value>) -> AppResult<Value> {
@@ -384,21 +361,6 @@ async fn sprite_generate_sheet_preview(
 
 fn llm_stream_cancel(state: &AppState, args: &Map<String, Value>) -> AppResult<Value> {
     llm::llm_stream_cancel(state, required_string(args, "streamId")?)
-}
-
-fn media_owned_record(state: &AppState, entity: &str, id: &str) -> AppResult<Option<Value>> {
-    match entity {
-        "characters" | "personas" | "lorebooks" => state.storage.get(entity, id),
-        _ => Ok(None),
-    }
-}
-
-fn remove_owned_media(state: &AppState, entity: &str, record: &Value) {
-    match entity {
-        "characters" | "personas" => avatars::remove_avatar_file(state, entity, record),
-        "lorebooks" => lorebook_images::remove_lorebook_image_file(state, record),
-        _ => {}
-    }
 }
 
 fn compare_json_values(left: Option<&Value>, right: Option<&Value>) -> std::cmp::Ordering {
@@ -604,5 +566,128 @@ mod tests {
             result.get("originalName").and_then(Value::as_str),
             Some("background.png")
         );
+    }
+
+    #[tokio::test]
+    async fn dispatch_storage_delete_message_cleans_tracker_snapshots() {
+        let state = test_state("message-delete-tracker-cleanup");
+        state
+            .storage
+            .create(
+                "chats",
+                json!({
+                    "id": "chat-1",
+                    "name": "Tracker chat",
+                    "gameState": { "kind": "tracker", "chatId": "chat-1", "messageId": "message-2", "swipeIndex": 0 }
+                }),
+            )
+            .unwrap();
+        for (message_id, created_at) in [
+            ("message-1", "2026-05-26T10:00:00Z"),
+            ("message-2", "2026-05-26T10:01:00Z"),
+        ] {
+            state
+                .storage
+                .create(
+                    "messages",
+                    json!({
+                        "id": message_id,
+                        "chatId": "chat-1",
+                        "role": "assistant",
+                        "content": "turn",
+                        "createdAt": created_at
+                    }),
+                )
+                .unwrap();
+            state
+                .storage
+                .create(
+                    "game-state-snapshots",
+                    json!({
+                        "id": format!("snapshot-{message_id}"),
+                        "kind": "tracker",
+                        "chatId": "chat-1",
+                        "messageId": message_id,
+                        "swipeIndex": 0,
+                        "createdAt": created_at,
+                        "location": message_id
+                    }),
+                )
+                .unwrap();
+        }
+
+        let result = dispatch(
+            &state,
+            InvokeRequest {
+                command: "storage_delete".to_string(),
+                args: Some(json!({ "entity": "messages", "id": "message-2" })),
+            },
+        )
+        .await
+        .expect("remote message delete should dispatch");
+
+        assert_eq!(result["deleted"], true);
+        assert!(state
+            .storage
+            .get("messages", "message-2")
+            .unwrap()
+            .is_none());
+        assert!(state
+            .storage
+            .get("game-state-snapshots", "snapshot-message-2")
+            .unwrap()
+            .is_none());
+        assert!(state
+            .storage
+            .get("game-state-snapshots", "snapshot-message-1")
+            .unwrap()
+            .is_some());
+        let chat = state.storage.get("chats", "chat-1").unwrap().unwrap();
+        assert_eq!(
+            chat["gameState"].get("messageId").and_then(Value::as_str),
+            Some("message-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_storage_delete_non_message_keeps_tracker_snapshots() {
+        let state = test_state("non-message-delete-tracker-control");
+        state
+            .storage
+            .create(
+                "personas",
+                json!({ "id": "persona-1", "name": "Keep tracker snapshots" }),
+            )
+            .unwrap();
+        state
+            .storage
+            .create(
+                "game-state-snapshots",
+                json!({
+                    "id": "snapshot-message-1",
+                    "kind": "tracker",
+                    "chatId": "chat-1",
+                    "messageId": "message-1",
+                    "swipeIndex": 0
+                }),
+            )
+            .unwrap();
+
+        let result = dispatch(
+            &state,
+            InvokeRequest {
+                command: "storage_delete".to_string(),
+                args: Some(json!({ "entity": "personas", "id": "persona-1" })),
+            },
+        )
+        .await
+        .expect("remote non-message delete should dispatch");
+
+        assert_eq!(result["deleted"], true);
+        assert!(state
+            .storage
+            .get("game-state-snapshots", "snapshot-message-1")
+            .unwrap()
+            .is_some());
     }
 }
