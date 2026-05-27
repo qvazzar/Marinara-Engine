@@ -153,6 +153,12 @@ export function ToolEditor() {
       setSaveError("Description is required.");
       return;
     }
+    if (localExecType === "script") {
+      setSaveError(
+        "Pick \"Convert to Webhook\" or \"Convert to Static Result\" before saving — legacy script tools cannot run in this build.",
+      );
+      return;
+    }
     if (localExecType === "static" && !localStaticResult.trim()) {
       setSaveError("Static result is required for a static custom tool.");
       return;
@@ -168,7 +174,10 @@ export function ToolEditor() {
       executionType: localExecType,
       webhookUrl: localExecType === "webhook" ? localWebhookUrl || null : null,
       staticResult: localExecType === "static" ? localStaticResult || null : null,
-      scriptBody: localExecType === "script" ? localScriptBody || null : null,
+      // Script tools are blocked by the guard above; converting to webhook/static
+      // intentionally clears the preserved script body since the tool is no longer
+      // a legacy script row.
+      scriptBody: null,
       enabled: true,
     };
 
@@ -216,6 +225,14 @@ export function ToolEditor() {
     closeToolDetail();
   };
 
+  const convertScriptTo = useCallback(
+    (target: "static" | "webhook") => {
+      setLocalExecType(target);
+      markDirty();
+    },
+    [markDirty],
+  );
+
   // ── Not found ──
   if (!toolDetailId || (!dbTool && !isNew)) {
     return (
@@ -228,11 +245,6 @@ export function ToolEditor() {
   const isPending = createTool.isPending || updateTool.isPending;
   const isLegacyScript = localExecType === "script";
   const execMeta = EXEC_TYPES.find((e) => e.value === localExecType) ?? EXEC_TYPES[0];
-
-  const convertScriptTo = useCallback((target: "static" | "webhook") => {
-    setLocalExecType(target);
-    markDirty();
-  }, [markDirty]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-[var(--background)]">
