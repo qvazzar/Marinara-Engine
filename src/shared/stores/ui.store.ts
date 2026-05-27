@@ -181,6 +181,7 @@ export const useUIStore = create<UIState>()(
       intuitiveSwipeNavigation: false,
       intuitiveSwipeRerollLatest: false,
       editLastMessageOnArrowUp: true,
+      editMessagesOnDoubleClick: true,
       summaryPopoverSettings: DEFAULT_SUMMARY_POPOVER_SETTINGS,
       narrationFontColor: "",
       narrationOpacity: 80,
@@ -443,6 +444,7 @@ export const useUIStore = create<UIState>()(
       setIntuitiveSwipeNavigation: (v) => set({ intuitiveSwipeNavigation: v }),
       setIntuitiveSwipeRerollLatest: (v) => set({ intuitiveSwipeRerollLatest: v }),
       setEditLastMessageOnArrowUp: (v) => set({ editLastMessageOnArrowUp: v }),
+      setEditMessagesOnDoubleClick: (v) => set({ editMessagesOnDoubleClick: v }),
       setSummaryPopoverSettings: (settings) =>
         set((state) => ({
           summaryPopoverSettings: normalizeSummaryPopoverSettings({

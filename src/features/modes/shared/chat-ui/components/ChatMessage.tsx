@@ -79,6 +79,8 @@ import { SwipeJumpControl } from "./SwipeJumpControl";
 
 const MESSAGE_ACTION_ICON_SIZE = "1em";
 const MESSAGE_SWIPE_ICON_SIZE = "1.15em";
+const MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR =
+  "button, a, textarea, input, select, label, [role='button'], [contenteditable='true'], .mari-message-actions";
 const normalizeEditableQuotes = (value: string) =>
   value.replace(/["\u201c\u201d\u201e\u201f]/g, '"').replace(/['\u2018\u2019\u201a\u201b]/g, "'");
 
@@ -732,6 +734,7 @@ export const ChatMessage = memo(function ChatMessage({
     boldDialogue,
     theme,
     collapseHiddenMessages,
+    editMessagesOnDoubleClick,
   } = useUIStore(
     useShallow((s) => ({
       chatFontSize: s.chatFontSize,
@@ -748,6 +751,7 @@ export const ChatMessage = memo(function ChatMessage({
       boldDialogue: s.boldDialogue ?? true,
       theme: s.theme,
       collapseHiddenMessages: s.summaryPopoverSettings.collapseHiddenMessages,
+      editMessagesOnDoubleClick: s.editMessagesOnDoubleClick,
     })),
   );
   const hasInput = useChatStore((s) => s.currentInput.trim().length > 0);
@@ -806,6 +810,7 @@ export const ChatMessage = memo(function ChatMessage({
   const [avatarLightbox, setAvatarLightbox] = useState<string | null>(null);
   const [avatarLightboxPrompt, setAvatarLightboxPrompt] = useState<string | null>(null);
   const scrollRestoreRef = useRef<{ el: HTMLElement; top: number } | null>(null);
+  const lastMessageTapAtRef = useRef(0);
   const msgRef = useRef<HTMLDivElement>(null);
   const openImageLightbox = useCallback((url: string, prompt?: unknown) => {
     setAvatarLightbox(url);
@@ -899,28 +904,6 @@ export const ChatMessage = memo(function ChatMessage({
     document.addEventListener("touchstart", handleTouch);
     return () => document.removeEventListener("touchstart", handleTouch);
   }, [showActions]);
-
-  const handleMobileTap = useCallback(
-    (e: React.MouseEvent) => {
-      // In multi-select mode, clicking toggles selection on any device
-      if (multiSelectMode) {
-        onToggleSelect?.({
-          messageId: message.id,
-          orderIndex: messageOrderIndex ?? 0,
-          checked: !isSelected,
-          shiftKey: e.shiftKey,
-        });
-        return;
-      }
-      // Only toggle on touch devices
-      if (!matchMedia("(pointer: coarse)").matches) return;
-      // Don't toggle when tapping buttons, links, or the edit textarea
-      const target = e.target as HTMLElement;
-      if (target.closest("button, a, textarea")) return;
-      setShowActions((v) => !v);
-    },
-    [isSelected, message.id, messageOrderIndex, multiSelectMode, onToggleSelect],
-  );
 
   // Parse message extra for conversation start flag
   const extra = useMemo<Record<string, any>>(() => {
@@ -1023,6 +1006,54 @@ export const ChatMessage = memo(function ChatMessage({
     if (sp) scrollRestoreRef.current = { el: sp, top: sp.scrollTop };
     setEditing(true);
   }, []);
+
+  const startEditingFromMessageGesture = useCallback(
+    (event: React.MouseEvent) => {
+      if (!editMessagesOnDoubleClick || !onEdit || editing) return false;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR)) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      startEditing();
+      return true;
+    },
+    [editMessagesOnDoubleClick, editing, onEdit, startEditing],
+  );
+
+  const handleMessageDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      startEditingFromMessageGesture(event);
+    },
+    [startEditingFromMessageGesture],
+  );
+
+  const handleMobileTap = useCallback(
+    (e: React.MouseEvent) => {
+      // In multi-select mode, clicking toggles selection on any device.
+      if (multiSelectMode) {
+        onToggleSelect?.({
+          messageId: message.id,
+          orderIndex: messageOrderIndex ?? 0,
+          checked: !isSelected,
+          shiftKey: e.shiftKey,
+        });
+        return;
+      }
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR)) return;
+
+      // Only toggle/interpret taps on touch devices. Desktop double-click is handled separately.
+      if (typeof window === "undefined" || !window.matchMedia("(pointer: coarse)").matches) return;
+
+      const now = Date.now();
+      const isDoubleTap = now - lastMessageTapAtRef.current <= 350;
+      lastMessageTapAtRef.current = now;
+      if (isDoubleTap && startEditingFromMessageGesture(e)) return;
+
+      setShowActions((v) => !v);
+    },
+    [isSelected, message.id, messageOrderIndex, multiSelectMode, onToggleSelect, startEditingFromMessageGesture],
+  );
 
   useEffect(() => {
     if (!onEdit) return;
@@ -1420,6 +1451,7 @@ export const ChatMessage = memo(function ChatMessage({
           multiSelectMode && isSelected && "rounded-lg bg-[var(--destructive)]/5 ring-2 ring-[var(--destructive)]/50",
         )}
         onClick={handleMobileTap}
+        onDoubleClick={handleMessageDoubleClick}
       >
         <div className="relative">
           {!multiSelectMode && onDelete && (
@@ -1461,6 +1493,7 @@ export const ChatMessage = memo(function ChatMessage({
             multiSelectMode && isSelected && "rounded-lg bg-[var(--destructive)]/5 ring-2 ring-[var(--destructive)]/50",
           )}
           onClick={handleMobileTap}
+          onDoubleClick={handleMessageDoubleClick}
         >
           <div className="flex gap-3">
             {multiSelectMode && (
@@ -1529,6 +1562,7 @@ export const ChatMessage = memo(function ChatMessage({
           data-message-id={message.id}
           data-message-role={message.role}
           onClick={handleMobileTap}
+          onDoubleClick={handleMessageDoubleClick}
           style={roleplayAvatarScaleStyle}
         >
           {/* Multi-select checkbox */}
@@ -2054,6 +2088,7 @@ export const ChatMessage = memo(function ChatMessage({
       data-message-id={message.id}
       data-message-role={message.role}
       onClick={handleMobileTap}
+      onDoubleClick={handleMessageDoubleClick}
     >
       <div
         className={cn("flex min-w-0 max-w-[72%] gap-2", isUser && "flex-row-reverse", editing && "w-[85%] max-w-[85%]")}

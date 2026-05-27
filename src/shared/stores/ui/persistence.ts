@@ -118,6 +118,7 @@ export function partializeUiState(state: UIState) {
     intuitiveSwipeNavigation: state.intuitiveSwipeNavigation,
     intuitiveSwipeRerollLatest: state.intuitiveSwipeRerollLatest,
     editLastMessageOnArrowUp: state.editLastMessageOnArrowUp,
+    editMessagesOnDoubleClick: state.editMessagesOnDoubleClick,
     summaryPopoverSettings: state.summaryPopoverSettings,
     narrationFontColor: state.narrationFontColor,
     narrationOpacity: state.narrationOpacity,
@@ -179,6 +180,7 @@ export function migrateUiState(persistedState: unknown): Partial<UIState> {
   persisted.trackerPanelSectionOrder = normalizeTrackerPanelSectionOrder(persisted.trackerPanelSectionOrder);
   persisted.summaryPopoverSettings = normalizeSummaryPopoverSettings(persisted.summaryPopoverSettings);
   persisted.quoteFormat = normalizeQuoteFormat(persisted.quoteFormat);
+  persisted.editMessagesOnDoubleClick = persisted.editMessagesOnDoubleClick !== false;
   persisted.imagePromptIncludeAppearances = persisted.imagePromptIncludeAppearances !== false;
   persisted.imagePromptFormat = persisted.imagePromptFormat === "tags" ? "tags" : "descriptive";
   persisted.userStatusManual = persisted.userStatusManual === "dnd" ? "dnd" : "active";

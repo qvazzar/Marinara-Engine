@@ -52,6 +52,8 @@ function nameColorStyle(color?: string): CSSProperties | undefined {
 
 /** Regex to detect a message that is just an image/GIF URL */
 const IMAGE_URL_RE = /^https?:\/\/\S+\.(?:gif|png|jpe?g|webp)(?:\?[^\s]*)?$/i;
+const MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR =
+  "button, a, textarea, input, select, label, [role='button'], [contenteditable='true'], .mari-message-actions";
 
 function HiddenFromAIConversationButton({
   canCollapse,
@@ -334,11 +336,13 @@ export const ConversationMessage = memo(function ConversationMessage({
   const [manuallyExpandedHidden, setManuallyExpandedHidden] = useState(false);
   const [imageLightbox, setImageLightbox] = useState<{ url: string; prompt?: string | null } | null>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
+  const lastMessageTapAtRef = useRef(0);
   const hasInput = useChatStore((s) => s.currentInput.trim().length > 0);
   const guideGenerations = useUIStore((s) => s.guideGenerations);
   const chatFontSize = useUIStore((s) => s.chatFontSize);
   const showMessageNumbers = useUIStore((s) => s.showMessageNumbers);
   const collapseHiddenMessages = useUIStore((s) => s.summaryPopoverSettings.collapseHiddenMessages);
+  const editMessagesOnDoubleClick = useUIStore((s) => s.editMessagesOnDoubleClick);
   const messageTextStyle = useMemo<CSSProperties>(() => ({ fontSize: `${chatFontSize}px` }), [chatFontSize]);
   const isGuided = guideGenerations && hasInput;
   const regenerateButtonTitle = isGuided ? "Regenerate (guided)" : "Regenerate";
@@ -587,6 +591,63 @@ export const ConversationMessage = memo(function ConversationMessage({
     });
   }, [message.content]);
 
+  const startEditingFromMessageGesture = useCallback(
+    (event: React.MouseEvent) => {
+      if (!editMessagesOnDoubleClick || !onEdit || editing) return false;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR)) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      if (onEditClick) onEditClick();
+      else startEditing();
+      return true;
+    },
+    [editMessagesOnDoubleClick, editing, onEdit, onEditClick, startEditing],
+  );
+
+  const handleMessageDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      startEditingFromMessageGesture(event);
+    },
+    [startEditingFromMessageGesture],
+  );
+
+  const handleMessageClick = useCallback(
+    (event: React.MouseEvent) => {
+      if (multiSelectMode) {
+        onToggleSelect?.({
+          messageId: message.id,
+          orderIndex: messageOrderIndex ?? 0,
+          checked: !isSelected,
+          shiftKey: event.shiftKey,
+        });
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR)) return;
+
+      const isCoarsePointer =
+        typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+      if (isCoarsePointer) {
+        const now = Date.now();
+        const isDoubleTap = now - lastMessageTapAtRef.current <= 350;
+        lastMessageTapAtRef.current = now;
+        if (isDoubleTap && startEditingFromMessageGesture(event)) return;
+      }
+
+      setShowActions((v) => !v);
+    },
+    [
+      isSelected,
+      message.id,
+      messageOrderIndex,
+      multiSelectMode,
+      onToggleSelect,
+      startEditingFromMessageGesture,
+    ],
+  );
+
   useEffect(() => {
     if (!onEdit) return;
     const handler = (event: Event) => {
@@ -618,18 +679,8 @@ export const ConversationMessage = memo(function ConversationMessage({
           "group flex justify-center py-1",
           multiSelectMode && isSelected && "rounded-lg bg-[var(--destructive)]/10",
         )}
-        onClick={(e) => {
-          if (multiSelectMode) {
-            onToggleSelect?.({
-              messageId: message.id,
-              orderIndex: messageOrderIndex ?? 0,
-              checked: !isSelected,
-              shiftKey: e.shiftKey,
-            });
-          } else {
-            setShowActions((v) => !v);
-          }
-        }}
+        onClick={handleMessageClick}
+        onDoubleClick={handleMessageDoubleClick}
       >
         <div className="relative">
           {!multiSelectMode && onDelete && (
@@ -681,18 +732,8 @@ export const ConversationMessage = memo(function ConversationMessage({
           isStreaming && "bg-[var(--secondary)]/20",
           multiSelectMode && isSelected && "bg-[var(--destructive)]/10",
         )}
-        onClick={(e) => {
-          if (multiSelectMode) {
-            onToggleSelect?.({
-              messageId: message.id,
-              orderIndex: messageOrderIndex ?? 0,
-              checked: !isSelected,
-              shiftKey: e.shiftKey,
-            });
-          } else {
-            setShowActions((v) => !v);
-          }
-        }}
+        onClick={handleMessageClick}
+        onDoubleClick={handleMessageDoubleClick}
       >
         {/* Multi-select checkbox */}
         {multiSelectMode && (
@@ -983,18 +1024,8 @@ export const ConversationMessage = memo(function ConversationMessage({
       )}
       data-message-id={message.id}
       data-message-role={message.role}
-      onClick={(e) => {
-        if (multiSelectMode) {
-          onToggleSelect?.({
-            messageId: message.id,
-            orderIndex: messageOrderIndex ?? 0,
-            checked: !isSelected,
-            shiftKey: e.shiftKey,
-          });
-        } else {
-          setShowActions((v) => !v);
-        }
-      }}
+      onClick={handleMessageClick}
+      onDoubleClick={handleMessageDoubleClick}
     >
       {/* Multi-select checkbox */}
       {multiSelectMode && (
