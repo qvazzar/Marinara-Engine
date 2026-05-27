@@ -179,6 +179,19 @@
         <pre><code>http://127.0.0.1:8787</code></pre>
         <p>Check the server with:</p>
         <pre><code>curl http://127.0.0.1:8787/health</code></pre>
+        <p>
+          Legacy local-sidecar embedding clients can use the compatibility
+          endpoint at <code>/api/sidecar/v1/embeddings</code>. In the Tauri
+          refactor this route is backed by the configured Marinara embedding
+          connection, not by the old managed sidecar process. Pass
+          <code>connectionId</code> to target a specific connection, or configure
+          a connection with <code>embeddingModel</code> and
+          <code>embeddingBaseUrl</code> for local OpenAI-compatible, Ollama, or
+          provider embeddings.
+        </p>
+        <pre><code>curl http://127.0.0.1:8787/api/sidecar/v1/embeddings \
+  -H 'content-type: application/json' \
+  -d '{"connectionId":"your-connection-id","model":"text-embedding-3-small","input":"hello"}'</code></pre>
         <p>Override the bind address and data directory with:</p>
         <pre><code>MARINARA_SERVER_ADDR=0.0.0.0:8787
 MARINARA_DATA_DIR=/path/to/data</code></pre>

@@ -1,6 +1,6 @@
 use crate::http_dispatch::{dispatch, InvokeRequest};
 use crate::state::AppState;
-use crate::storage_commands::{fonts, llm, lorebook_images};
+use crate::storage_commands::{fonts, llm, lorebook_images, prompts};
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
@@ -103,6 +103,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/invoke", post(invoke))
+        .route("/api/sidecar/v1/embeddings", post(sidecar_embeddings))
         .route("/api/assets/:kind/*path", get(managed_asset))
         .route("/api/llm/stream", post(llm_stream))
         .route("/api/llm/stream/:stream_id/cancel", post(llm_stream_cancel))
@@ -240,6 +241,115 @@ async fn invoke(
     }
 }
 
+async fn sidecar_embeddings(
+    State(state): State<HttpState>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, HttpError> {
+    let started = Instant::now();
+    request_log("sidecar_embeddings started");
+    let result = sidecar_embeddings_inner(&state.app, body).await;
+    match result {
+        Ok(value) => {
+            request_log(format!(
+                "sidecar_embeddings ok in {}ms",
+                started.elapsed().as_millis()
+            ));
+            Ok(Json(value))
+        }
+        Err(error) => {
+            request_log(format!(
+                "sidecar_embeddings error code={} message={} in {}ms",
+                error.code,
+                error.message,
+                started.elapsed().as_millis()
+            ));
+            Err(error.into())
+        }
+    }
+}
+
+async fn sidecar_embeddings_inner(state: &AppState, body: Value) -> Result<Value, AppError> {
+    let inputs = sidecar_embedding_inputs(&body)?;
+    let (connection_id, mut connection) =
+        if let Some(connection) = body.get("connection").filter(|value| value.is_object()) {
+            ("request".to_string(), connection.clone())
+        } else if body.get("provider").is_some() {
+            ("request".to_string(), body.clone())
+        } else if let Some(connection_id) = body
+            .get("connectionId")
+            .or_else(|| body.get("connection_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            prompts::resolve_embedding_connection_for_id(state, connection_id)?
+        } else {
+            prompts::resolve_default_embedding_connection(state)?
+        };
+    let model = prompts::embedding_model(&connection, body.get("model").and_then(Value::as_str))?;
+    if let Some(object) = connection.as_object_mut() {
+        object.insert("model".to_string(), Value::String(model.clone()));
+    }
+
+    let mut prompt_tokens = 0usize;
+    let mut data = Vec::with_capacity(inputs.len());
+    for (index, input) in inputs.iter().enumerate() {
+        prompt_tokens += approximate_embedding_tokens(input);
+        let embedding = prompts::embed_text(&connection, &model, input).await?;
+        data.push(json!({
+            "object": "embedding",
+            "index": index,
+            "embedding": embedding
+        }));
+    }
+
+    Ok(json!({
+        "object": "list",
+        "data": data,
+        "model": model,
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "total_tokens": prompt_tokens
+        },
+        "marinara": {
+            "runtime": "marinara-server",
+            "replacementFor": "/api/sidecar/v1/embeddings",
+            "embeddingConnectionId": connection_id
+        }
+    }))
+}
+
+fn sidecar_embedding_inputs(body: &Value) -> Result<Vec<String>, AppError> {
+    let input = body
+        .get("input")
+        .ok_or_else(|| AppError::invalid_input("input is required"))?;
+    match input {
+        Value::String(value) => Ok(vec![value.clone()]),
+        Value::Array(items) => {
+            let values = items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(ToOwned::to_owned)
+                        .ok_or_else(|| AppError::invalid_input("input array must contain strings"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if values.is_empty() {
+                Err(AppError::invalid_input("input must not be empty"))
+            } else {
+                Ok(values)
+            }
+        }
+        _ => Err(AppError::invalid_input(
+            "input must be a string or an array of strings",
+        )),
+    }
+}
+
+fn approximate_embedding_tokens(input: &str) -> usize {
+    input.split_whitespace().count().max(1)
+}
+
 async fn llm_stream(
     State(state): State<HttpState>,
     Json(body): Json<LlmStreamRequest>,
@@ -324,6 +434,9 @@ impl IntoResponse for HttpError {
             "not_found" => StatusCode::NOT_FOUND,
             "invalid_input" => StatusCode::BAD_REQUEST,
             "custom_tool_script_unsupported" => StatusCode::UNPROCESSABLE_ENTITY,
+            "embedding_network_error" | "embedding_provider_error" | "embedding_response_error" => {
+                StatusCode::BAD_GATEWAY
+            }
             "unsupported_command" => StatusCode::NOT_IMPLEMENTED,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -884,16 +997,40 @@ mod tests {
 
     #[test]
     fn request_logging_disable_values_match_legacy_env_knobs() {
-        assert!(is_prompt_connection_log_preset_value(Some("prompt-connections")));
-        assert!(is_prompt_connection_log_preset_value(Some("prompt_connections")));
+        assert!(is_prompt_connection_log_preset_value(Some(
+            "prompt-connections"
+        )));
+        assert!(is_prompt_connection_log_preset_value(Some(
+            "prompt_connections"
+        )));
         assert!(is_request_logging_disabled_values(
             Some("prompt-connections"),
             None
         ));
-        assert!(is_request_logging_disabled_values(Some("default"), Some("true")));
+        assert!(is_request_logging_disabled_values(
+            Some("default"),
+            Some("true")
+        ));
         assert!(is_request_logging_disabled_values(None, Some("1")));
-        assert!(!is_request_logging_disabled_values(Some("default"), Some("false")));
+        assert!(!is_request_logging_disabled_values(
+            Some("default"),
+            Some("false")
+        ));
         assert!(!is_request_logging_disabled_values(None, None));
+    }
+
+    #[test]
+    fn sidecar_embedding_inputs_accept_openai_style_inputs() {
+        assert_eq!(
+            sidecar_embedding_inputs(&json!({ "input": "hello world" })).unwrap(),
+            vec!["hello world".to_string()]
+        );
+        assert_eq!(
+            sidecar_embedding_inputs(&json!({ "input": ["one", "two"] })).unwrap(),
+            vec!["one".to_string(), "two".to_string()]
+        );
+        assert!(sidecar_embedding_inputs(&json!({ "input": [] })).is_err());
+        assert!(sidecar_embedding_inputs(&json!({ "input": [1] })).is_err());
     }
 
     #[test]
