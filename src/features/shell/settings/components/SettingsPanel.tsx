@@ -23,7 +23,11 @@ import { profileApi } from "../../../../shared/api/profile-api";
 import { backgroundsApi, fontsApi } from "../../../../shared/api/settings-assets-api";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { chatBackgroundMetadataToUrl, chatBackgroundUrlToMetadata } from "../../../../shared/lib/backgrounds";
-import { filePathToAssetUrl, resolveManagedLocalAssetUrl, userBackgroundUrl } from "../../../../shared/api/local-file-api";
+import {
+  backgroundFileUrlFromPath,
+  resolveManagedLocalAssetUrl,
+  userBackgroundUrl,
+} from "../../../../shared/api/local-file-api";
 import React, { useRef, useState, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import type { Theme } from "../../../../engine/contracts/types/theme";
@@ -1991,11 +1995,12 @@ type BackgroundUploadResponse = {
 };
 
 function BackgroundThumbnail({ item }: { item: BackgroundLibraryItem }) {
-  const [src, setSrc] = useState(() => filePathToAssetUrl(item.absolutePath) || "");
+  const filename = item.filename ?? item.path ?? item.id;
+  const [src, setSrc] = useState(() => (filename ? backgroundFileUrlFromPath(filename, item.absolutePath) : ""));
 
   useEffect(() => {
-    if (item.absolutePath) {
-      setSrc(filePathToAssetUrl(item.absolutePath));
+    if (filename) {
+      setSrc(backgroundFileUrlFromPath(filename, item.absolutePath));
       return;
     }
     let cancelled = false;
@@ -2009,7 +2014,7 @@ function BackgroundThumbnail({ item }: { item: BackgroundLibraryItem }) {
     return () => {
       cancelled = true;
     };
-  }, [item.absolutePath, item.url]);
+  }, [filename, item.absolutePath, item.url]);
 
   return <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" />;
 }
