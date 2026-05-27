@@ -1,6 +1,6 @@
 use crate::state::AppState;
 use crate::storage_commands::{
-    admin, agents, avatars, backgrounds, bot_browser, characters, chats, custom_tools,
+    admin, agents, avatars, backgrounds, backup, bot_browser, characters, chats, custom_tools,
     entity_commands, exports, fonts, game_assets, game_state_snapshots, generation, http, images,
     imports, integrations, knowledge, llm, lorebook_images, mari, profile, prompts, shared,
     sprites, translation,
@@ -88,6 +88,12 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
             &shared::ParsedPath::new("/profile/import"),
             optional_value(&args, "envelope"),
         ),
+        "backup_create" => backup::create_backup(state),
+        "backup_list" => backup::list_backups(state),
+        "backup_delete" => backup::delete_backup(state, required_string(&args, "name")?),
+        "backup_download" => {
+            backup::download_backup(state, optional_string(&args, "name").as_deref())
+        }
         "prompt_export" => exports::export_prompt(state, required_string(&args, "presetId")?),
         "prompts_export_bulk" => exports::export_records(
             state,

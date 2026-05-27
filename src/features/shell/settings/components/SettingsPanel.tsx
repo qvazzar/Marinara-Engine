@@ -19,9 +19,10 @@ import { useExtensions, useCreateExtension, useDeleteExtension, useUpdateExtensi
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { gameAssetsApi } from "../../../../shared/api/assets-api";
 import { importApi } from "../../../../shared/api/import-api";
-import { profileApi } from "../../../../shared/api/profile-api";
+import { backupApi, profileApi, type ManagedBackup } from "../../../../shared/api/profile-api";
 import { backgroundsApi, fontsApi } from "../../../../shared/api/settings-assets-api";
 import { storageApi } from "../../../../shared/api/storage-api";
+import { triggerDownload } from "../../../../shared/api/download-payload";
 import { chatBackgroundMetadataToUrl, chatBackgroundUrlToMetadata } from "../../../../shared/lib/backgrounds";
 import {
   backgroundFileUrlFromPath,
@@ -3090,9 +3091,38 @@ function AdvancedSettings() {
   const [selectedScopes, setSelectedScopes] = useState<ExpungeScope[]>(["chats"]);
   const [confirmAction, setConfirmAction] = useState<"selected" | "all" | null>(null);
   const [exportingProfile, setExportingProfile] = useState(false);
+  const [downloadingBackupName, setDownloadingBackupName] = useState<string | null>(null);
   const [refreshingSpa, setRefreshingSpa] = useState(false);
   const [adminSecret, setAdminSecret] = useState(() => localStorage.getItem(ADMIN_SECRET_STORAGE_KEY) ?? "");
   const [quickRepliesDrawerOpen, setQuickRepliesDrawerOpen] = useState(true);
+  const queryClient = useQueryClient();
+
+  const backupsQuery = useQuery<ManagedBackup[]>({
+    queryKey: ["backups"],
+    queryFn: backupApi.listBackups,
+  });
+
+  const createBackupMutation = useMutation({
+    mutationFn: backupApi.createBackup,
+    onSuccess: (result) => {
+      toast.success(`Managed backup created: ${result.backupName}`);
+      queryClient.invalidateQueries({ queryKey: ["backups"] });
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Failed to create backup");
+    },
+  });
+
+  const deleteBackupMutation = useMutation({
+    mutationFn: backupApi.deleteBackup,
+    onSuccess: () => {
+      toast.success("Managed backup deleted");
+      queryClient.invalidateQueries({ queryKey: ["backups"] });
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Failed to delete backup");
+    },
+  });
 
   const handleQuickRepliesMenuChange = (enabled: boolean) => {
     setShowQuickRepliesMenu(enabled);
@@ -3102,18 +3132,25 @@ function AdvancedSettings() {
   const handleExportProfile = async () => {
     setExportingProfile(true);
     try {
-      const { blob, filename } = await profileApi.exportProfile();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
+      triggerDownload(await profileApi.exportProfile());
       toast.success("Profile exported!");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to export profile");
     } finally {
       setExportingProfile(false);
+    }
+  };
+
+  const handleDownloadBackup = async (name?: string) => {
+    const key = name ?? "__current__";
+    setDownloadingBackupName(key);
+    try {
+      triggerDownload(await backupApi.downloadBackup(name));
+      toast.success(name ? "Managed backup downloaded!" : "Backup downloaded!");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to download backup");
+    } finally {
+      setDownloadingBackupName(null);
     }
   };
 
@@ -3437,6 +3474,89 @@ function AdvancedSettings() {
         onChange={setDebugMode}
         help="Shows the in-app agent debug panel with prompt, response, tool, and result details for troubleshooting."
       />
+
+      {/* Backup */}
+      <div className="retro-divider" />
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-1.5">
+          <Download size="0.75rem" className="text-[var(--muted-foreground)]" />
+          <span className="text-xs font-medium">Backup & Export</span>
+          <HelpTooltip text="Creates, lists, downloads, and deletes managed full backups. Backups include data collections plus managed asset folders for recovery." />
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            onClick={() => createBackupMutation.mutate()}
+            disabled={createBackupMutation.isPending}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+          >
+            {createBackupMutation.isPending ? (
+              <>
+                <Loader2 size="0.8125rem" className="animate-spin" />
+                Creating...
+              </>
+            ) : (
+              <>
+                <Save size="0.8125rem" />
+                Create Managed Backup
+              </>
+            )}
+          </button>
+          <button
+            onClick={() => void handleDownloadBackup()}
+            disabled={downloadingBackupName === "__current__"}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs font-medium ring-1 ring-[var(--border)] transition-all hover:bg-[var(--secondary)]/80 active:scale-95 disabled:opacity-50"
+          >
+            {downloadingBackupName === "__current__" ? (
+              <Loader2 size="0.8125rem" className="animate-spin" />
+            ) : (
+              <Download size="0.8125rem" />
+            )}
+            Download Backup
+          </button>
+        </div>
+        {backupsQuery.data && backupsQuery.data.length > 0 && (
+          <div className="mt-1 flex flex-col gap-1">
+            <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Existing backups</span>
+            {backupsQuery.data.map((backup) => (
+              <div
+                key={backup.name}
+                className="flex items-center justify-between gap-2 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 ring-1 ring-[var(--border)]"
+              >
+                <div className="min-w-0">
+                  <span className="block truncate text-[0.6875rem] font-medium">{backup.name}</span>
+                  <span className="block text-[0.5625rem] text-[var(--muted-foreground)]">
+                    {new Date(backup.createdAt).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={`Download ${backup.name}`}
+                    onClick={() => void handleDownloadBackup(backup.name)}
+                    disabled={downloadingBackupName === backup.name}
+                    className="rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--background)] hover:text-[var(--foreground)] disabled:opacity-50"
+                  >
+                    {downloadingBackupName === backup.name ? (
+                      <Loader2 size="0.75rem" className="animate-spin" />
+                    ) : (
+                      <Download size="0.75rem" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Delete ${backup.name}`}
+                    onClick={() => deleteBackupMutation.mutate(backup.name)}
+                    disabled={deleteBackupMutation.isPending}
+                    className="rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] disabled:opacity-50"
+                  >
+                    <Trash2 size="0.75rem" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* ── Profile Export ── */}
       <div className="retro-divider" />
