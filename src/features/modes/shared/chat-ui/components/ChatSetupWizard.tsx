@@ -438,6 +438,11 @@ function ConversationQuickSetup({ chat, onFinish, onCancel }: ChatSetupWizardPro
     [chat.id, updateChat],
   );
 
+  useEffect(() => {
+    if (chat.connectionId || connectionOptions.length === 0 || updateChat.isPending) return;
+    updateChat.mutate({ id: chat.id, connectionId: connectionOptions[0]!.id });
+  }, [chat.connectionId, chat.id, connectionOptions, updateChat]);
+
   const setPersona = useCallback(
     (personaId: string | null) => {
       updateChat.mutate({ id: chat.id, personaId });

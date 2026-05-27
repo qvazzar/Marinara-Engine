@@ -3,6 +3,7 @@ import type { ChatMode } from "../../engine/contracts/types/chat";
 import { useApplyChatPreset, useChatPresets } from "../../features/catalog/chat-presets/index";
 import { useCreateChat } from "../../features/catalog/chats/index";
 import { useConnections } from "../../features/catalog/connections/index";
+import { filterLanguageGenerationConnections } from "../../shared/lib/connection-filters";
 import { useChatStore } from "../../shared/stores/chat.store";
 import { useUIStore } from "../../shared/stores/ui.store";
 
@@ -24,7 +25,9 @@ export function useStartNewChat() {
 
   return useCallback(
     (mode: ChatMode) => {
-      const connectionRows = ((connections ?? []) as Array<{ id: string }>).filter((connection) => !!connection.id);
+      const connectionRows = filterLanguageGenerationConnections(
+        (connections ?? []) as Array<{ id: string; provider?: string }>,
+      ).filter((connection) => !!connection.id);
       if (connectionRows.length === 0) {
         if (mode === "conversation" || mode === "roleplay" || mode === "game") {
           setPendingNewChatMode(mode);
@@ -43,7 +46,12 @@ export function useStartNewChat() {
         : null;
 
       createChat.mutate(
-        { name: `New ${CHAT_MODE_LABELS[mode] ?? mode}`, mode, characterIds: [] },
+        {
+          name: `New ${CHAT_MODE_LABELS[mode] ?? mode}`,
+          mode,
+          characterIds: [],
+          connectionId: connectionRows[0]!.id,
+        },
         {
           onSuccess: async (chat) => {
             setActiveChatId(chat.id);

@@ -30,7 +30,7 @@ export function ModeHomeSurface() {
 
       const label = mode === "conversation" ? "Conversation" : mode === "game" ? "Game" : "Roleplay";
       createChat.mutate(
-        { name: `New ${label}`, mode, characterIds: [] },
+        { name: `New ${label}`, mode, characterIds: [], connectionId: connectionRows[0]!.id },
         {
           onSuccess: (chat) => {
             useChatStore.getState().setActiveChatId(chat.id);
