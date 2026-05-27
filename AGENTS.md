@@ -7,6 +7,12 @@
 - Chat, roleplay, and game remain separate mode owners.
 - Fix root causes; do not add fake success, silent catches, broad fallbacks, or UI-only guards over broken contracts.
 
+## Graphify
+
+- On the `refactor` branch, keep Graphify installed and available before codebase-navigation or implementation work.
+- This repository has a persistent `graphify-out/` map. Read `graphify-out/GRAPH_REPORT.md` or the wiki before broad architecture, file-relationship, or unfamiliar-area exploration, then verify claims against source files.
+- After every code change, run `graphify update .` from the repository root so the map stays current. Do not hand-edit generated `graphify-out/` files.
+
 ## Verification
 
 Run checks that match the change:
