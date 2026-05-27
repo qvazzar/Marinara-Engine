@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import type { DiscordGateway } from "../capabilities/integrations";
 import type { LlmGateway } from "../capabilities/llm";
 import type { StorageGateway } from "../capabilities/storage";
 import { retryGenerationAgents, startGeneration, type GenerationEngineDeps } from "./start-generation";
+
+function mockDiscordMirror() {
+  return vi.fn(<T = unknown>(_input: Parameters<DiscordGateway["mirrorMessage"]>[0]): Promise<T> => {
+    return Promise.resolve({ success: true } as T);
+  });
+}
 
 function depsForChat(chat: Record<string, unknown>) {
   const get = vi.fn(async (entity: string, id: string) => (entity === "chats" && id === "chat-1" ? chat : null));
@@ -23,7 +30,10 @@ function depsForChat(chat: Record<string, unknown>) {
 function generationDepsForChat(options: {
   savedUserMessage?: unknown;
   messagesAfterSave?: Record<string, unknown>[];
+  chatPatch?: Record<string, unknown>;
   chatMetadata?: Record<string, unknown>;
+  characters?: Record<string, unknown>[];
+  personas?: Record<string, unknown>[];
   agents?: Record<string, unknown>[];
   agentRuns?: Record<string, unknown>[];
   initialMessages?: Record<string, unknown>[];
@@ -34,6 +44,7 @@ function generationDepsForChat(options: {
     connectionId: "connection-1",
     characterIds: [],
     metadata: options.chatMetadata ?? {},
+    ...(options.chatPatch ?? {}),
   };
   const connection = {
     id: "connection-1",
@@ -77,10 +88,13 @@ function generationDepsForChat(options: {
     get: vi.fn(async (entity: string, id: string) => {
       if (entity === "chats" && id === "chat-1") return chat;
       if (entity === "connections" && id === "connection-1") return connection;
+      if (entity === "characters") return options.characters?.find((character) => character.id === id) ?? null;
+      if (entity === "personas") return options.personas?.find((persona) => persona.id === id) ?? null;
       if (entity === "messages") return messagesById.get(id) ?? null;
       return null;
     }),
     list: vi.fn(async (entity: string) => {
+      if (entity === "personas") return options.personas ?? [];
       if (entity === "agents") return options.agents ?? [];
       if (entity === "agent-runs") return options.agentRuns ?? [];
       return [];
@@ -136,6 +150,20 @@ describe("startGeneration concluded roleplay guard", () => {
     });
 
     await expect(retryGenerationAgents(deps, { chatId: "chat-1" })).rejects.toThrow("This scene is concluded.");
+  });
+
+  it("rejects manual replies for inactive group characters before saving user messages", async () => {
+    const { deps, createChatMessage } = depsForChat({
+      id: "chat-1",
+      mode: "roleplay",
+      characterIds: ["char-active", "char-muted"],
+      metadata: { inactiveCharacterIds: ["char-muted"] },
+    });
+
+    const stream = startGeneration(deps, { chatId: "chat-1", forCharacterId: "char-muted" });
+
+    await expect(stream.next()).rejects.toThrow("This character is inactive");
+    expect(createChatMessage).not.toHaveBeenCalled();
   });
 
   it("does not block non-roleplay chats that have concluded scene metadata", async () => {
@@ -386,6 +414,62 @@ describe("startGeneration automatic Illustrator cadence", () => {
     await drainGeneration(startGeneration(deps, { chatId: "chat-1", userMessage: "continue" }));
 
     expect(streamedRequests).toHaveLength(2);
+  });
+});
+
+describe("startGeneration Discord mirror", () => {
+  it("mirrors saved user and assistant messages when a chat has a Discord webhook", async () => {
+    const mirrorMessage = mockDiscordMirror();
+    const webhookUrl = "https://discord.com/api/webhooks/123456789/test-token";
+    const { deps } = generationDepsForChat({
+      chatPatch: { characterIds: ["char-1"], personaId: "persona-1" },
+      chatMetadata: { discordWebhookUrl: webhookUrl },
+      characters: [{ id: "char-1", data: { name: "Marina" } }],
+      personas: [{ id: "persona-1", name: "Natalie" }],
+    });
+    deps.integrations = {
+      ...deps.integrations,
+      discord: { mirrorMessage: mirrorMessage as DiscordGateway["mirrorMessage"] },
+    };
+
+    await drainGeneration(
+      startGeneration(deps, {
+        chatId: "chat-1",
+        userMessage: "hello",
+        impersonateBlockAgents: true,
+      }),
+    );
+
+    expect(mirrorMessage).toHaveBeenCalledTimes(2);
+    expect(mirrorMessage).toHaveBeenNthCalledWith(1, {
+      webhookUrl,
+      content: "hello",
+      username: "Natalie",
+    });
+    expect(mirrorMessage).toHaveBeenNthCalledWith(2, {
+      webhookUrl,
+      content: "Done.",
+      username: "Marina",
+    });
+  });
+
+  it("does not mirror regenerations", async () => {
+    const mirrorMessage = mockDiscordMirror();
+    const { deps } = generationDepsForChat({
+      chatMetadata: { discordWebhookUrl: "https://discord.com/api/webhooks/123456789/test-token" },
+      initialMessages: [
+        { id: "user-1", chatId: "chat-1", role: "user", content: "hello" },
+        { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "first reply", extra: {} },
+      ],
+    });
+    deps.integrations = {
+      ...deps.integrations,
+      discord: { mirrorMessage: mirrorMessage as DiscordGateway["mirrorMessage"] },
+    };
+
+    await drainGeneration(startGeneration(deps, { chatId: "chat-1", regenerateMessageId: "assistant-1" }));
+
+    expect(mirrorMessage).not.toHaveBeenCalled();
   });
 });
 

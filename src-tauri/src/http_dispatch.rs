@@ -271,6 +271,7 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
         "tts_voices" => integrations::tts_call(state, "GET", &["voices"], Value::Null).await,
         "tts_speak" => integrations::tts_call(state, "POST", &["speak"], optional_value(&args, "input")).await,
         "translate_text_command" => translation::translate_text(state, optional_value(&args, "input")).await,
+        "discord_webhook_send" => integrations::discord_webhook_send(optional_value(&args, "body")).await,
         "spotify_status" => spotify_direct(state, "POST", &["status"], optional_value(&args, "body")).await,
         "spotify_authorize" => spotify_direct(state, "POST", &["authorize"], optional_value(&args, "input")).await,
         "spotify_exchange" => {

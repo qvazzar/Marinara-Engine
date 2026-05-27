@@ -86,6 +86,7 @@ pub fn run() {
             storage_commands::integration_commands::tts_voices,
             storage_commands::integration_commands::tts_speak,
             storage_commands::integration_commands::translate_text_command,
+            storage_commands::integration_commands::discord_webhook_send,
             storage_commands::integration_commands::haptic_status,
             storage_commands::integration_commands::haptic_connect,
             storage_commands::integration_commands::haptic_disconnect,

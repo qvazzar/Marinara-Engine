@@ -58,6 +58,7 @@ const REMOTE_COMMANDS = new Set([
   "tts_voices",
   "tts_speak",
   "translate_text_command",
+  "discord_webhook_send",
   "spotify_status",
   "spotify_authorize",
   "spotify_exchange",

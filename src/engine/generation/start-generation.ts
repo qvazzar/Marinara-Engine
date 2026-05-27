@@ -5,8 +5,17 @@ import type { IntegrationGateway } from "../capabilities/integrations";
 import type { LlmGateway, LlmMessage } from "../capabilities/llm";
 import type { StorageGateway } from "../capabilities/storage";
 import type { GenerationGuideSource } from "../shared/text/generation-guide";
+import { activeCharacterIds, assertChatHasActiveCharacters, assertRequestedCharacterIsActive } from "./active-characters";
 import { createGenerationAgentRuntime } from "./agent-runner";
 import { persistConnectedCommandTags } from "./connected-commands";
+import type { LLMToolCall } from "../generation-core/llm/base-provider";
+import {
+  buildMainToolDefinitions,
+  executeMainToolCall,
+  normalizeToolCall,
+  type MainToolDefinitions,
+  type ToolRuntimeInput,
+} from "./tools-runtime";
 import { llmParameters, loadChatMessages, requireRecord, resolveGenerationConnection } from "./context";
 import {
   appendReadableAttachmentsToContent,
@@ -25,7 +34,7 @@ import {
   normalizeGenerationReplay,
 } from "./generation-replay";
 import { assembleGenerationPrompt } from "./prompt-assembly";
-import type { GenerationCharacterContext } from "./prompt-assembly";
+import type { GenerationCharacterContext, GenerationPersonaContext } from "./prompt-assembly";
 import { applyRuntimeRegexScripts } from "./regex-runtime";
 import { boolish, hiddenFromAi, isRecord, nowIso, parseRecord, readString, stringArray, type JsonRecord } from "./runtime-records";
 import {
@@ -103,12 +112,14 @@ function inputAttachments(input: StartGenerationInput): PromptAttachment[] {
   return Array.isArray(input.attachments) ? input.attachments.filter(isRecord).map((attachment) => attachment as PromptAttachment) : [];
 }
 
-function assertChatCanGenerate(chat: JsonRecord) {
+function assertChatCanGenerate(chat: JsonRecord, input?: { forCharacterId?: unknown }) {
   const mode = readString(chat.mode || chat.chatMode);
   const metadata = parseRecord(chat.metadata);
   if (mode === "roleplay" && metadata.sceneStatus === "concluded") {
     throw new Error("This scene is concluded. Convert or reopen it before sending new messages.");
   }
+  assertChatHasActiveCharacters(chat);
+  assertRequestedCharacterIsActive(chat, input?.forCharacterId);
 }
 
 function imageAttachmentNotes(attachments: PromptAttachment[]): string {
@@ -173,6 +184,119 @@ function savedUserMessageForTimeline(saved: unknown, chatId: string): JsonRecord
   if (readString(saved.role).trim() !== "user") return null;
   if (!readString(saved.content).trim()) return null;
   return saved;
+}
+
+function discordWebhookUrl(chat: JsonRecord): string {
+  return readString(parseRecord(chat.metadata).discordWebhookUrl).trim();
+}
+
+function limitedDiscordName(value: string | null | undefined, fallback: string): string {
+  const trimmed = readString(value).trim() || fallback;
+  return [...trimmed].slice(0, 80).join("");
+}
+
+async function characterNameById(
+  storage: StorageGateway,
+  characters: GenerationCharacterContext[],
+  characterId: string,
+): Promise<string | null> {
+  const known = characters.find((character) => character.id === characterId);
+  if (known?.name) return known.name;
+  const row = await storage.get<JsonRecord>("characters", characterId).catch(() => null);
+  if (!isRecord(row)) return null;
+  return readString(parseRecord(row.data).name).trim() || readString(row.name).trim() || null;
+}
+
+async function assistantDiscordName(args: {
+  storage: StorageGateway;
+  chat: JsonRecord;
+  saved: unknown;
+  characters: GenerationCharacterContext[];
+}): Promise<string> {
+  const mode = readString(args.chat.mode || args.chat.chatMode).trim();
+  const metadata = parseRecord(args.chat.metadata);
+  if (mode === "game") {
+    const gmCharacterId = readString(metadata.gameGmCharacterId).trim();
+    if (readString(metadata.gameGmMode).trim() === "character" && gmCharacterId) {
+      return limitedDiscordName(await characterNameById(args.storage, args.characters, gmCharacterId), "Narrator");
+    }
+    return "Narrator";
+  }
+
+  const characterId = isRecord(args.saved) ? readString(args.saved.characterId).trim() : "";
+  if (characterId) {
+    return limitedDiscordName(await characterNameById(args.storage, args.characters, characterId), "Character");
+  }
+  return limitedDiscordName(args.characters.length === 1 ? args.characters[0]?.name : null, "Assistant");
+}
+
+function mirrorDiscordMessage(args: {
+  integrations: IntegrationGateway;
+  chat: JsonRecord;
+  content: string;
+  username: string;
+  avatarUrl?: string | null;
+}): void {
+  const webhookUrl = discordWebhookUrl(args.chat);
+  const content = args.content.trim();
+  if (!webhookUrl || !content) return;
+  if (!args.integrations.discord) {
+    console.warn("[generation] Discord mirror skipped: integration gateway unavailable");
+    return;
+  }
+  const payload: {
+    webhookUrl: string;
+    content: string;
+    username: string;
+    avatarUrl?: string;
+  } = {
+    webhookUrl,
+    content,
+    username: limitedDiscordName(args.username, "Marinara"),
+  };
+  if (args.avatarUrl) payload.avatarUrl = args.avatarUrl;
+  void args.integrations.discord.mirrorMessage(payload).catch((error) => {
+    console.warn("[generation] Discord mirror failed", error);
+  });
+}
+
+function mirrorSavedUserMessageToDiscord(args: {
+  deps: GenerationEngineDeps;
+  chat: JsonRecord;
+  input: StartGenerationInput;
+  prepared: PreparedUserInput;
+  persona: GenerationPersonaContext | null;
+}): void {
+  if (!shouldSaveUserMessage(args.input, args.prepared)) return;
+  mirrorDiscordMessage({
+    integrations: args.deps.integrations,
+    chat: args.chat,
+    content: args.prepared.content || inputUserMessage(args.input),
+    username: limitedDiscordName(args.persona?.name, "User"),
+  });
+}
+
+async function mirrorSavedAssistantMessageToDiscord(args: {
+  deps: GenerationEngineDeps;
+  chat: JsonRecord;
+  input: StartGenerationInput;
+  saved: unknown;
+  content: string;
+  characters: GenerationCharacterContext[];
+}): Promise<void> {
+  if (args.input.impersonate === true || readString(args.input.regenerateMessageId).trim()) return;
+  const username = await assistantDiscordName({
+    storage: args.deps.storage,
+    chat: args.chat,
+    saved: args.saved,
+    characters: args.characters,
+  });
+  mirrorDiscordMessage({
+    integrations: args.deps.integrations,
+    chat: args.chat,
+    content: args.content,
+    username,
+  });
 }
 
 async function inputWithStoredGenerationReplay(
@@ -385,7 +509,7 @@ async function saveAssistantMessage(args: {
   }
 
   const requestedCharacterId = readString(args.input.forCharacterId).trim();
-  const chatCharacterIdList = stringArray(args.chat.characterIds);
+  const chatCharacterIdList = activeCharacterIds(args.chat);
   const chatCharacterIds = new Set(chatCharacterIdList);
   const characterId =
     requestedCharacterId && (chatCharacterIds.size === 0 || chatCharacterIds.has(requestedCharacterId))
@@ -714,8 +838,8 @@ export async function* startGeneration(
   const chatId = readString(input.chatId).trim();
   if (!chatId) throw new Error("chatId is required");
   const chat = requireRecord(await deps.storage.get("chats", chatId), "Chat");
-  assertChatCanGenerate(chat);
   input = await inputWithStoredGenerationReplay(deps.storage, chatId, input);
+  assertChatCanGenerate(chat, input);
 
   yield { type: "phase", data: "Saving message..." };
   const preparedUserInput = await prepareUserInput(deps.storage, input);
@@ -758,6 +882,7 @@ export async function* startGeneration(
     request: input,
     latestUserInput: preparedUserInput.content || inputUserMessage(input),
   });
+  mirrorSavedUserMessageToDiscord({ deps, chat, input, prepared: preparedUserInput, persona: assembly.persona });
 
   if (!directMessages) {
     const agentsEnabled = input.impersonateBlockAgents !== true;
@@ -803,26 +928,29 @@ export async function* startGeneration(
 
     const parallelAgents = runtime?.runParallel() ?? Promise.resolve<AgentResult[]>([]);
     yield { type: "phase", data: "Calling model..." };
-    let content = "";
-    let usage: unknown = null;
-    for await (const chunk of deps.llm.stream(
-      {
-        connectionId: readString(connection.id) || input.connectionId,
-        model: readString(connection.model) || undefined,
-        messages: [...prompt, generationGuide(input)].filter((message): message is LlmMessage => !!message),
-        parameters: llmParameters(connection, input),
-      },
+    const mainTools = await buildMainToolDefinitions({
+      chat: chatForGeneration,
+      storage: deps.storage,
+      integrations: deps.integrations,
+    });
+    const toolRuntimeInput: ToolRuntimeInput = {
+      chat: chatForGeneration,
+      activatedLorebookEntries: assembly.activatedLorebookEntries,
+      chatSummary: assembly.chatSummary,
+    };
+    const baseMessages: LlmMessage[] = [...prompt, generationGuide(input)].filter(
+      (message): message is LlmMessage => !!message,
+    );
+    const { content: streamedContent, usage } = yield* streamMainGenerationLoop({
+      deps,
+      connection,
+      input,
+      baseMessages,
+      mainTools,
+      toolRuntimeInput,
       signal,
-    )) {
-      if (chunk.type === "token" && chunk.text) {
-        content += chunk.text;
-        yield { type: "token", data: chunk.text };
-      } else if (chunk.type === "thinking" && chunk.text) {
-        yield { type: "thinking", data: chunk.text };
-      } else if (chunk.type === "usage") {
-        usage = chunk.data ?? null;
-      }
-    }
+    });
+    let content = streamedContent;
 
     const parallelResults = await parallelAgents;
     const postResults = runtime ? await runtime.runPost(content) : [];
@@ -853,6 +981,16 @@ export async function* startGeneration(
           attachments: connected.assistantAttachments,
           usage,
         });
+    if (saved) {
+      await mirrorSavedAssistantMessageToDiscord({
+        deps,
+        chat,
+        input,
+        saved,
+        content: connected.displayContent,
+        characters: assembly.characters,
+      });
+    }
     if (saved) await persistTrackerSnapshotSafely(deps.storage, chatId, saved, allAgentResults, generationTrackerBaseline);
     await persistAgentResults(deps.storage, chatId, messageId(saved), allAgentResults);
     if (saved) {
@@ -880,26 +1018,29 @@ export async function* startGeneration(
     preparedUserInput.images,
   );
   yield { type: "phase", data: "Calling model..." };
-  let content = "";
-  let usage: unknown = null;
-  for await (const chunk of deps.llm.stream(
-    {
-      connectionId: readString(connection.id) || input.connectionId,
-      model: readString(connection.model) || undefined,
-      messages: [...(prompt ?? []), generationGuide(input)].filter((message): message is LlmMessage => !!message),
-      parameters: llmParameters(connection, input),
-    },
+  const mainToolsDirect = await buildMainToolDefinitions({
+    chat: chatForGeneration,
+    storage: deps.storage,
+    integrations: deps.integrations,
+  });
+  const toolRuntimeInputDirect: ToolRuntimeInput = {
+    chat: chatForGeneration,
+    activatedLorebookEntries: assembly.activatedLorebookEntries,
+    chatSummary: assembly.chatSummary,
+  };
+  const baseMessagesDirect: LlmMessage[] = [...(prompt ?? []), generationGuide(input)].filter(
+    (message): message is LlmMessage => !!message,
+  );
+  const { content: streamedContentDirect, usage } = yield* streamMainGenerationLoop({
+    deps,
+    connection,
+    input,
+    baseMessages: baseMessagesDirect,
+    mainTools: mainToolsDirect,
+    toolRuntimeInput: toolRuntimeInputDirect,
     signal,
-  )) {
-    if (chunk.type === "token" && chunk.text) {
-      content += chunk.text;
-      yield { type: "token", data: chunk.text };
-    } else if (chunk.type === "thinking" && chunk.text) {
-      yield { type: "thinking", data: chunk.text };
-    } else if (chunk.type === "usage") {
-      usage = chunk.data ?? null;
-    }
-  }
+  });
+  let content = streamedContentDirect;
   content = await applyRuntimeRegexScripts(deps.storage, "ai_output", content);
   const connected = await persistConnectedCommandTags(
     deps.storage,
@@ -924,6 +1065,16 @@ export async function* startGeneration(
         usage,
       });
   if (saved) {
+    await mirrorSavedAssistantMessageToDiscord({
+      deps,
+      chat,
+      input,
+      saved,
+      content: connected.displayContent,
+      characters: assembly.characters,
+    });
+  }
+  if (saved) {
     const autoLorebookResults = await runLorebookKeeperBackfill(
       deps,
       {
@@ -945,4 +1096,155 @@ export async function* startGeneration(
 function generationGuide(input: StartGenerationInput): LlmMessage | null {
   const guide = readString(input.generationGuide).trim();
   return guide ? { role: "user", content: guide } : null;
+}
+
+/**
+ * Cap on the number of stream → tool-execute → re-stream iterations the main
+ * generation loop will perform before forcing a final turn. Picked defensively
+ * to cover realistic multi-step flows (e.g. Spotify-style 4-hop sequences,
+ * combat-style dice + state-update interleaves) while preventing runaway loops
+ * from broken models that always emit a tool call.
+ */
+const MAX_MAIN_TOOL_ITERATIONS = 8;
+
+/**
+ * Multi-turn main-character streaming loop.
+ *
+ * Streams from the LLM, collects any `tool_call` chunks, executes them via
+ * `executeMainToolCall`, appends the assistant turn + tool results to the
+ * conversation, and re-streams until the model produces a turn with no tool
+ * calls (or the iteration cap is hit).
+ *
+ * Mode-blind by construction: this helper reads no chat-mode flag. The only
+ * gate on the tool loop is `mainTools !== null`, which the caller derives from
+ * `chat.metadata.enableTools` via `buildMainToolDefinitions`.
+ *
+ * Tool-result messages are conversation-internal — they are NOT persisted as
+ * chat messages. Only the final accumulated text reaches `saveAssistantMessage`.
+ */
+async function* streamMainGenerationLoop(args: {
+  deps: GenerationEngineDeps;
+  connection: JsonRecord;
+  input: StartGenerationInput;
+  baseMessages: LlmMessage[];
+  mainTools: MainToolDefinitions | null;
+  toolRuntimeInput: ToolRuntimeInput;
+  signal: AbortSignal | undefined;
+}): AsyncGenerator<GenerationEvent, { content: string; usage: unknown }> {
+  const { deps, connection, input, baseMessages, mainTools, toolRuntimeInput, signal } = args;
+  let content = "";
+  const usages: unknown[] = [];
+  const conversation: LlmMessage[] = [...baseMessages];
+  let iteration = 0;
+
+  while (true) {
+    iteration++;
+    const pendingToolCalls: LLMToolCall[] = [];
+    let turnContent = "";
+
+    for await (const chunk of deps.llm.stream(
+      {
+        connectionId: readString(connection.id) || input.connectionId,
+        model: readString(connection.model) || undefined,
+        messages: conversation,
+        parameters: llmParameters(connection, input),
+        tools: mainTools?.toolDefs,
+      },
+      signal,
+    )) {
+      if (chunk.type === "token" && chunk.text) {
+        turnContent += chunk.text;
+        yield { type: "token", data: chunk.text };
+      } else if (chunk.type === "thinking" && chunk.text) {
+        yield { type: "thinking", data: chunk.text };
+      } else if (chunk.type === "tool_call") {
+        const normalized = normalizeToolCall(chunk.data);
+        if (normalized) pendingToolCalls.push(normalized);
+      } else if (chunk.type === "usage" && chunk.data != null) {
+        usages.push(chunk.data);
+      }
+    }
+
+    content += turnContent;
+
+    if (!mainTools || pendingToolCalls.length === 0) break;
+    if (iteration >= MAX_MAIN_TOOL_ITERATIONS) {
+      yield {
+        type: "phase",
+        data: `Tool-call iteration limit (${MAX_MAIN_TOOL_ITERATIONS}) reached; finishing without further tool calls.`,
+      };
+      break;
+    }
+
+    conversation.push({
+      role: "assistant",
+      content: turnContent,
+      tool_calls: pendingToolCalls,
+    });
+
+    for (const call of pendingToolCalls) {
+      const toolName = call.function?.name || call.name;
+      const toolArgs = call.function?.arguments || call.arguments || "{}";
+      yield { type: "tool_call", data: { id: call.id, name: toolName, arguments: toolArgs } };
+      let resultText: string;
+      let success = true;
+      try {
+        resultText = await executeMainToolCall({
+          deps: { storage: deps.storage, integrations: deps.integrations },
+          input: toolRuntimeInput,
+          customTools: mainTools.customTools,
+          allowedToolNames: mainTools.allowedToolNames,
+          call,
+        });
+      } catch (err) {
+        success = false;
+        resultText = err instanceof Error ? err.message : String(err);
+      }
+      yield {
+        type: "tool_result",
+        data: { toolCallId: call.id, name: toolName, result: resultText, success },
+      };
+      conversation.push({
+        role: "tool",
+        content: resultText,
+        tool_call_id: call.id,
+        name: toolName,
+      });
+    }
+  }
+
+  return { content, usage: mergeUsages(usages) };
+}
+
+/**
+ * Aggregate per-turn usage records across a multi-turn tool-call loop.
+ *
+ * Each LLM turn (every iteration of `streamMainGenerationLoop`) emits its own
+ * `usage` chunk. When the loop runs once with no tool calls, behavior is
+ * byte-identical to the pre-loop world — the single record is returned as-is.
+ * When the loop iterates 2+ times, numeric leaf fields (prompt/completion/total
+ * tokens, cached/reasoning/cost breakdowns) are summed so downstream
+ * `generationInfo.usage` reflects total cost, not just the final turn's slice.
+ *
+ * Falls back to the latest non-null entry when usages have heterogeneous shapes
+ * (different providers, different keys) so we never silently report wrong-typed
+ * data.
+ */
+function mergeUsages(usages: unknown[]): unknown {
+  if (usages.length === 0) return null;
+  if (usages.length === 1) return usages[0];
+  const records = usages.filter(isRecord);
+  if (records.length === 0) return usages[usages.length - 1] ?? null;
+  const merged: Record<string, unknown> = {};
+  for (const record of records) {
+    for (const [key, value] of Object.entries(record)) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        const prev = merged[key];
+        merged[key] = typeof prev === "number" && Number.isFinite(prev) ? prev + value : value;
+      } else if (!(key in merged)) {
+        merged[key] = value;
+      }
+    }
+  }
+  return merged;
 }
