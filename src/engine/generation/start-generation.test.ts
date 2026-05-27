@@ -39,6 +39,9 @@ function generationDepsForChat(options: {
   agentRuns?: Record<string, unknown>[];
   initialMessages?: Record<string, unknown>[];
   connectionPatch?: Record<string, unknown>;
+  prompts?: Record<string, unknown>[];
+  promptSections?: Record<string, unknown>[];
+  promptVariables?: Record<string, unknown>[];
 } = {}) {
   const chat = {
     id: "chat-1",
@@ -94,12 +97,20 @@ function generationDepsForChat(options: {
       if (entity === "characters") return options.characters?.find((character) => character.id === id) ?? null;
       if (entity === "personas") return options.personas?.find((persona) => persona.id === id) ?? null;
       if (entity === "messages") return messagesById.get(id) ?? null;
+      if (entity === "prompts") return options.prompts?.find((prompt) => prompt.id === id) ?? null;
       return null;
     }),
-    list: vi.fn(async (entity: string) => {
+    list: vi.fn(async (entity: string, listOptions?: { filters?: Record<string, unknown> }) => {
       if (entity === "personas") return options.personas ?? [];
       if (entity === "agents") return options.agents ?? [];
       if (entity === "agent-runs") return options.agentRuns ?? [];
+      if (entity === "prompts") return options.prompts ?? [];
+      if (entity === "prompt-sections") {
+        return (options.promptSections ?? []).filter((section) => section.presetId === listOptions?.filters?.presetId);
+      }
+      if (entity === "prompt-variables") {
+        return (options.promptVariables ?? []).filter((variable) => variable.presetId === listOptions?.filters?.presetId);
+      }
       return [];
     }),
     create: vi.fn(async (_entity: string, value: Record<string, unknown>) => value),
@@ -308,6 +319,76 @@ describe("startGeneration chat message loading", () => {
             base: true,
             setup: true,
             game: true,
+            chat: true,
+            request: true,
+          },
+        },
+      },
+    });
+  });
+
+  it("merges selected prompt preset parameters into the LLM request", async () => {
+    const { deps, streamedRequests } = generationDepsForChat({
+      chatPatch: { mode: "roleplay", promptPresetId: "preset-1" },
+      connectionPatch: {
+        defaultParameters: {
+          temperature: 0.2,
+          maxTokens: 512,
+          customParameters: { provider: { connection: true } },
+        },
+      },
+      chatMetadata: {
+        chatParameters: {
+          maxTokens: 1200,
+          customParameters: { provider: { chat: true } },
+        },
+      },
+      prompts: [
+        {
+          id: "preset-1",
+          parameters: {
+            temperature: 0.8,
+            maxTokens: 900,
+            reasoningEffort: "high",
+            customParameters: { provider: { preset: true } },
+          },
+        },
+      ],
+      promptSections: [
+        {
+          id: "main",
+          presetId: "preset-1",
+          name: "Main",
+          role: "system",
+          content: "Preset rules.",
+          enabled: true,
+          sortOrder: 0,
+        },
+      ],
+    });
+
+    await drainGeneration(
+      startGeneration(deps, {
+        chatId: "chat-1",
+        userMessage: "advance",
+        impersonateBlockAgents: true,
+        parameters: {
+          topP: 0.7,
+          customParameters: { provider: { request: true } },
+        },
+      }),
+    );
+
+    expect(streamedRequests[0]).toMatchObject({
+      parameters: {
+        temperature: 0.8,
+        maxTokens: 1200,
+        topP: 0.7,
+        reasoningEffort: "high",
+        customParameters: {
+          provider: {
+            connection: true,
+            preset: true,
             chat: true,
             request: true,
           },

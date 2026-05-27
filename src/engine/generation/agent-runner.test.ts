@@ -55,6 +55,20 @@ function countingLlm(calls: unknown[], responseText = "ok"): LlmGateway {
   };
 }
 
+function emptyLlm(calls: unknown[]): LlmGateway {
+  return {
+    async *stream(request) {
+      calls.push(request);
+    },
+    async complete() {
+      return "";
+    },
+    async listModels() {
+      return [];
+    },
+  };
+}
+
 const integrations = {} as IntegrationGateway;
 
 const illustratorDrawData = {
@@ -112,6 +126,51 @@ describe("createGenerationAgentRuntime", () => {
         agentType: "prose-guardian",
         agentName: "Prose Guardian",
         text: "ok",
+      }),
+    ]);
+    expect(results).toEqual(runtime.preResults);
+  });
+
+  it("surfaces empty agent responses as visible failures instead of silent no-op results", async () => {
+    const calls: unknown[] = [];
+    const results: unknown[] = [];
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: storage([
+          {
+            id: "agent-a",
+            type: "prose-guardian",
+            name: "Prose Guardian",
+            enabled: true,
+            phase: "pre_generation",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Add a concise style note.",
+          },
+        ]),
+        llm: emptyLlm(calls),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["agent-a"] } },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+      (result) => results.push(result),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(runtime.preInjections).toEqual([]);
+    expect(runtime.preResults).toEqual([
+      expect.objectContaining({
+        agentId: "agent-a",
+        agentType: "prose-guardian",
+        success: false,
+        error: "Prose Guardian returned an empty response.",
       }),
     ]);
     expect(results).toEqual(runtime.preResults);

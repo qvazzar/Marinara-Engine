@@ -978,6 +978,7 @@ export async function* startGeneration(
       connection,
       input,
       chat: chatForGeneration,
+      parameters: llmParameters(connection, input, chatForGeneration, assembly.parameters),
       baseMessages,
       mainTools,
       toolRuntimeInput,
@@ -1070,6 +1071,7 @@ export async function* startGeneration(
     connection,
     input,
     chat: chatForGeneration,
+    parameters: llmParameters(connection, input, chatForGeneration, assembly.parameters),
     baseMessages: baseMessagesDirect,
     mainTools: mainToolsDirect,
     toolRuntimeInput: toolRuntimeInputDirect,
@@ -1163,12 +1165,13 @@ async function* streamMainGenerationLoop(args: {
   connection: JsonRecord;
   input: StartGenerationInput;
   chat: JsonRecord;
+  parameters: Record<string, unknown>;
   baseMessages: LlmMessage[];
   mainTools: MainToolDefinitions | null;
   toolRuntimeInput: ToolRuntimeInput;
   signal: AbortSignal | undefined;
 }): AsyncGenerator<GenerationEvent, { content: string; usage: unknown }> {
-  const { deps, connection, input, chat, baseMessages, mainTools, toolRuntimeInput, signal } = args;
+  const { deps, connection, input, parameters, baseMessages, mainTools, toolRuntimeInput, signal } = args;
   let content = "";
   const usages: unknown[] = [];
   const conversation: LlmMessage[] = [...baseMessages];
@@ -1184,7 +1187,7 @@ async function* streamMainGenerationLoop(args: {
         connectionId: readString(connection.id) || input.connectionId,
         model: readString(connection.model) || undefined,
         messages: conversation,
-        parameters: llmParameters(connection, input, chat),
+        parameters,
         tools: mainTools?.toolDefs,
       },
       signal,
