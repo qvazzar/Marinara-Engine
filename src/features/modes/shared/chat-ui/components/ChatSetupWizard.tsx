@@ -314,7 +314,7 @@ function ConversationQuickSetup({ chat, onFinish, onCancel }: ChatSetupWizardPro
   const updateMeta = useUpdateChatMetadata();
   const openRightPanel = useUIStore((s) => s.openRightPanel);
   const [scheduleState, setScheduleState] = useState<"idle" | "generating" | "done">("idle");
-  const [autonomousEnabled, setAutonomousEnabled] = useState(true);
+  const [autonomousEnabled, setAutonomousEnabled] = useState(false);
   const [generateSchedule, setGenerateSchedule] = useState(false);
 
   // Track whether the user has manually edited the chat name.
