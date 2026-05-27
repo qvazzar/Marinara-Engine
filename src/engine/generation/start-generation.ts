@@ -578,10 +578,38 @@ async function saveAssistantMessage(args: {
   attachments?: JsonRecord[];
   usage?: unknown;
 }): Promise<unknown | null> {
-  if (args.input.impersonate === true) return null;
-
   const regenerateMessageId = readString(args.input.regenerateMessageId).trim();
   const generationReplay = buildGenerationReplay(args.input);
+  const generationInfo = {
+    connectionId: readString(args.connection.id) || null,
+    model: readString(args.connection.model) || null,
+    agentResults: args.agentResults.length,
+    notes: args.noteCount,
+    usage: args.usage ?? null,
+  };
+
+  if (args.input.impersonate === true) {
+    if (regenerateMessageId) {
+      await args.storage.addChatMessageSwipe(args.input.chatId, regenerateMessageId, args.content);
+      const extraPatch: Record<string, unknown> = {};
+      if (generationReplay) extraPatch.generationReplay = generationReplay;
+      extraPatch.chatSummaryFingerprint = args.chatSummaryFingerprint;
+      return args.storage.patchChatMessageExtra(regenerateMessageId, extraPatch);
+    }
+
+    return args.storage.createChatMessage(args.input.chatId, {
+      role: "user",
+      characterId: null,
+      content: args.content,
+      extra: {
+        isGenerated: true,
+        ...(generationReplay ? { generationReplay } : {}),
+        chatSummaryFingerprint: args.chatSummaryFingerprint,
+      },
+      generationInfo,
+    });
+  }
+
   if (regenerateMessageId) {
     await args.storage.addChatMessageSwipe(args.input.chatId, regenerateMessageId, args.content);
     const extraPatch: Record<string, unknown> = {};
@@ -609,14 +637,12 @@ async function saveAssistantMessage(args: {
       ...(generationReplay ? { generationReplay } : {}),
       chatSummaryFingerprint: args.chatSummaryFingerprint,
     },
-    generationInfo: {
-      connectionId: readString(args.connection.id) || null,
-      model: readString(args.connection.model) || null,
-      agentResults: args.agentResults.length,
-      notes: args.noteCount,
-      usage: args.usage ?? null,
-    },
+    generationInfo,
   });
+}
+
+function savedGenerationEventType(input: StartGenerationInput): "assistant_message" | "user_message" {
+  return input.impersonate === true ? "user_message" : "assistant_message";
 }
 
 function messageId(saved: unknown): string | null {
@@ -1078,7 +1104,7 @@ export async function* startGeneration(
           attachments: connected.assistantAttachments,
           usage,
         });
-    if (saved) {
+    if (saved && input.impersonate !== true) {
       await mirrorSavedAssistantMessageToDiscord({
         deps,
         chat,
@@ -1087,11 +1113,11 @@ export async function* startGeneration(
         content: connected.displayContent,
         characters: assembly.characters,
       });
+      await persistTrackerSnapshotSafely(deps.storage, chatId, saved, allAgentResults, generationTrackerBaseline);
     }
-    if (saved) await persistTrackerSnapshotSafely(deps.storage, chatId, saved, allAgentResults, generationTrackerBaseline);
     await persistSecretPlotAgentMemorySafely(deps.storage, chatId, allAgentResults);
     await persistAgentResults(deps.storage, chatId, messageId(saved), allAgentResults);
-    if (saved) {
+    if (saved && input.impersonate !== true) {
       const autoLorebookResults = await runLorebookKeeperBackfill(
         deps,
         {
@@ -1106,7 +1132,7 @@ export async function* startGeneration(
         yield { type: "agent_result", data: result };
       }
     }
-    if (saved) yield { type: "assistant_message", data: saved };
+    if (saved) yield { type: savedGenerationEventType(input), data: saved };
     yield { type: "done", data: { transcript: visibleTranscript(generationMessages) } };
     return;
   }
@@ -1166,7 +1192,7 @@ export async function* startGeneration(
         attachments: connected.assistantAttachments,
         usage,
       });
-  if (saved) {
+  if (saved && input.impersonate !== true) {
     await mirrorSavedAssistantMessageToDiscord({
       deps,
       chat,
@@ -1176,7 +1202,7 @@ export async function* startGeneration(
       characters: assembly.characters,
     });
   }
-  if (saved) {
+  if (saved && input.impersonate !== true) {
     const autoLorebookResults = await runLorebookKeeperBackfill(
       deps,
       {
@@ -1191,7 +1217,7 @@ export async function* startGeneration(
       yield { type: "agent_result", data: result };
     }
   }
-  if (saved) yield { type: "assistant_message", data: saved };
+  if (saved) yield { type: savedGenerationEventType(input), data: saved };
   yield { type: "done" };
 }
 
