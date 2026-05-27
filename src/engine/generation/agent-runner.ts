@@ -21,6 +21,7 @@ import { matchCustomAgentActivation, type ActivationScanMessage } from "../agent
 import { createAgentPipeline, type AgentInjection, type ResolvedAgent } from "../agents-runtime/pipeline/agent-pipeline";
 import type { AgentToolContext } from "../agents-runtime/executor/agent-executor";
 import type { GenerationCharacterContext, GenerationPersonaContext } from "./prompt-assembly";
+import { loadAgentMemory, secretPlotStateFromMemory } from "./agent-memory-runtime";
 import {
   boolish,
   hiddenFromAi,
@@ -143,19 +144,6 @@ async function loadConnection(storage: StorageGateway, connectionId: string | nu
   if (!connectionId) return null;
   const connection = await storage.get<JsonRecord>("connections", connectionId);
   return isRecord(connection) ? connection : null;
-}
-
-async function loadAgentMemory(storage: StorageGateway, agentId: string, chatId: string): Promise<Record<string, unknown>> {
-  const rows = await storage.list<JsonRecord>("agent-memory");
-  const memory: Record<string, unknown> = {};
-  for (const row of rows) {
-    if (readString(row.agentConfigId) !== agentId || readString(row.chatId) !== chatId) continue;
-    const key = readString(row.key);
-    if (!key) continue;
-    const value = row.value;
-    memory[key] = typeof value === "string" ? parseMaybeJson(value) : value;
-  }
-  return memory;
 }
 
 function enabledToolNames(settings: Record<string, unknown>): string[] {
@@ -399,14 +387,6 @@ function buildAgentToolContext(
   };
 }
 
-function parseMaybeJson(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
 function skippedDanglingConnectionResult(agent: JsonRecord, connectionId: string): AgentResult {
   const type = readString(agent.type || agent.agentType) || "agent";
   const name = readString(agent.name) || type;
@@ -510,6 +490,8 @@ async function buildAgentContext(deps: AgentDeps, input: GenerationAgentRuntimeI
       .map((agent) => loadAgentMemory(deps.storage, readString(agent.id), chatId)),
   );
   const memory = Object.assign({}, ...memoryRows);
+  const secretPlotState = secretPlotStateFromMemory(memory);
+  if (secretPlotState) memory._secretPlotState = secretPlotState;
   return {
     chatId,
     chatMode: readString(input.chat.mode || input.chat.chatMode, "roleplay"),
