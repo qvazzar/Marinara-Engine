@@ -78,6 +78,10 @@ export function customToolRecord(row: JsonRecord): CustomToolRecord | null {
   const name = readString(row.name).trim();
   if (!name || !boolish(row.enabled, false)) return null;
   const executionType = readString(row.executionType, "static");
+  // Legacy "script" tools (from the pre-refactor staging codebase) are intentionally
+  // excluded from the LLM-visible tool set: the refactor has no JS sandbox and will
+  // not execute script bodies. The row is preserved on disk and surfaced read-only
+  // in ToolEditor for migration. See src/engine/contracts/schemas/custom-tool.schema.ts.
   if (executionType !== "static" && executionType !== "webhook") return null;
   return {
     ...row,
