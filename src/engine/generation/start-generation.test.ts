@@ -423,6 +423,35 @@ describe("startGeneration Discord mirror", () => {
   });
 });
 
+describe("startGeneration group turn prompt toggle", () => {
+  it("keeps target character instructions enabled by default for non-conversation group chats", async () => {
+    const { deps, streamedRequests } = generationDepsForChat({
+      chatPatch: { mode: "roleplay", characterIds: ["char-1", "char-2"] },
+      characters: [{ id: "char-1", data: { name: "Marina" } }],
+    });
+
+    await drainGeneration(startGeneration(deps, { chatId: "chat-1", forCharacterId: "char-1", impersonateBlockAgents: true }));
+
+    expect((streamedRequests[0] as { messages: Array<{ content: string }> }).messages).toEqual(
+      expect.arrayContaining([expect.objectContaining({ content: "[Generation instruction: respond as Marina.]" })]),
+    );
+  });
+
+  it("omits target character instructions when non-conversation group turn prompts are disabled", async () => {
+    const { deps, streamedRequests } = generationDepsForChat({
+      chatPatch: { mode: "roleplay", characterIds: ["char-1", "char-2"] },
+      chatMetadata: { groupTurnPromptEnabled: false },
+      characters: [{ id: "char-1", data: { name: "Marina" } }],
+    });
+
+    await drainGeneration(startGeneration(deps, { chatId: "chat-1", forCharacterId: "char-1", impersonateBlockAgents: true }));
+
+    expect((streamedRequests[0] as { messages: Array<{ content: string }> }).messages).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ content: "[Generation instruction: respond as Marina.]" })]),
+    );
+  });
+});
+
 describe("retryGenerationAgents lorebook keeper backfill", () => {
   it("uses run interval and read-behind settings to backfill only unprocessed batch anchors", async () => {
     const messages = Array.from({ length: 40 }, (_, index) => ({
