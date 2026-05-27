@@ -1192,31 +1192,9 @@ export function CharactersPanel() {
                 )}
               </div>
 
-              {!assigningToGroup && !selectionMode && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleStartNewChat(
-                      char.id,
-                      charName,
-                      char.parsed?.first_mes as string | undefined,
-                      (char.parsed?.alternate_greetings ?? []) as string[],
-                    );
-                  }}
-                  disabled={isStartingChat}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-[var(--primary)]/10 px-2 py-1 text-[0.625rem] font-medium text-[var(--primary)] ring-1 ring-[var(--primary)]/20 transition-all hover:bg-[var(--primary)]/15 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Start New Chat"
-                  aria-label={`Start New Chat with ${charName}`}
-                >
-                  <MessageCircle size="0.6875rem" />
-                  <span>New Chat</span>
-                </button>
-              )}
-
               {/* Actions (hidden during group assign mode) */}
               {!assigningToGroup && !selectionMode && (
-                <div className="absolute right-[4.5rem] top-1/2 -translate-y-1/2 flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 max-md:opacity-100">
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 max-md:opacity-100">
                   {activeChat && (
                     <button
                       onClick={(e) => {
