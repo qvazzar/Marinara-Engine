@@ -7,6 +7,7 @@ import { wrapContent } from "../generation-core/prompt/format-engine";
 import { mergeAdjacentMessages, squashLeadingSystemMessages } from "../generation-core/prompt/merger";
 import { applyRegexScriptsToPromptMessages } from "../generation-core/regex/regex-application";
 import { resolveMacros, type MacroContext } from "../shared/macros/macro-engine";
+import { normalizeUserTimeZone } from "../shared/time/timezone";
 import type { GameActiveState, GameCampaignPlan, GameMap, GameNpc, HudWidget, SessionSummary } from "../contracts/types/game";
 import { buildGmFormatReminder, buildGmSystemPrompt, type GmPromptContext } from "../modes/game/prompts/gm-prompts";
 import { buildGenerationPromptPresetCandidates } from "./prompt-preset-selection";
@@ -487,6 +488,12 @@ function markerConfig(section: PromptSectionRecord): MarkerConfig | null {
   return null;
 }
 
+function resolvePromptTimeZone(chat: JsonRecord, request: JsonRecord): string | undefined {
+  const persisted = normalizeUserTimeZone(parseRecord(chat.metadata).promptTimeZone);
+  if (persisted) return persisted;
+  return normalizeUserTimeZone(request.userTimeZone);
+}
+
 function macroContext(input: {
   chat: JsonRecord;
   connection: JsonRecord;
@@ -494,6 +501,7 @@ function macroContext(input: {
   persona: GenerationPersonaContext | null;
   latestUserInput: string;
   agentData?: Record<string, string>;
+  request: JsonRecord;
 }): MacroContext {
   const first = input.characters[0];
   return {
@@ -514,6 +522,7 @@ function macroContext(input: {
     chatId: readString(input.chat.id),
     model: readString(input.connection.model),
     agentData: input.agentData,
+    timeZone: resolvePromptTimeZone(input.chat, input.request),
     characterFields: first
       ? {
           description: first.description,
@@ -1125,6 +1134,7 @@ export async function assembleGenerationPrompt(
     persona,
     latestUserInput: input.latestUserInput,
     agentData: input.agentData,
+    request: input.request,
   });
   const agentData = input.agentData ?? {};
   let messages: ChatMLMessage[] = [];
