@@ -534,6 +534,10 @@ function isLorebookKeeperBackfill(input: RetryAgentsInput): boolean {
   );
 }
 
+function retryBypassesCustomAgentActivation(input: RetryAgentsInput): boolean {
+  return boolish(parseRecord(input.options).bypassActivation, false);
+}
+
 async function commitVisibleTrackerSnapshotSafely(
   storage: StorageGateway,
   chatId: string,
@@ -627,6 +631,7 @@ async function runGenerationAgentsForTarget(args: {
       activatedLorebookEntries: assembly.activatedLorebookEntries,
       chatSummary: assembly.chatSummary,
       agentTypes,
+      bypassCustomAgentActivation: retryBypassesCustomAgentActivation(input),
       signal,
     },
     (result) => results.push(result),

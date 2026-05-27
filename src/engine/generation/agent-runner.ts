@@ -1,4 +1,4 @@
-import { type AgentContext, type AgentResult } from "../contracts/types/agent";
+import { BUILT_IN_AGENTS, type AgentContext, type AgentResult } from "../contracts/types/agent";
 import type { IntegrationGateway } from "../capabilities/integrations";
 import type { LlmGateway, LlmMessage } from "../capabilities/llm";
 import type { StorageGateway } from "../capabilities/storage";
@@ -10,6 +10,7 @@ import type {
   LLMToolCall,
   LLMToolDefinition,
 } from "../generation-core/llm/base-provider";
+import { matchCustomAgentActivation, type ActivationScanMessage } from "../agents-runtime/activation";
 import { createAgentPipeline, type AgentInjection, type ResolvedAgent } from "../agents-runtime/pipeline/agent-pipeline";
 import type { AgentToolContext } from "../agents-runtime/executor/agent-executor";
 import type { GenerationCharacterContext, GenerationPersonaContext } from "./prompt-assembly";
@@ -45,6 +46,7 @@ export interface GenerationAgentRuntimeInput {
   debugSink?: AgentContext["debugSink"];
   signal?: AbortSignal;
   agentTypes?: Set<string>;
+  bypassCustomAgentActivation?: boolean;
 }
 
 export interface GenerationAgentRuntime {
@@ -65,6 +67,8 @@ interface ResolvedAgentsResult {
   agents: ResolvedAgent[];
   skippedResults: AgentResult[];
 }
+
+const BUILT_IN_AGENT_TYPES = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
 
 function llmProvider(llm: LlmGateway, connectionId: string | null): BaseLLMProvider {
   return {
@@ -167,6 +171,25 @@ function chatActiveToolIds(input: GenerationAgentRuntimeInput): Set<string> {
   return stringSet(chatMetadata(input).activeToolIds);
 }
 
+function activationScanMessages(input: GenerationAgentRuntimeInput): ActivationScanMessage[] {
+  return input.storedMessages
+    .filter((message) => !hiddenFromAi(message))
+    .map((message) => ({ content: readString(message.content) }));
+}
+
+function isBuiltInAgent(agent: JsonRecord): boolean {
+  const type = readString(agent.type || agent.agentType).trim();
+  return BUILT_IN_AGENT_TYPES.has(type);
+}
+
+// Tool-runtime helpers (parseToolParameters, customToolRecord, loadCustomTools,
+// customToolDefinition, BUILT_IN_TOOL_MAP, builtInToolDefinition,
+// stringifyToolResult, toolArguments, stringArg, numberArg, stringArrayArg,
+// toolError, requireChatId, updateChatMetadata, rollDiceNotation,
+// searchLorebookTool, executeBuiltInTool, spotifyAgentId) live in
+// ./tools-runtime.ts and are imported above. Do NOT re-add them here when
+// merging upstream — both call sites should resolve to the single source of
+// truth, otherwise the main-path tool wiring and the agent path can drift.
 function buildAgentToolContext(
   deps: Pick<AgentDeps, "storage" | "integrations">,
   input: GenerationAgentRuntimeInput,
@@ -227,6 +250,7 @@ function skippedDanglingConnectionResult(agent: JsonRecord, connectionId: string
 async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput): Promise<ResolvedAgentsResult> {
   if (!chatAgentsEnabled(input)) return { agents: [], skippedResults: [] };
   const scopedAgentIds = chatActiveAgentIds(input);
+  const activationMessages = activationScanMessages(input);
   const rows = (await deps.storage.list<JsonRecord>("agents"))
     .filter((agent) => boolish(agent.enabled, false))
     .filter((agent) => {
@@ -237,11 +261,15 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
       if (!input.agentTypes || input.agentTypes.size === 0) return true;
       return input.agentTypes.has(type);
     });
-  const customTools = await loadCustomTools(deps.storage);
+  let customTools: Map<string, CustomToolRecord> | null = null;
   const resolved: ResolvedAgent[] = [];
   const skippedResults: AgentResult[] = [];
   for (const agent of rows) {
     const settings = agentSettings(agent);
+    if (!input.bypassCustomAgentActivation && !isBuiltInAgent(agent)) {
+      const activation = matchCustomAgentActivation(settings, activationMessages);
+      if (activation.configured && !activation.matched) continue;
+    }
     const requestedConnectionId = readString(agent.connectionId).trim();
     const fallbackConnectionId = readString(input.connection.id).trim() || null;
     const connectionId = requestedConnectionId || fallbackConnectionId;
@@ -258,6 +286,7 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
     }
     const model = readString(agent.model).trim() || readString(connection.model).trim();
     if (!model) continue;
+    customTools ??= await loadCustomTools(deps.storage);
     resolved.push({
       id: readString(agent.id) || readString(agent.type) || "agent",
       type: readString(agent.type || agent.agentType) || "agent",
@@ -339,12 +368,22 @@ export async function createGenerationAgentRuntime(
   onResult?: (result: AgentResult) => void,
 ): Promise<GenerationAgentRuntime> {
   const { agents, skippedResults } = await resolveAgents(deps, input);
-  const context = await buildAgentContext(deps, input);
   const preResults: AgentResult[] = [...skippedResults];
   const agentData: Record<string, string> = {};
   for (const result of skippedResults) {
     onResult?.(result);
   }
+  if (agents.length === 0) {
+    return {
+      preInjections: [],
+      preResults,
+      agentData,
+      runParallel: async () => [],
+      runPost: async () => [],
+    };
+  }
+
+  const context = await buildAgentContext(deps, input);
   const pipeline = createAgentPipeline(agents, context, (result) => {
     const text = resultText(result);
     if (text) agentData[result.agentType] = text;
