@@ -4384,14 +4384,18 @@ export function GameSurface({
 
   const retryGeneration = useCallback(() => {
     setGenerationFailed(false);
-    generateGameTurn({ chatId: activeChatId, connectionId: null, kind: "turn" });
+    void generateGameTurn({ chatId: activeChatId, connectionId: null, kind: "turn" }).catch(() => {
+      // Generation UI already shows the recoverable error state.
+    });
   }, [activeChatId, generateGameTurn]);
 
   const generateInitialGameTurn = useCallback(() => {
-    generateGameTurn({
+    void generateGameTurn({
       chatId: activeChatId,
       connectionId: null,
       kind: "start",
+    }).catch(() => {
+      // Generation UI already shows the recoverable error state.
     });
   }, [activeChatId, generateGameTurn]);
 
@@ -4555,12 +4559,14 @@ export function GameSurface({
       const trimmedMessage = message.trim();
       const hasAttachments = !!attachments?.length;
       if (!trimmedMessage && !hasAttachments) return;
-      generateGameTurn({
+      void generateGameTurn({
         chatId: activeChatId,
         connectionId: null,
         kind: "turn",
         userMessage: formatTextQuotes(trimmedMessage, quoteFormat),
         ...(hasAttachments ? { attachments } : {}),
+      }).catch(() => {
+        // Generation UI already shows the recoverable error state.
       });
     },
     [activeChatId, chatMeta.gameSessionStatus, generateGameTurn, quoteFormat],
