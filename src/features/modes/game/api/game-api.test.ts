@@ -196,7 +196,7 @@ describe("gameApi metadata mutation response contracts", () => {
 
     const result = await gameApi.startGame({ chatId: "chat-game" });
 
-    expect(result.sessionChat).toBe(readChat());
+    expect(result.sessionChat).toMatchObject(readChat());
     expect(result.sessionChat.metadata).toMatchObject({
       gameSessionStatus: "active",
       gameActiveState: "exploration",

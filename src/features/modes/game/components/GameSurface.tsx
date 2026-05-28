@@ -2312,19 +2312,25 @@ export function GameSurface({
         });
       }
 
-      for (const entry of journalEntries) {
-        void gameApi
-          .addJournalEntry({
-            chatId: activeChatId,
-            type: "item",
-            data: {
-              item: entry.item,
-              action: entry.action,
-              quantity: 1,
-            },
-          })
-          .then((res) => publishSessionChat(res.sessionChat))
-          .catch(() => {});
+      if (journalEntries.length > 0) {
+        void (async () => {
+          for (const entry of journalEntries) {
+            try {
+              const res = await gameApi.addJournalEntry({
+                chatId: activeChatId,
+                type: "item",
+                data: {
+                  item: entry.item,
+                  action: entry.action,
+                  quantity: 1,
+                },
+              });
+              publishSessionChat(res.sessionChat);
+            } catch {
+              // Best-effort journal write; keep inventory updates responsive.
+            }
+          }
+        })();
       }
 
       if (notifications.length > 0) {
@@ -3974,12 +3980,7 @@ export function GameSurface({
 
   const applyGeneratedAssets = useCallback(
     async (res: GameAssetGenerationResult) => {
-      if (res.sessionChat) {
-        queryClient.setQueryData(chatKeys.detail(res.sessionChat.id), res.sessionChat);
-        if (useChatStore.getState().activeChatId === res.sessionChat.id) {
-          useChatStore.getState().setActiveChat(res.sessionChat);
-        }
-      }
+      publishSessionChat(res.sessionChat);
       const nextBackground = res.generatedBackground ?? res.fallbackBackground;
       if (nextBackground) {
         await fetchManifest();
@@ -3993,7 +3994,7 @@ export function GameSurface({
         clearFailedNpcAvatars(res.generatedNpcAvatars.map((avatar) => avatar.name));
       }
     },
-    [clearFailedNpcAvatars, fetchManifest, installGeneratedIllustration, queryClient],
+    [clearFailedNpcAvatars, fetchManifest, installGeneratedIllustration, publishSessionChat],
   );
 
   async function applySceneResult(result: SceneAnalysis, msg: { id: string }) {

@@ -1580,13 +1580,13 @@
     "semantic_hash": ""
   },
   "src/features/modes/game/api/game-api.test.ts": {
-    "mtime": 1779994097.1868556,
-    "ast_hash": "bdca3971b0644b6416ec385c6eb7177e",
+    "mtime": 1779995502.1253352,
+    "ast_hash": "2834e252d438a5dba50aebbdd8ee64b4",
     "semantic_hash": ""
   },
   "src/features/modes/game/api/game-api.ts": {
-    "mtime": 1779994097.1883743,
-    "ast_hash": "e69875c4354a30bcaa83d5b0afa97e8d",
+    "mtime": 1779995502.0450828,
+    "ast_hash": "a44b2c9d0f7f997ac198d0a0905b384b",
     "semantic_hash": ""
   },
   "src/features/modes/game/api/game-tracker-api.ts": {
@@ -1745,8 +1745,8 @@
     "semantic_hash": ""
   },
   "src/features/modes/game/components/GameSurface.tsx": {
-    "mtime": 1779994097.1914122,
-    "ast_hash": "aca2e5b9a671b4c896c5e6a571fbdddd",
+    "mtime": 1779995530.279743,
+    "ast_hash": "990d226efc8db1ec39d23fb27f352d81",
     "semantic_hash": ""
   },
   "src/features/modes/game/components/GameTransitionManager.tsx": {

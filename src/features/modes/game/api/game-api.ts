@@ -1734,7 +1734,6 @@ export const gameApi = {
 
     for (const item of preview.items) {
       if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
-      if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
       const image = await imageGenerationApi.generate<{ base64: string; mimeType: string; image?: string }>({
         connectionId: imageConnectionId,
         prompt: item.prompt,
