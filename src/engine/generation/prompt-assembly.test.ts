@@ -471,6 +471,47 @@ describe("assembleGenerationPrompt macro parity", () => {
     expect(prompt).not.toContain("Use the generic connection preset.");
   });
 
+  it("uses the chat preset before a request preset for roleplay generations", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithPrompts(
+        [
+          { id: "chat-preset", isDefault: false, wrapFormat: "xml", parameters: {} },
+          { id: "request-preset", isDefault: false, wrapFormat: "markdown", parameters: {} },
+        ],
+        [
+          section({
+            id: "chat-main",
+            presetId: "chat-preset",
+            name: "Main Prompt",
+            role: "system",
+            content: "Use the selected chat settings preset.",
+            sortOrder: 0,
+          }),
+          section({
+            id: "request-main",
+            presetId: "request-preset",
+            name: "Main Prompt",
+            role: "system",
+            content: "Use the transient request preset.",
+            sortOrder: 0,
+          }),
+        ],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay", promptPresetId: "chat-preset" },
+        storedMessages: [],
+        connection: {},
+        request: { ...request, promptPresetId: "request-preset" },
+        latestUserInput: "",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(assembly.promptPresetId).toBe("chat-preset");
+    expect(prompt).toContain("Use the selected chat settings preset.");
+    expect(prompt).not.toContain("Use the transient request preset.");
+  });
+
   it("collapses excessive blank lines in preset sections and history messages", async () => {
     const assembly = await assembleGenerationPrompt(
       storageWithPreset(

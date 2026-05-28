@@ -5,6 +5,7 @@ import type { EventGateway } from "../capabilities/events";
 import type { IntegrationGateway } from "../capabilities/integrations";
 import type { LlmGateway, LlmMessage } from "../capabilities/llm";
 import type { StorageGateway } from "../capabilities/storage";
+import type { VisualAssetGateway } from "../capabilities/visual-assets";
 import type { GenerationGuideSource } from "../shared/text/generation-guide";
 import { chatSummaryFingerprintMatches, fingerprintChatSummary } from "../shared/text/chat-summary-fingerprint";
 import { collapseExcessBlankLines } from "../shared/text/newlines";
@@ -106,6 +107,7 @@ export interface GenerationEngineDeps {
   storage: StorageGateway;
   llm: LlmGateway;
   integrations: IntegrationGateway;
+  visuals?: VisualAssetGateway;
   events?: EventGateway;
 }
 
@@ -949,10 +951,17 @@ async function saveRegeneratedMessage(args: {
   chatSummaryFingerprint: string | null;
   promptSnapshot: GenerationPromptSnapshot | null;
 }): Promise<unknown | null> {
+  const swipeExtra = swipeScopedGenerationExtra({
+    generationReplay: args.generationReplay,
+    chatSummaryFingerprint: args.chatSummaryFingerprint,
+    thinking: args.thinking,
+    promptSnapshot: args.promptSnapshot,
+  });
   const updated = await args.storage.addChatMessageSwipe(
     args.chatId,
     args.messageId,
     collapseExcessBlankLines(args.content),
+    swipeExtra,
   );
   const updatedRecord = isRecord(updated) ? updated : {};
   const activeSwipeIndex = Math.max(0, Math.trunc(readNumber(updatedRecord.activeSwipeIndex, 0)));
@@ -965,6 +974,21 @@ async function saveRegeneratedMessage(args: {
     existingExtra: parseRecord(updatedRecord.extra),
   });
   return args.storage.patchChatMessageExtra(args.messageId, extraPatch);
+}
+
+function swipeScopedGenerationExtra(args: {
+  generationReplay: GenerationReplay | null;
+  chatSummaryFingerprint: string | null;
+  thinking?: string | null;
+  promptSnapshot?: GenerationPromptSnapshot | null;
+}): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  if (args.generationReplay) extra.generationReplay = args.generationReplay;
+  extra.chatSummaryFingerprint = args.chatSummaryFingerprint;
+  const trimmedThinking = collapseExcessBlankLines(readString(args.thinking).trim());
+  if (trimmedThinking) extra.thinking = trimmedThinking;
+  if (args.promptSnapshot) extra.generationPromptSnapshot = args.promptSnapshot;
+  return extra;
 }
 
 function generationReplayExtraPatch(args: {
@@ -1202,7 +1226,7 @@ async function runGenerationAgentsForTarget(args: {
   });
   const results: AgentResult[] = [];
   const runtime = await createGenerationAgentRuntime(
-    { storage: deps.storage, llm: deps.llm, integrations: deps.integrations },
+    { storage: deps.storage, llm: deps.llm, integrations: deps.integrations, visuals: deps.visuals },
     {
       chat: chatForAgents,
       connection,
@@ -1215,6 +1239,7 @@ async function runGenerationAgentsForTarget(args: {
       agentTypes,
       bypassCustomAgentActivation: retryBypassesCustomAgentActivation(input),
       signal,
+      regenerateMessageId: readString(input.regenerateMessageId).trim() || null,
     },
     (result) => results.push(result),
   );
@@ -1367,7 +1392,7 @@ export async function* startGeneration(
     yield { type: "phase", data: agentsEnabled ? "Running pre-generation agents..." : "Calling model..." };
     const runtime = agentsEnabled
       ? await createGenerationAgentRuntime(
-          { storage: deps.storage, llm: deps.llm, integrations: deps.integrations },
+          { storage: deps.storage, llm: deps.llm, integrations: deps.integrations, visuals: deps.visuals },
           {
             chat: chatForGeneration,
             connection,
@@ -1380,6 +1405,7 @@ export async function* startGeneration(
             debugMode: input.debugMode === true,
             debugSink: input.debugSink,
             signal,
+            regenerateMessageId: readString(input.regenerateMessageId).trim() || null,
           },
           (result) => agentEvents.push(result),
         )

@@ -23,6 +23,7 @@ import { llmApi } from "../../../../shared/api/llm-api";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { integrationGateway } from "../../../../shared/api/integration-gateway";
 import { ApiError } from "../../../../shared/api/api-errors";
+import { visualAssetsApi } from "../../../../shared/api/visual-assets-api";
 import { requestImagePromptReview } from "../../../../shared/components/ui/ImagePromptReviewHost";
 import { useAgentStore, type PendingCardUpdate } from "../../../../shared/stores/agent.store";
 import { toAgentFailure } from "../../../../shared/lib/agent-failures";
@@ -60,6 +61,8 @@ type GenerationStreamFactory = (args: GenerateArgs, signal: AbortSignal) => Asyn
 const HAPTIC_COMMAND_INTERVAL_MS = 225;
 const TYPEWRITER_MAX_FRAME_MS = 120;
 const scheduledChatRefreshTimers = new Map<string, number>();
+const queuedAgentDebugEntries: Array<Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }> = [];
+let agentDebugFlushTimer: number | null = null;
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
@@ -219,11 +222,32 @@ function upsertCachedMessage(
 }
 
 function runDeferredGenerationWork(label: string, task: () => Promise<void> | void): void {
-  window.setTimeout(() => {
+  const run = () => {
     void Promise.resolve()
       .then(task)
       .catch((error) => console.warn(`[generation] ${label} failed`, error));
-  }, 0);
+  };
+  const idleWindow = window as Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+  };
+  if (typeof idleWindow.requestIdleCallback === "function") {
+    idleWindow.requestIdleCallback(run, { timeout: 1_500 });
+  } else {
+    window.setTimeout(run, 16);
+  }
+}
+
+function flushQueuedAgentDebugEntries(): void {
+  agentDebugFlushTimer = null;
+  if (queuedAgentDebugEntries.length === 0) return;
+  const entries = queuedAgentDebugEntries.splice(0, queuedAgentDebugEntries.length);
+  useAgentStore.getState().addDebugEntries(entries);
+}
+
+function enqueueAgentDebugEntry(entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }): void {
+  queuedAgentDebugEntries.push(entry);
+  if (agentDebugFlushTimer !== null) return;
+  agentDebugFlushTimer = window.setTimeout(flushQueuedAgentDebugEntries, 80);
 }
 
 function scheduleChatQueryRefresh(queryClient: QueryClient, chatId: string): void {
@@ -508,9 +532,15 @@ function formatAgentBubble(result: AgentResult, agentName: string): string | nul
   }
 }
 
-function applyBackgroundChoice(chosen: unknown) {
+async function applyBackgroundChoice(chatId: string, chosen: unknown) {
+  const metadataValue = readString(chosen).trim();
   const url = chatBackgroundMetadataToUrl(chosen);
   if (url) useUIStore.getState().setChatBackground(url);
+  if (metadataValue) {
+    await storageApi.patchChatMetadata(chatId, { background: metadataValue }).catch((error) => {
+      console.warn("Failed to persist background agent choice", error);
+    });
+  }
 }
 
 function applyQuestUpdates(rawData: unknown) {
@@ -874,7 +904,7 @@ async function applyAgentResultEffects(
   }
 
   if (result.type === "haptic_command" || result.agentType === "haptic") await applyHapticAgentResult(result.data);
-  if (result.type === "background_change") applyBackgroundChoice(data.chosen);
+  if (result.type === "background_change") await applyBackgroundChoice(chatId, data.chosen);
   if (result.agentType === "quest") applyQuestUpdates(result.data);
   await applyTrackerResultToGameState(chatId, result);
 }
@@ -1243,7 +1273,7 @@ export function useGenerate() {
         adjustedArgs,
         (streamArgs, signal) =>
           startGeneration(
-            { storage: storageApi, llm: llmApi, integrations: reviewedIntegrationGateway },
+            { storage: storageApi, llm: llmApi, integrations: reviewedIntegrationGateway, visuals: visualAssetsApi },
             {
               ...streamArgs,
               userTimeZone: resolveUserTimeZone(),
@@ -1252,8 +1282,7 @@ export function useGenerate() {
                 format: useUIStore.getState().imagePromptFormat,
               },
               debugMode: useUIStore.getState().debugMode,
-              debugSink: (entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) =>
-                useAgentStore.getState().addDebugEntry(entry),
+              debugSink: enqueueAgentDebugEntry,
             },
             signal,
           ) as AsyncGenerator<StreamEvent>,
@@ -1296,7 +1325,7 @@ export function useGenerate() {
           agentStore.clearFailedAgentTypes();
         }
         const results = await retryGenerationAgents(
-          { storage: storageApi, llm: llmApi, integrations: integrationGateway },
+          { storage: storageApi, llm: llmApi, integrations: integrationGateway, visuals: visualAssetsApi },
           { chatId, agentTypes, options: { ...(options ?? {}), bypassActivation: options?.bypassActivation ?? true } },
         );
         for (const result of results) {

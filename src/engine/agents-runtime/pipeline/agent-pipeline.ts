@@ -4,7 +4,6 @@ import { createAgentRuntimeDebug } from "../debug.js";
 import {
   executeAgent,
   executeAgentBatch,
-  normalizeAgentMaxTokens,
   type AgentExecConfig,
   type AgentToolContext,
 } from "../executor/agent-executor.js";
@@ -87,17 +86,6 @@ async function executeGroup(
   onResult?: AgentResultCallback,
 ): Promise<AgentResult[]> {
   const logger = createAgentRuntimeDebug(context);
-  logger.emit({
-    level: "debug",
-    phase: group.agents[0]?.phase ?? "unknown",
-    message: "group-start",
-    agents: group.agents.map((agent) => ({
-      type: agent.type,
-      name: agent.name,
-      model: agent.model,
-      maxTokens: normalizeAgentMaxTokens(agent.settings.maxTokens),
-    })),
-  });
   const groupContext = buildAgentContext(group.agents, context);
   // Separate tool-using agents (can't be batched) from regular agents
   const toolAgents = group.agents.filter((a) => a.toolContext?.tools.length);

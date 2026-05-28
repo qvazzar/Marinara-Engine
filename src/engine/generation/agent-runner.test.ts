@@ -305,13 +305,37 @@ describe("createGenerationAgentRuntime", () => {
     );
 
     expect(calls[0]?.parameters).toMatchObject({
-      temperature: 0.3,
       maxTokens: 4096,
       topP: 0.42,
       topK: 12,
       reasoningEffort: "high",
       assistantPrefill: "Here is the agent result:",
     });
+    expect(calls[0]?.parameters).not.toHaveProperty("temperature");
+  });
+
+  it("does not run Echo Chamber during assistant message regeneration", async () => {
+    const calls: LlmRequest[] = [];
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: storage([]),
+        llm: countingLlm(calls, '{"reactions":[]}'),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["echo-chamber"] } },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ id: "assistant-1", role: "assistant", content: "Old swipe." }],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+        regenerateMessageId: "assistant-1",
+      },
+    );
+
+    expect(await runtime.runParallel()).toEqual([]);
+    expect(calls).toHaveLength(0);
   });
 
   it("batches same-connection phase agents into one request even when maxParallelJobs is configured", async () => {
@@ -438,12 +462,37 @@ describe("createGenerationAgentRuntime", () => {
         ]),
         llm,
         integrations,
+        visuals: {
+          listSprites: async (characterId) =>
+            characterId === "char-dottore" ? [{ expression: "happy_01" }, { expression: "full_idle" }] : [],
+          listBackgrounds: async () => [{ filename: "lab.png", originalName: "Laboratory", tags: ["fatui", "lab"] }],
+          gameAssetsManifest: async () => ({
+            byCategory: {
+              backgrounds: [
+                {
+                  tag: "backgrounds:fatui:winter_lab",
+                  category: "backgrounds",
+                  subcategory: "fatui",
+                  name: "winter_lab",
+                  path: "backgrounds/fatui/winter_lab.webp",
+                },
+              ],
+            },
+          }),
+        },
       },
       {
-        chat: { id: "chat-a", metadata: { activeAgentIds: ["world", "expression", "background"] } },
+        chat: {
+          id: "chat-a",
+          metadata: {
+            activeAgentIds: ["world", "expression", "background"],
+            spriteCharacterIds: ["char-dottore"],
+            spriteDisplayModes: ["expressions", "full-body"],
+          },
+        },
         connection: { id: "chat-connection", model: "chat-model" },
         storedMessages: [{ role: "user", content: "The lab door opens." }],
-        characters: [],
+        characters: [{ id: "char-dottore", name: "Dottore", description: "A precise Harbinger.", tags: [] }],
         persona: null,
         activatedLorebookEntries: [],
         chatSummary: null,
@@ -458,6 +507,14 @@ describe("createGenerationAgentRuntime", () => {
     expect(systemPrompt).toContain('<agent_task id="world-state" name="World State">');
     expect(systemPrompt).toContain('<agent_task id="expression" name="Expression Engine">');
     expect(systemPrompt).toContain('<agent_task id="background" name="Background">');
+    expect(systemPrompt).toContain("<available_sprites>");
+    expect(systemPrompt).toContain("Dottore (char-dottore):");
+    expect(systemPrompt).toContain("neutral");
+    expect(systemPrompt).toContain("happy_01");
+    expect(systemPrompt).toContain("full_idle");
+    expect(systemPrompt).toContain("<available_backgrounds>");
+    expect(systemPrompt).toContain("- lab.png (Laboratory) [tags: fatui, lab]");
+    expect(systemPrompt).toContain("- gameAsset:backgrounds/fatui/winter_lab.webp");
     expect(results).toEqual([
       expect.objectContaining({ agentType: "world-state", success: true }),
       expect.objectContaining({ agentType: "expression", success: true }),

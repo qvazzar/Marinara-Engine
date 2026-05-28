@@ -1135,6 +1135,71 @@ mod tests {
     }
 
     #[test]
+    fn message_swipes_keep_prompt_snapshot_map_global_while_switching_active_snapshot() {
+        let state = test_state("swipe-prompt-snapshots");
+        state
+            .storage
+            .create(
+                "messages",
+                json!({
+                    "id": "message-1",
+                    "chatId": "chat-1",
+                    "role": "assistant",
+                    "content": "second",
+                    "activeSwipeIndex": 1,
+                    "swipeCount": 2,
+                    "extra": {
+                        "hiddenFromAI": true,
+                        "generationPromptSnapshot": { "promptPresetId": "preset-second" },
+                        "generationPromptSnapshotsBySwipe": {
+                            "0": { "promptPresetId": "preset-first" },
+                            "1": { "promptPresetId": "preset-second" }
+                        }
+                    },
+                    "swipes": [
+                        {
+                            "content": "first",
+                            "extra": {
+                                "generationPromptSnapshot": { "promptPresetId": "preset-first" }
+                            }
+                        },
+                        {
+                            "content": "second",
+                            "extra": {
+                                "generationPromptSnapshot": { "promptPresetId": "preset-second" }
+                            }
+                        }
+                    ]
+                }),
+            )
+            .expect("message should be created");
+
+        set_active_swipe(&state, "chat-1", "message-1", json!({ "index": 0 }))
+            .expect("swipe should switch");
+
+        let persisted = state
+            .storage
+            .get("messages", "message-1")
+            .expect("message lookup should succeed")
+            .expect("message should exist");
+
+        assert_eq!(persisted["content"], json!("first"));
+        assert_eq!(persisted["extra"]["hiddenFromAI"], json!(true));
+        assert_eq!(
+            persisted["extra"]["generationPromptSnapshot"]["promptPresetId"],
+            json!("preset-first")
+        );
+        assert_eq!(
+            persisted["extra"]["generationPromptSnapshotsBySwipe"]["0"]["promptPresetId"],
+            json!("preset-first")
+        );
+        assert_eq!(
+            persisted["extra"]["generationPromptSnapshotsBySwipe"]["1"]["promptPresetId"],
+            json!("preset-second")
+        );
+    }
+
+    #[test]
     fn message_swipes_parse_stringified_parent_extra_before_preserving_active_extra() {
         let state = test_state("swipe-string-extra");
         state

@@ -95,10 +95,10 @@ describe("executeAgent result parsing", () => {
     });
     expect(calls[0]?.options).toMatchObject({
       model: "agent-model",
-      temperature: 0.3,
       maxTokens: 4096,
       stream: false,
     });
+    expect(calls[0]?.options).not.toHaveProperty("temperature");
   });
 
   it("treats configured non-text custom result types as JSON outputs", async () => {

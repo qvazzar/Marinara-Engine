@@ -980,10 +980,7 @@ function messageWithOptimisticActiveSwipe(message: Message, requestedIndex: numb
       ? (swipe as { content: string }).content
       : null;
   const swipeExtra =
-    swipe &&
-    typeof swipe === "object" &&
-    !Array.isArray(swipe) &&
-    Object.prototype.hasOwnProperty.call(swipe, "extra")
+    swipe && typeof swipe === "object" && !Array.isArray(swipe) && Object.prototype.hasOwnProperty.call(swipe, "extra")
       ? parseRecord((swipe as { extra?: unknown }).extra)
       : null;
   const nextExtra = swipeExtra
@@ -1013,6 +1010,7 @@ const SWIPE_SCOPED_EXTRA_KEYS = new Set([
   "chatSummaryFingerprint",
   "cachedPrompt",
   "generationReplay",
+  "generationPromptSnapshot",
   "attachments",
   "reasoning",
   "reasoning_content",

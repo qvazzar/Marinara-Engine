@@ -5,9 +5,10 @@ import { create } from "zustand";
 import type { AgentDebugEntry, AgentResult, CharacterCardFieldUpdate } from "../../engine/contracts/types/agent";
 import type { AgentFailure } from "../lib/agent-failures";
 
-const MAX_DEBUG_STRING_LENGTH = 4_000;
+const MAX_DEBUG_STRING_LENGTH = 1_500;
 const MAX_DEBUG_ARRAY_ITEMS = 20;
 const MAX_DEBUG_OBJECT_KEYS = 40;
+const MAX_DEBUG_LOG_ENTRIES = 80;
 
 function truncateDebugString(value: string): string {
   if (value.length <= MAX_DEBUG_STRING_LENGTH) return value;
@@ -131,6 +132,7 @@ interface AgentState {
   setProcessing: (processing: boolean) => void;
   addResult: (agentId: string, result: AgentResult) => void;
   addDebugEntry: (entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) => void;
+  addDebugEntries: (entries: Array<Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }>) => void;
   clearDebugLog: () => void;
   setFailedAgentTypes: (types: string[]) => void;
   setFailedAgentFailures: (failures: AgentFailure[]) => void;
@@ -190,7 +192,12 @@ export const useAgentStore = create<AgentState>((set) => ({
 
   addDebugEntry: (entry) =>
     set((s) => ({
-      debugLog: [...s.debugLog, compactDebugEntry(entry)].slice(-100),
+      debugLog: [...s.debugLog, compactDebugEntry(entry)].slice(-MAX_DEBUG_LOG_ENTRIES),
+    })),
+
+  addDebugEntries: (entries) =>
+    set((s) => ({
+      debugLog: [...s.debugLog, ...entries.map(compactDebugEntry)].slice(-MAX_DEBUG_LOG_ENTRIES),
     })),
 
   clearDebugLog: () => set({ debugLog: [], lastResults: new Map() }),

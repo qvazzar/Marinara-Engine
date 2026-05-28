@@ -77,12 +77,15 @@ function generationDepsForChat(
     }
     return { id: "assistant-2", chatId: "chat-1", ...value };
   });
-  const addChatMessageSwipe = vi.fn(async (_chatId: string, messageId: string, content: string) => ({
-    ...messagesById.get(messageId),
-    content,
-    activeSwipeIndex: 1,
-    swipeCount: 2,
-  }));
+  const addChatMessageSwipe = vi.fn(
+    async (_chatId: string, messageId: string, content: string, extra?: Record<string, unknown>) => ({
+      ...messagesById.get(messageId),
+      content,
+      activeSwipeIndex: 1,
+      swipeCount: 2,
+      extra,
+    }),
+  );
   const patchChatMessageExtra = vi.fn(async (messageId: string, patch: Record<string, unknown>) => ({
     ...messagesById.get(messageId),
     extra: {
@@ -779,7 +782,21 @@ describe("startGeneration generation replay metadata", () => {
     await drainGeneration(startGeneration(deps, { chatId: "chat-1", regenerateMessageId: "impersonate-1" }));
 
     expect(createChatMessage).not.toHaveBeenCalled();
-    expect(addChatMessageSwipe).toHaveBeenCalledWith("chat-1", "impersonate-1", "Done.");
+    expect(addChatMessageSwipe).toHaveBeenCalledWith(
+      "chat-1",
+      "impersonate-1",
+      "Done.",
+      expect.objectContaining({
+        generationReplay: {
+          impersonate: true,
+          userMessage: "a tiny answer",
+        },
+        generationPromptSnapshot: expect.objectContaining({
+          messages: expect.any(Array),
+          parameters: expect.any(Object),
+        }),
+      }),
+    );
     expect(patchChatMessageExtra).toHaveBeenCalledWith(
       "impersonate-1",
       expect.objectContaining({
@@ -840,7 +857,21 @@ describe("startGeneration generation replay metadata", () => {
       }),
     );
 
-    expect(addChatMessageSwipe).toHaveBeenCalledWith("chat-1", "assistant-1", "Done.");
+    expect(addChatMessageSwipe).toHaveBeenCalledWith(
+      "chat-1",
+      "assistant-1",
+      "Done.",
+      expect.objectContaining({
+        generationReplay: {
+          generationGuide: "Make this one colder.",
+          generationGuideSource: "guide",
+        },
+        generationPromptSnapshot: expect.objectContaining({
+          messages: expect.any(Array),
+          parameters: expect.any(Object),
+        }),
+      }),
+    );
     expect(patchChatMessageExtra).toHaveBeenCalledWith(
       "assistant-1",
       expect.objectContaining({

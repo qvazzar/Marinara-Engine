@@ -10,6 +10,13 @@ import type { IntegrationGateway } from "../capabilities/integrations";
 import type { LlmGateway, LlmMessage } from "../capabilities/llm";
 import type { StorageGateway } from "../capabilities/storage";
 import type {
+  BackgroundAssetInfo,
+  GameAssetManifest,
+  GameAssetManifestEntry,
+  SpriteAssetInfo,
+  VisualAssetGateway,
+} from "../capabilities/visual-assets";
+import type {
   BaseLLMProvider,
   ChatCompleteOptions,
   ChatCompleteResult,
@@ -25,9 +32,18 @@ import {
 } from "../agents-runtime/pipeline/agent-pipeline";
 import type { AgentToolContext } from "../agents-runtime/executor/agent-executor";
 import type { GenerationCharacterContext, GenerationPersonaContext } from "./prompt-assembly";
+import { buildSpriteExpressionChoices } from "../modes/game/prompts/sprite.service";
 import { llmParameters } from "./context";
 import { loadAgentMemory, secretPlotStateFromMemory } from "./agent-memory-runtime";
-import { boolish, hiddenFromAi, isRecord, parseRecord, readString, type JsonRecord } from "./runtime-records";
+import {
+  boolish,
+  hiddenFromAi,
+  isRecord,
+  parseRecord,
+  readString,
+  stringArray,
+  type JsonRecord,
+} from "./runtime-records";
 import {
   BUILT_IN_TOOL_MAP,
   builtInToolDefinition,
@@ -54,6 +70,7 @@ export interface GenerationAgentRuntimeInput {
   signal?: AbortSignal;
   agentTypes?: Set<string>;
   bypassCustomAgentActivation?: boolean;
+  regenerateMessageId?: string | null;
 }
 
 export interface GenerationAgentRuntime {
@@ -68,6 +85,7 @@ interface AgentDeps {
   storage: StorageGateway;
   llm: LlmGateway;
   integrations: IntegrationGateway;
+  visuals?: VisualAssetGateway;
 }
 
 interface ResolvedAgentsResult {
@@ -81,6 +99,92 @@ const MAX_ASSISTANT_RUN_INTERVAL = 100;
 const MAX_CUSTOM_AGENT_USER_RUN_INTERVAL = 200;
 const PROMPT_INJECTABLE_RESULT_TYPES = new Set(["context_injection", "director_event"]);
 type AutomaticIntervalMessageRole = "assistant" | "user";
+type SpriteDisplayMode = "expressions" | "full-body";
+
+const DEFAULT_SPRITE_DISPLAY_MODES: SpriteDisplayMode[] = ["expressions", "full-body"];
+const DEFAULT_ROLEPLAY_EXPRESSIONS = [
+  "angry",
+  "blushing",
+  "confused",
+  "crying",
+  "determined",
+  "disgusted",
+  "embarrassed",
+  "happy",
+  "laughing",
+  "neutral",
+  "sad",
+  "scared",
+  "sleepy",
+  "smirk",
+  "surprised",
+  "thinking",
+] as const;
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const text = readString(value).trim();
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(text);
+  }
+  return result;
+}
+
+function normalizeSpriteDisplayModes(value: unknown): SpriteDisplayMode[] {
+  const rawModes = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  const modes: SpriteDisplayMode[] = [];
+
+  for (const mode of rawModes) {
+    const normalized = mode === "fullBody" || mode === "full_body" ? "full-body" : mode;
+    if (normalized === "expressions" && !modes.includes("expressions")) {
+      modes.push("expressions");
+    } else if (normalized === "full-body" && !modes.includes("full-body")) {
+      modes.push("full-body");
+    }
+  }
+
+  return modes.length > 0 ? modes : [...DEFAULT_SPRITE_DISPLAY_MODES];
+}
+
+function isFullBodySpriteExpression(expression: string): boolean {
+  return expression.toLowerCase().startsWith("full_");
+}
+
+function spriteExpressionsForAgent(sprites: SpriteAssetInfo[], displayModes: readonly SpriteDisplayMode[]): string[] {
+  const customExpressions = sprites.map((sprite) => readString(sprite.expression).trim()).filter(Boolean);
+  const expressions = displayModes.includes("expressions")
+    ? [
+        ...DEFAULT_ROLEPLAY_EXPRESSIONS,
+        ...customExpressions.filter((expression) => !isFullBodySpriteExpression(expression)),
+      ]
+    : [];
+  const fullBody = displayModes.includes("full-body")
+    ? customExpressions.filter((expression) => isFullBodySpriteExpression(expression))
+    : [];
+
+  return uniqueStrings([...expressions, ...fullBody]);
+}
+
+function buildAvailableSpriteCharacter(
+  characterId: string,
+  characterName: string,
+  sprites: SpriteAssetInfo[],
+  displayModes: readonly SpriteDisplayMode[],
+): { characterId: string; characterName: string; expressions: string[]; expressionChoices: string[] } | null {
+  const expressions = spriteExpressionsForAgent(sprites, displayModes);
+  if (expressions.length === 0) return null;
+  return {
+    characterId,
+    characterName,
+    expressions,
+    expressionChoices: buildSpriteExpressionChoices(expressions),
+  };
+}
 
 interface AutomaticIntervalGate {
   agentId: string;
@@ -407,6 +511,11 @@ function skippedDanglingConnectionResult(agent: JsonRecord, connectionId: string
   };
 }
 
+function suppressAgentForTurn(input: GenerationAgentRuntimeInput, type: string): boolean {
+  const isRegeneration = !!readString(input.regenerateMessageId).trim();
+  return isRegeneration && type === "echo-chamber";
+}
+
 async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput): Promise<ResolvedAgentsResult> {
   if (!chatAgentsEnabled(input)) return { agents: [], skippedResults: [] };
   const scopedAgentIds = chatActiveAgentIds(input);
@@ -442,6 +551,7 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
   const skippedResults: AgentResult[] = [];
   for (const agent of rows) {
     const type = readString(agent.type || agent.agentType) || "agent";
+    if (suppressAgentForTurn(input, type)) continue;
     const id = readString(agent.id) || type;
     const settings = agentSettings(agent);
     const builtInAgent = isBuiltInAgent(agent);
@@ -564,7 +674,145 @@ async function loadLorebookKeeperEntries(
   }));
 }
 
-async function buildAgentContext(deps: AgentDeps, input: GenerationAgentRuntimeInput): Promise<AgentContext> {
+function agentTypeActive(agents: ResolvedAgent[], type: string): boolean {
+  return agents.some((agent) => agent.type === type);
+}
+
+async function loadAgentAvailableSprites(
+  visuals: VisualAssetGateway,
+  input: GenerationAgentRuntimeInput,
+  context: AgentContext,
+  chatMeta: JsonRecord,
+): Promise<void> {
+  const spriteDisplayModes = normalizeSpriteDisplayModes(chatMeta.spriteDisplayModes);
+  const selectedSpriteIds = stringSet(chatMeta.spriteCharacterIds);
+  const restrictToSelectedSprites = selectedSpriteIds.size > 0;
+  const perCharacter = await Promise.all(
+    context.characters
+      .filter((character) => !restrictToSelectedSprites || selectedSpriteIds.has(character.id))
+      .map(async (character) => {
+        const sprites = await visuals.listSprites(character.id).catch(() => []);
+        return buildAvailableSpriteCharacter(character.id, character.name, sprites, spriteDisplayModes);
+      }),
+  );
+
+  const personaId = readString(input.chat.personaId).trim();
+  if (personaId && input.persona && (!restrictToSelectedSprites || selectedSpriteIds.has(personaId))) {
+    const sprites = await visuals.listSprites(personaId).catch(() => []);
+    const spritePersona = buildAvailableSpriteCharacter(personaId, input.persona.name, sprites, spriteDisplayModes);
+    if (spritePersona) perCharacter.push(spritePersona);
+  }
+
+  const availableSprites = perCharacter.filter(
+    (spriteCharacter): spriteCharacter is NonNullable<typeof spriteCharacter> => Boolean(spriteCharacter),
+  );
+  if (availableSprites.length > 0) {
+    context.memory._availableSprites = availableSprites;
+  }
+}
+
+function gameAssetBackgrounds(manifest: GameAssetManifest | null): GameAssetManifestEntry[] {
+  const backgrounds = manifest?.byCategory?.backgrounds;
+  return Array.isArray(backgrounds) ? backgrounds : [];
+}
+
+function backgroundEntryFromUserAsset(background: BackgroundAssetInfo): {
+  filename: string;
+  originalName: string | null;
+  tags: string[];
+  source: "user" | "game_asset";
+} | null {
+  const filename =
+    readString(background.filename).trim() || readString(background.name).trim() || readString(background.path).trim();
+  if (!filename) return null;
+  return {
+    filename,
+    originalName: readString(background.originalName).trim() || null,
+    tags: stringArray(background.tags),
+    source: background.source === "game_asset" ? "game_asset" : "user",
+  };
+}
+
+function backgroundEntryFromGameAsset(asset: GameAssetManifestEntry): {
+  filename: string;
+  originalName: string | null;
+  tags: string[];
+  source: "game_asset";
+} | null {
+  const path = readString(asset.path).trim();
+  if (!path || path.startsWith("__user_bg__/")) return null;
+  return {
+    filename: `gameAsset:${path}`,
+    originalName: readString(asset.tag).trim() || readString(asset.name).trim() || null,
+    tags: stringArray([asset.subcategory, asset.category]).filter(Boolean),
+    source: "game_asset",
+  };
+}
+
+async function loadAgentAvailableBackgrounds(
+  visuals: VisualAssetGateway,
+  context: AgentContext,
+  chatMeta: JsonRecord,
+  backgroundAgent: ResolvedAgent,
+): Promise<void> {
+  context.memory._availableBackgrounds = [];
+  context.memory._currentBackground = chatMeta.background ?? null;
+  if (backgroundAgent.settings.autoGenerateBackgrounds === true) {
+    context.memory._backgroundGenerationEnabled = true;
+  }
+
+  const userBackgrounds = await visuals.listBackgrounds().catch(() => []);
+  const entries = userBackgrounds.map(backgroundEntryFromUserAsset).filter(
+    (
+      background,
+    ): background is {
+      filename: string;
+      originalName: string | null;
+      tags: string[];
+      source: "user" | "game_asset";
+    } => !!background,
+  );
+
+  if (visuals.gameAssetsManifest) {
+    const manifest = await visuals.gameAssetsManifest().catch(() => null);
+    entries.push(
+      ...gameAssetBackgrounds(manifest)
+        .map(backgroundEntryFromGameAsset)
+        .filter(
+          (
+            background,
+          ): background is { filename: string; originalName: string | null; tags: string[]; source: "game_asset" } =>
+            !!background,
+        ),
+    );
+  }
+
+  context.memory._availableBackgrounds = entries;
+}
+
+async function populateAgentVisualContext(
+  deps: AgentDeps,
+  input: GenerationAgentRuntimeInput,
+  context: AgentContext,
+  chatMeta: JsonRecord,
+  agents: ResolvedAgent[],
+): Promise<void> {
+  if (!deps.visuals) return;
+  if (agentTypeActive(agents, "expression")) {
+    await loadAgentAvailableSprites(deps.visuals, input, context, chatMeta);
+  }
+
+  const backgroundAgent = agents.find((agent) => agent.type === "background");
+  if (backgroundAgent) {
+    await loadAgentAvailableBackgrounds(deps.visuals, context, chatMeta, backgroundAgent);
+  }
+}
+
+async function buildAgentContext(
+  deps: AgentDeps,
+  input: GenerationAgentRuntimeInput,
+  agents: ResolvedAgent[],
+): Promise<AgentContext> {
   const chatId = readString(input.chat.id);
   const chatMode = readString(input.chat.mode || input.chat.chatMode, "roleplay");
   const chatMeta = parseRecord(input.chat.metadata);
@@ -581,7 +829,7 @@ async function buildAgentContext(deps: AgentDeps, input: GenerationAgentRuntimeI
     const existingLorebookEntries = await loadLorebookKeeperEntries(deps.storage, chatMeta);
     if (existingLorebookEntries) memory._existingLorebookEntries = existingLorebookEntries;
   }
-  return {
+  const context: AgentContext = {
     chatId,
     chatMode,
     recentMessages: input.storedMessages
@@ -590,6 +838,7 @@ async function buildAgentContext(deps: AgentDeps, input: GenerationAgentRuntimeI
       .map((message) => ({
         role: readString(message.role, "user"),
         content: readString(message.content),
+        characterId: readString(message.characterId).trim() || undefined,
       })),
     mainResponse: null,
     gameState: isRecord(input.chat.gameState) ? (input.chat.gameState as unknown as AgentContext["gameState"]) : null,
@@ -617,6 +866,8 @@ async function buildAgentContext(deps: AgentDeps, input: GenerationAgentRuntimeI
     streaming: true,
     signal: input.signal,
   };
+  await populateAgentVisualContext(deps, input, context, chatMeta, agents);
+  return context;
 }
 
 function resultText(result: AgentResult): string | null {
@@ -653,7 +904,7 @@ export async function createGenerationAgentRuntime(
     };
   }
 
-  const context = await buildAgentContext(deps, input);
+  const context = await buildAgentContext(deps, input, agents);
   const pipeline = createAgentPipeline(agents, context, (result) => {
     const text = resultText(result);
     if (text) agentData[result.agentType] = text;

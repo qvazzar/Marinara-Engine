@@ -116,7 +116,7 @@ pub(crate) fn materialize_message_swipe_fields(message: &mut Value) {
     }
 }
 
-const SWIPE_SCOPED_EXTRA_KEYS: [&str; 16] = [
+const SWIPE_SCOPED_EXTRA_KEYS: [&str; 15] = [
     "displayText",
     "isGenerated",
     "tokenCount",
@@ -129,7 +129,6 @@ const SWIPE_SCOPED_EXTRA_KEYS: [&str; 16] = [
     "cachedPrompt",
     "generationReplay",
     "generationPromptSnapshot",
-    "generationPromptSnapshotsBySwipe",
     "attachments",
     "reasoning",
     "reasoning_content",

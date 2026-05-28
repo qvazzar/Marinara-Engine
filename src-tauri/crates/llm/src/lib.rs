@@ -2874,6 +2874,23 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_opus_48_stream_body_requests_summarized_thinking_by_default() {
+        let request = request_for(
+            "anthropic",
+            "claude-opus-4-8",
+            json!({
+                "reasoningEffort": "high"
+            }),
+        );
+        let body = build_anthropic_body(&request, true);
+
+        assert_eq!(
+            body["thinking"],
+            json!({ "type": "adaptive", "display": "summarized" })
+        );
+    }
+
+    #[test]
     fn anthropic_stream_sse_emits_usage_thinking_and_text_tokens() {
         let mut emitted = Vec::new();
         let mut emit = |value: Value| {

@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import type {
   BaseLLMProvider,
+  ChatCompleteOptions,
   ChatMessage,
   LLMToolCall,
   LLMToolDefinition,
@@ -105,6 +106,27 @@ function applyProviderMaxTokensOverride(provider: BaseLLMProvider, maxTokens: nu
   return provider.maxTokensOverrideValue !== null ? Math.min(maxTokens, provider.maxTokensOverrideValue) : maxTokens;
 }
 
+function agentTemperature(config: Pick<AgentExecConfig, "settings">): number | undefined {
+  const value = config.settings.temperature;
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function batchAgentTemperature(configs: Array<Pick<AgentExecConfig, "settings">>): number | undefined {
+  const temperatures = configs.map(agentTemperature).filter((value): value is number => typeof value === "number");
+  return temperatures.length > 0 ? Math.min(...temperatures) : undefined;
+}
+
+function buildChatCompleteOptions(options: ChatCompleteOptions): ChatCompleteOptions {
+  const { model, temperature, maxTokens, stream, onToken, signal, ...extra } = options;
+  const normalized: ChatCompleteOptions = { model, ...extra };
+  if (typeof temperature === "number") normalized.temperature = temperature;
+  if (typeof maxTokens === "number") normalized.maxTokens = maxTokens;
+  if (typeof stream === "boolean") normalized.stream = stream;
+  if (onToken) normalized.onToken = onToken;
+  if (signal) normalized.signal = signal;
+  return normalized;
+}
+
 /**
  * Execute a single agent: build prompt → call LLM → parse response.
  * If toolContext is provided, the agent can make tool calls in a loop.
@@ -135,8 +157,7 @@ export async function executeAgent(
             ? buildGameSpotifyAgentMessages(template, context)
             : buildStandardAgentMessages(config, template, context);
 
-    // Agents use lower temperature for reliability
-    const temperature = (config.settings.temperature as number) ?? 0.3;
+    const temperature = agentTemperature(config);
     const maxTokens = applyProviderMaxTokensOverride(provider, normalizeAgentMaxTokens(config.settings.maxTokens));
     const streamResponses = context.streaming !== false;
 
@@ -169,22 +190,25 @@ export async function executeAgent(
       logger.debug(`[agent] [${msg.role}] ${msg.content}`);
       emit({ level: "debug", phase: config.phase, message: "prompt-message", args: [msg.role, msg.content] });
     }
-    logger.debug(`[agent] ═══ END PROMPT — temperature=${temperature} maxTokens=${maxTokens} ═══\n`);
+    logger.debug(`[agent] ═══ END PROMPT — temperature=${temperature ?? "connection"} maxTokens=${maxTokens} ═══\n`);
     emit({ level: "debug", phase: config.phase, message: "prompt-end", args: [temperature, maxTokens] });
 
     let responseText = "";
-    const result = await provider.chatComplete(messages, {
-      model,
-      temperature,
-      maxTokens,
-      stream: streamResponses,
-      onToken: streamResponses
-        ? (chunk) => {
-            responseText += chunk;
-          }
-        : undefined,
-      signal: context.signal,
-    });
+    const result = await provider.chatComplete(
+      messages,
+      buildChatCompleteOptions({
+        model,
+        temperature,
+        maxTokens,
+        stream: streamResponses,
+        onToken: streamResponses
+          ? (chunk) => {
+              responseText += chunk;
+            }
+          : undefined,
+        signal: context.signal,
+      }),
+    );
 
     if (!responseText && result.content) responseText = result.content;
     responseText = responseText.trim();
@@ -238,7 +262,7 @@ async function executeAgentWithTools(
   initialMessages: ChatMessage[],
   provider: BaseLLMProvider,
   model: string,
-  temperature: number,
+  temperature: number | undefined,
   maxTokens: number,
   toolContext: AgentToolContext,
   streamResponses: boolean,
@@ -254,14 +278,17 @@ async function executeAgentWithTools(
   const emit = (entry: AgentRuntimeDebugEntry) => logger.emit(entry);
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const result = await provider.chatComplete(loopMessages, {
-      model,
-      temperature,
-      maxTokens,
-      stream: streamResponses,
-      tools: toolContext.tools,
-      signal,
-    });
+    const result = await provider.chatComplete(
+      loopMessages,
+      buildChatCompleteOptions({
+        model,
+        temperature,
+        maxTokens,
+        stream: streamResponses,
+        tools: toolContext.tools,
+        signal,
+      }),
+    );
 
     totalTokens += result.usage?.totalTokens ?? 0;
 
@@ -333,13 +360,16 @@ async function executeAgentWithTools(
   }
 
   // Exhausted tool rounds — make one final call without tools to get JSON response
-  const finalResult = await provider.chatComplete(loopMessages, {
-    model,
-    temperature,
-    maxTokens,
-    stream: streamResponses,
-    signal,
-  });
+  const finalResult = await provider.chatComplete(
+    loopMessages,
+    buildChatCompleteOptions({
+      model,
+      temperature,
+      maxTokens,
+      stream: streamResponses,
+      signal,
+    }),
+  );
   totalTokens += finalResult.usage?.totalTokens ?? 0;
   const responseText = finalResult.content?.trim() ?? "";
   if (!responseText) {
@@ -445,7 +475,7 @@ export async function executeAgentBatch(
     // Each agent reserves its own configured output budget. The context fitter
     // may still reduce this further if the prompt needs more room.
     const perAgentTokens = configs.map((c) => normalizeAgentMaxTokens(c.settings.maxTokens));
-    const temperature = Math.min(...configs.map((c) => (c.settings.temperature as number) ?? 0.3));
+    const temperature = batchAgentTemperature(configs);
     const rawBatchMaxTokens = Math.min(
       perAgentTokens.reduce((sum, tokens) => sum + tokens, 0),
       MAX_AGENT_MAX_TOKENS,
@@ -478,7 +508,9 @@ export async function executeAgentBatch(
         args: [msg.role, msg.content],
       });
     }
-    logger.debug(`[agent-batch] ═══ END BATCH PROMPT — temperature=${temperature} maxTokens=${batchMaxTokens} ═══\n`);
+    logger.debug(
+      `[agent-batch] ═══ END BATCH PROMPT — temperature=${temperature ?? "connection"} maxTokens=${batchMaxTokens} ═══\n`,
+    );
     emit({
       level: "debug",
       phase: configs[0]!.phase,
@@ -489,18 +521,21 @@ export async function executeAgentBatch(
     // Use streaming (onToken) to keep the connection alive — avoids proxy
     // timeouts (e.g. Cloudflare 524) on large batch responses.
     let responseText = "";
-    const result = await provider.chatComplete(messages, {
-      model,
-      temperature,
-      maxTokens: batchMaxTokens,
-      stream: streamResponses,
-      onToken: streamResponses
-        ? (chunk) => {
-            responseText += chunk;
-          }
-        : undefined,
-      signal: context.signal,
-    });
+    const result = await provider.chatComplete(
+      messages,
+      buildChatCompleteOptions({
+        model,
+        temperature,
+        maxTokens: batchMaxTokens,
+        stream: streamResponses,
+        onToken: streamResponses
+          ? (chunk) => {
+              responseText += chunk;
+            }
+          : undefined,
+        signal: context.signal,
+      }),
+    );
 
     // chatComplete also accumulates content, but streaming via onToken is
     // the primary path — use whichever is populated.
