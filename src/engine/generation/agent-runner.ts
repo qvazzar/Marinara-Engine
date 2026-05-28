@@ -82,6 +82,7 @@ const BUILT_IN_AGENT_TYPES = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
 const ILLUSTRATOR_AGENT_TYPE = "illustrator";
 const MAX_ASSISTANT_RUN_INTERVAL = 100;
 const MAX_CUSTOM_AGENT_USER_RUN_INTERVAL = 200;
+const PROMPT_INJECTABLE_RESULT_TYPES = new Set(["context_injection", "director_event"]);
 type AutomaticIntervalMessageRole = "assistant" | "user";
 
 interface AutomaticIntervalGate {
@@ -624,6 +625,7 @@ async function buildAgentContext(deps: AgentDeps, input: GenerationAgentRuntimeI
 
 function resultText(result: AgentResult): string | null {
   if (!result.success) return null;
+  if (!PROMPT_INJECTABLE_RESULT_TYPES.has(result.type)) return null;
   if (typeof result.data === "string") return result.data;
   if (!isRecord(result.data)) return null;
   const text = result.data.text ?? result.data.direction ?? result.data.summary ?? result.data.raw;

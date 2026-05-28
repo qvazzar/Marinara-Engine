@@ -1,6 +1,8 @@
 import type { LorebookEntry } from "../contracts/types/lorebook";
 import type { ChatMLMessage, MarkerConfig, WrapFormat } from "../contracts/types/prompt";
+import type { CharacterData } from "../contracts/types/character";
 import type { StorageGateway } from "../capabilities/storage";
+import { getCharacterDescriptionWithExtensions } from "../generation-core/prompt/character-description-extensions";
 import { injectAtDepth, processActivatedEntries } from "../generation-core/lorebooks/prompt-injector";
 import { scanForActivatedEntries, type ActivatedEntry } from "../generation-core/lorebooks/keyword-scanner";
 import { wrapContent } from "../generation-core/prompt/format-engine";
@@ -173,17 +175,21 @@ function promptChoiceVariables(
 
 function loadCharacterContext(record: JsonRecord): GenerationCharacterContext {
   const data = dataRecord(record);
+  const extensions = parseRecord(data.extensions);
   const name = field(data, "name") || field(record, "name") || "Character";
   return {
     id: field(record, "id") || field(data, "id") || name,
     name,
-    description: field(data, "description") || field(record, "description"),
+    description:
+      cleanPromptText(getCharacterDescriptionWithExtensions(data as unknown as CharacterData)) ||
+      field(data, "description") ||
+      field(record, "description"),
     personality: field(data, "personality") || undefined,
     scenario: field(data, "scenario") || undefined,
     creatorNotes: field(data, "creator_notes") || field(data, "creatorNotes") || undefined,
     systemPrompt: field(data, "system_prompt") || field(data, "systemPrompt") || undefined,
-    backstory: field(data, "backstory") || undefined,
-    appearance: field(data, "appearance") || undefined,
+    backstory: field(data, "backstory") || field(extensions, "backstory") || undefined,
+    appearance: field(data, "appearance") || field(extensions, "appearance") || undefined,
     mesExample: field(data, "mes_example") || field(data, "mesExample") || undefined,
     firstMes: field(data, "first_mes") || field(data, "firstMes") || undefined,
     postHistoryInstructions:
@@ -714,24 +720,114 @@ function macroContext(input: {
   };
 }
 
-function renderCharacters(characters: GenerationCharacterContext[]): string {
+const DEFAULT_CHARACTER_MARKER_FIELDS = [
+  "description",
+  "personality",
+  "backstory",
+  "appearance",
+  "scenario",
+  "first_mes",
+  "mes_example",
+  "creator_notes",
+  "system_prompt",
+  "post_history_instructions",
+] as const;
+
+const CHARACTER_FIELD_LABELS: Record<string, string> = {
+  name: "Name",
+  description: "Description",
+  personality: "Personality",
+  scenario: "Scenario",
+  backstory: "Backstory",
+  appearance: "Appearance",
+  first_mes: "First Message",
+  firstMes: "First Message",
+  mes_example: "Example Dialogue",
+  mesExample: "Example Dialogue",
+  creator_notes: "Creator Notes",
+  creatorNotes: "Creator Notes",
+  system_prompt: "System Prompt",
+  systemPrompt: "System Prompt",
+  post_history_instructions: "Post History Instructions",
+  postHistoryInstructions: "Post History Instructions",
+};
+
+function characterFieldValue(character: GenerationCharacterContext, fieldName: string): string {
+  switch (fieldName) {
+    case "name":
+      return character.name;
+    case "description":
+      return character.description;
+    case "personality":
+      return character.personality ?? "";
+    case "scenario":
+      return character.scenario ?? "";
+    case "backstory":
+      return character.backstory ?? "";
+    case "appearance":
+      return character.appearance ?? "";
+    case "first_mes":
+    case "firstMes":
+      return character.firstMes ?? "";
+    case "mes_example":
+    case "mesExample":
+      return character.mesExample ?? "";
+    case "creator_notes":
+    case "creatorNotes":
+      return character.creatorNotes ?? "";
+    case "system_prompt":
+    case "systemPrompt":
+      return character.systemPrompt ?? "";
+    case "post_history_instructions":
+    case "postHistoryInstructions":
+      return character.postHistoryInstructions ?? "";
+    default:
+      return "";
+  }
+}
+
+function characterMarkerFields(marker: MarkerConfig | null): string[] {
+  const fields = marker?.characterFields?.filter((fieldName) => typeof fieldName === "string" && fieldName.trim());
+  return fields?.length ? fields : [...DEFAULT_CHARACTER_MARKER_FIELDS];
+}
+
+function renderNamedFields(
+  entries: Array<[string, string | undefined]>,
+  wrapFormat: WrapFormat,
+  depth = 1,
+): string {
+  return entries
+    .map(([label, value]) => {
+      const trimmed = readString(value).trim();
+      if (!trimmed) return "";
+      return wrapFormat === "none" ? `${label}: ${trimmed}` : wrapContent(trimmed, label, wrapFormat, depth);
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function renderCharacters(
+  characters: GenerationCharacterContext[],
+  wrapFormat: WrapFormat,
+  marker: MarkerConfig | null,
+): string {
+  const fields = characterMarkerFields(marker);
   return characters
-    .map((character) =>
-      [
-        ["Name", character.name],
-        ["Description", character.description],
-        ["Personality", character.personality],
-        ["Scenario", character.scenario],
-        ["Backstory", character.backstory],
-        ["Appearance", character.appearance],
-        ["First Message", character.firstMes],
-        ["System Prompt", character.systemPrompt],
-        ["Post History Instructions", character.postHistoryInstructions],
-      ]
-        .filter(([, value]) => typeof value === "string" && value.trim().length > 0)
-        .map(([label, value]) => `${label}: ${value}`)
-        .join("\n"),
-    )
+    .map((character) => {
+      const content = renderNamedFields(
+        [
+          ["Name", character.name],
+          ...fields.map((fieldName): [string, string] => [
+            CHARACTER_FIELD_LABELS[fieldName] ?? fieldName,
+            characterFieldValue(character, fieldName),
+          ]),
+        ],
+        wrapFormat,
+        2,
+      );
+      if (!content) return "";
+      return wrapFormat === "none" ? content : wrapContent(content, character.name, wrapFormat, 1);
+    })
     .filter(Boolean)
     .join("\n\n");
 }
@@ -743,19 +839,20 @@ function renderDialogueExamples(characters: GenerationCharacterContext[]): strin
     .join("\n\n");
 }
 
-function renderPersona(persona: GenerationPersonaContext | null): string {
+function renderPersona(persona: GenerationPersonaContext | null, wrapFormat: WrapFormat): string {
   if (!persona) return "";
-  return [
-    ["Name", persona.name],
-    ["Description", persona.description],
-    ["Personality", persona.personality],
-    ["Backstory", persona.backstory],
-    ["Appearance", persona.appearance],
-    ["Scenario", persona.scenario],
-  ]
-    .filter(([, value]) => typeof value === "string" && value.trim().length > 0)
-    .map(([label, value]) => `${label}: ${value}`)
-    .join("\n");
+  return renderNamedFields(
+    [
+      ["Name", persona.name],
+      ["Description", persona.description],
+      ["Personality", persona.personality],
+      ["Backstory", persona.backstory],
+      ["Appearance", persona.appearance],
+      ["Scenario", persona.scenario],
+    ],
+    wrapFormat,
+    1,
+  );
 }
 
 function renderJsonBlock(label: string, value: unknown): string {
@@ -770,12 +867,13 @@ function fallbackSystemPrompt(input: PromptAssemblyInput, args: {
   worldBefore: string;
   worldAfter: string;
   summary: string | null;
+  wrapFormat: WrapFormat;
 }): string {
   const mode = readString(input.chat.mode || input.chat.chatMode, "conversation");
   const meta = parseRecord(input.chat.metadata);
   const common = [
-    renderCharacters(args.characters),
-    renderPersona(args.persona),
+    renderCharacters(args.characters, args.wrapFormat, null),
+    renderPersona(args.persona, args.wrapFormat),
     args.worldBefore,
     args.worldAfter,
     args.summary ? `Summary:\n${args.summary}` : "",
@@ -1202,12 +1300,21 @@ function promptMessageWithRole(message: ChatMLMessage, role: "user" | "assistant
 
 function scopedIndividualGroupTarget(input: PromptAssemblyInput, characters: GenerationCharacterContext[]): string | null {
   const chatMode = readString(input.chat.mode || input.chat.chatMode);
-  if (chatMode === "conversation" || characters.length <= 1 || input.request.impersonate === true) return null;
+  if (chatMode !== "roleplay" || characters.length <= 1 || input.request.impersonate === true) return null;
   const metadata = parseRecord(input.chat.metadata);
   if (readString(metadata.groupChatMode, "merged") !== "individual") return null;
   const requestedCharacterId = readString(input.request.forCharacterId).trim();
   if (!requestedCharacterId) return null;
   return characters.some((character) => character.id === requestedCharacterId) ? requestedCharacterId : null;
+}
+
+function promptCharactersForGeneration(
+  input: PromptAssemblyInput,
+  characters: GenerationCharacterContext[],
+): GenerationCharacterContext[] {
+  const targetId = scopedIndividualGroupTarget(input, characters);
+  if (!targetId) return characters;
+  return characters.filter((character) => character.id === targetId);
 }
 
 function isIndividualGroupHistoryMessage(message: ChatMLMessage): boolean {
@@ -1419,12 +1526,13 @@ function sectionContent(args: {
   worldAfter: string;
   summary: string | null;
   agentData: Record<string, string>;
+  wrapFormat: WrapFormat;
 }) {
   switch (args.marker?.type) {
     case "character":
-      return renderCharacters(args.characters);
+      return renderCharacters(args.characters, args.wrapFormat, args.marker);
     case "persona":
-      return renderPersona(args.persona);
+      return renderPersona(args.persona, args.wrapFormat);
     case "dialogue_examples":
       return renderDialogueExamples(args.characters);
     case "chat_summary":
@@ -1480,6 +1588,7 @@ export async function assembleGenerationPrompt(
     normalizeWrapFormat(input.chat.wrapFormat) ??
     normalizeWrapFormat(input.connection.wrapFormat) ??
     "xml";
+  const promptCharacters = promptCharactersForGeneration(input, characters);
   const chatMeta = parseRecord(input.chat.metadata);
   const metadataHistoryLimit = readNumber(chatMeta.contextMessageLimit, 0);
   const requestedHistoryLimit = readNumber(input.request.historyLimit, metadataHistoryLimit || 300);
@@ -1488,7 +1597,7 @@ export async function assembleGenerationPrompt(
   const macros = macroContext({
     chat: input.chat,
     connection: input.connection,
-    characters,
+    characters: promptCharacters,
     persona,
     latestUserInput: input.latestUserInput,
     agentData: input.agentData,
@@ -1513,12 +1622,13 @@ export async function assembleGenerationPrompt(
       const rawContent = sectionContent({
         section,
         marker,
-        characters,
+        characters: promptCharacters,
         persona,
         worldBefore: processedLore.worldInfoBefore,
         worldAfter: processedLore.worldInfoAfter,
         summary,
         agentData,
+        wrapFormat,
       });
       const resolved = cleanPromptText(resolveMacros(rawContent, macros));
       if (!resolved.trim()) continue;
@@ -1537,11 +1647,12 @@ export async function assembleGenerationPrompt(
     messages.push({
       role: "system",
       content: fallbackSystemPrompt(input, {
-        characters,
+        characters: promptCharacters,
         persona,
         worldBefore: processedLore.worldInfoBefore,
         worldAfter: processedLore.worldInfoAfter,
         summary,
+        wrapFormat,
       }),
       contextKind: "prompt",
     });
@@ -1573,7 +1684,7 @@ export async function assembleGenerationPrompt(
     }
     messages.push(gameReminder!);
   } else {
-    const sceneBlock = buildRoleplayScenePromptBlock(input.chat, characters, persona);
+    const sceneBlock = buildRoleplayScenePromptBlock(input.chat, promptCharacters, persona);
     if (sceneBlock) {
       const firstSystemIndex = messages.findIndex((message) => message.role === "system");
       messages.splice(firstSystemIndex >= 0 ? firstSystemIndex + 1 : 0, 0, {

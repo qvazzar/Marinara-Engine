@@ -785,7 +785,7 @@ export async function runGenerationWithUi(
   queryClient: QueryClient,
   args: GenerateArgs,
   streamFactory: GenerationStreamFactory,
-  options: { beforeStart?: (args: GenerateArgs) => Promise<void> } = {},
+  options: { beforeStart?: (args: GenerateArgs, signal: AbortSignal) => Promise<void> } = {},
 ): Promise<boolean> {
   const chatId = args.chatId;
   const regenerateMessageId = readString(args.regenerateMessageId).trim() || null;
@@ -815,6 +815,11 @@ export async function runGenerationWithUi(
 
   const resolveRevealWaiters = () => {
     if (pendingReveal.length > 0) return;
+    for (const resolve of revealWaiters) resolve();
+    revealWaiters.clear();
+  };
+
+  const resolveAllRevealWaiters = () => {
     for (const resolve of revealWaiters) resolve();
     revealWaiters.clear();
   };
@@ -860,6 +865,12 @@ export async function runGenerationWithUi(
   };
 
   const flushVisibleStreamText = async () => {
+    if (controller.signal.aborted) {
+      clearRevealTimer();
+      pendingReveal = "";
+      resolveAllRevealWaiters();
+      return;
+    }
     if (!useUIStore.getState().enableStreaming) {
       clearRevealTimer();
       pendingReveal = "";
@@ -874,9 +885,26 @@ export async function runGenerationWithUi(
     });
   };
 
+  const stopGenerationUi = () => {
+    clearRevealTimer();
+    pendingReveal = "";
+    resolveAllRevealWaiters();
+    const state = useChatStore.getState();
+    state.setAbortController(chatId, null);
+    state.setStreaming(false, chatId);
+    state.setMariPhase(chatId, "idle");
+    state.setRegenerateMessageId(null);
+    state.setGenerationPhase(null);
+    state.setTypingCharacterName(null);
+    state.setStreamingCharacterId(null);
+    useAgentStore.getState().setProcessing(false);
+  };
+
+  controller.signal.addEventListener("abort", stopGenerationUi, { once: true });
+
   try {
     insertOptimisticUserMessage(queryClient, args);
-    await options.beforeStart?.(args);
+    await options.beforeStart?.(args, controller.signal);
     if (controller.signal.aborted) throw new DOMException("The operation was aborted.", "AbortError");
     for await (const event of streamFactory(args, controller.signal)) {
       switch (event.type) {
@@ -942,6 +970,16 @@ export async function runGenerationWithUi(
           toast.error(readString(data.error, "Selfie generation failed."));
           break;
         }
+        case "illustration": {
+          toast("Illustration generated.");
+          await queryClient.invalidateQueries({ queryKey: ["gallery", "images", chatId] });
+          break;
+        }
+        case "illustration_error": {
+          const data = parseMaybeRecord(event.data);
+          toast.error(readString(data.error, "Illustration generation failed."));
+          break;
+        }
         case "scene_created": {
           const data = parseMaybeRecord(event.data);
           const sceneChatId = readString(data.chatId).trim();
@@ -965,6 +1003,7 @@ export async function runGenerationWithUi(
     }
     throw error;
   } finally {
+    controller.signal.removeEventListener("abort", stopGenerationUi);
     clearRevealTimer();
     revealWaiters.clear();
     const finalChatStore = useChatStore.getState();
@@ -1060,8 +1099,9 @@ export function useGenerate() {
             signal,
           ) as AsyncGenerator<StreamEvent>,
         {
-          beforeStart: async (beforeArgs) => {
-            await backfillConversationSummaries(
+          beforeStart: async (beforeArgs, signal) => {
+            if (signal.aborted) return;
+            void backfillConversationSummaries(
               { storage: storageApi, llm: llmApi },
               {
                 chatId: beforeArgs.chatId,

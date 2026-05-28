@@ -2415,8 +2415,8 @@
     "semantic_hash": ""
   },
   "src/features/runtime/generation/hooks/use-generate.ts": {
-    "mtime": 1779968688.7890277,
-    "ast_hash": "ab3986cb665216eb1f6961f47b9ffb4d",
+    "mtime": 1779971558.1761289,
+    "ast_hash": "41760f81985354890995e67fc4339a54",
     "semantic_hash": ""
   },
   "src/features/runtime/world-state/types.ts": {
@@ -2505,8 +2505,8 @@
     "semantic_hash": ""
   },
   "src/shared/stores/agent.store.ts": {
-    "mtime": 1779906979.2890713,
-    "ast_hash": "7503d1ef26bb6cf6cddce9201477fb9c",
+    "mtime": 1779971054.4819598,
+    "ast_hash": "8a3621d72b184644420be687b0020d5e",
     "semantic_hash": ""
   },
   "src/shared/stores/ui.store.ts": {
@@ -3635,8 +3635,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation-core/llm/inline-thinking.ts": {
-    "mtime": 1779835633.806748,
-    "ast_hash": "dff01b260089051923d18eaed8363aa7",
+    "mtime": 1779971090.1924992,
+    "ast_hash": "03320845d6cb50b064a729dab798cbfd",
     "semantic_hash": ""
   },
   "src/engine/generation-core/regex/regex-application.ts": {
@@ -3840,8 +3840,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation/agent-runner.ts": {
-    "mtime": 1779907094.4197838,
-    "ast_hash": "52ed5ac7d00a1e82b38669c2bb00089c",
+    "mtime": 1779971282.3043253,
+    "ast_hash": "086a71ce15a82770331ed28bc7e15cf3",
     "semantic_hash": ""
   },
   "src/engine/generation/makers.ts": {
@@ -3865,13 +3865,13 @@
     "semantic_hash": ""
   },
   "src/engine/generation/prompt-assembly.test.ts": {
-    "mtime": 1779967361.040058,
-    "ast_hash": "27b754248255654eda5010b7e08dec48",
+    "mtime": 1779971300.3809335,
+    "ast_hash": "4bde0b5b2c72e7805ccf74aa91119d57",
     "semantic_hash": ""
   },
   "src/engine/generation/start-generation.ts": {
-    "mtime": 1779961269.195635,
-    "ast_hash": "7b1d398387c2631686b6e4ab1f6153ae",
+    "mtime": 1779971703.2822304,
+    "ast_hash": "acad9e1ae8a8521b3e710b4c35f4467b",
     "semantic_hash": ""
   },
   "src/engine/generation/agent-memory-runtime.ts": {
@@ -3885,8 +3885,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation/prompt-assembly.ts": {
-    "mtime": 1779967725.6304483,
-    "ast_hash": "975e117305964a261775329c5b34f927",
+    "mtime": 1779971226.075638,
+    "ast_hash": "97829a6586e67f84be494d5ecbf4bfa1",
     "semantic_hash": ""
   },
   "src/engine/generation/agent-normalizers.ts": {
@@ -3900,13 +3900,13 @@
     "semantic_hash": ""
   },
   "src/engine/generation/generation-events.ts": {
-    "mtime": 1779867918.3378592,
-    "ast_hash": "cecb934ee404660a66cc97b9dc972097",
+    "mtime": 1779971504.542112,
+    "ast_hash": "dfcfc2e7bc7103912cd478104a0bdff8",
     "semantic_hash": ""
   },
   "src/engine/generation/start-generation.test.ts": {
-    "mtime": 1779961269.1950855,
-    "ast_hash": "309553f5c230a6eacc511a52342f3466",
+    "mtime": 1779971294.279923,
+    "ast_hash": "f1210af67688c121b6dcbba4a8a5c08e",
     "semantic_hash": ""
   },
   "src/engine/generation/active-characters.ts": {
@@ -5742,6 +5742,11 @@
   "src/engine/shared/text/prompt-comments.ts": {
     "mtime": 1779967333.7607794,
     "ast_hash": "10b621e0012ab57edc48f9d4d15ea13f",
+    "semantic_hash": ""
+  },
+  "src/engine/generation-core/llm/inline-thinking.test.ts": {
+    "mtime": 1779971101.6211128,
+    "ast_hash": "43f6ec8f267d07e4e5519e83bbff9745",
     "semantic_hash": ""
   }
 }

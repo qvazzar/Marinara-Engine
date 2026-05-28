@@ -141,7 +141,7 @@ export const useAgentStore = create<AgentState>((set) => ({
       debugLog: [...s.debugLog, { ...entry, timestamp: entry.timestamp ?? Date.now() }].slice(-100),
     })),
 
-  clearDebugLog: () => set({ debugLog: [] }),
+  clearDebugLog: () => set({ debugLog: [], lastResults: new Map() }),
 
   setFailedAgentTypes: (types) =>
     set({

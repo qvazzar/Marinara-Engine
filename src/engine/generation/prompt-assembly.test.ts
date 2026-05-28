@@ -257,6 +257,110 @@ describe("assembleGenerationPrompt macro parity", () => {
     expect(prompt).not.toContain("{{charPostHistory}}");
   });
 
+  it("loads extension fields and dialogue examples into wrapped character markers", async () => {
+    const assembly = await assembleGenerationPrompt(
+      {
+        ...storageWithPreset(
+          { id: "preset", wrapFormat: "xml" },
+          [
+            section({
+              id: "character",
+              name: "Character Definitions",
+              role: "system",
+              markerConfig: { type: "character" },
+              sortOrder: 0,
+            }),
+          ],
+        ),
+        get: async <T,>(entity: string, id: string) => {
+          if (entity === "prompts" && id === "preset") return { id: "preset", wrapFormat: "xml" } as T;
+          if (entity === "characters" && id === "char-a") {
+            return {
+              id: "char-a",
+              data: {
+                name: "Aster",
+                description: "Base description.",
+                personality: "Sharp.",
+                first_mes: "Hello.",
+                mes_example: "{{char}}: Example line.",
+                system_prompt: "Keep secrets.",
+                post_history_instructions: "Remember the last clue.",
+                creator_notes: "Author note.",
+                extensions: {
+                  backstory: "Extension backstory.",
+                  appearance: "Extension appearance.",
+                  altDescriptions: [{ active: true, content: "Active description extension." }],
+                },
+              },
+            } as T;
+          }
+          return null;
+        },
+      },
+      {
+        chat: { id: "chat", mode: "roleplay", characterIds: ["char-a"] },
+        storedMessages: [],
+        connection: {},
+        request,
+        latestUserInput: "",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("<description>");
+    expect(prompt).toContain("Base description.");
+    expect(prompt).toContain("Active description extension.");
+    expect(prompt).toContain("<backstory>");
+    expect(prompt).toContain("Extension backstory.");
+    expect(prompt).toContain("<appearance>");
+    expect(prompt).toContain("Extension appearance.");
+    expect(prompt).toContain("<example_dialogue>");
+    expect(prompt).toContain("Aster: Example line.");
+  });
+
+  it("sends only the responding character card for individual roleplay groups", async () => {
+    const storage = {
+      ...storageWithPreset(
+        { id: "preset", wrapFormat: "xml" },
+        [
+          section({
+            id: "character",
+            name: "Character Definitions",
+            role: "system",
+            markerConfig: { type: "character" },
+            sortOrder: 0,
+          }),
+        ],
+      ),
+      get: async <T,>(entity: string, id: string) => {
+        if (entity === "prompts" && id === "preset") return { id: "preset", wrapFormat: "xml" } as T;
+        if (entity === "characters" && id === "char-a") {
+          return { id: "char-a", data: { name: "Aster", description: "ASTER CARD" } } as T;
+        }
+        if (entity === "characters" && id === "char-b") {
+          return { id: "char-b", data: { name: "Briar", description: "BRIAR CARD" } } as T;
+        }
+        return null;
+      },
+    };
+    const assembly = await assembleGenerationPrompt(storage, {
+      chat: {
+        id: "chat",
+        mode: "roleplay",
+        characterIds: ["char-a", "char-b"],
+        metadata: { groupChatMode: "individual" },
+      },
+      storedMessages: [],
+      connection: {},
+      request: { ...request, forCharacterId: "char-b" },
+      latestUserInput: "",
+    });
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("BRIAR CARD");
+    expect(prompt).not.toContain("ASTER CARD");
+  });
+
   it("uses selected preset wrap format and chat choice variables", async () => {
     const assembly = await assembleGenerationPrompt(
       storageWithPreset(

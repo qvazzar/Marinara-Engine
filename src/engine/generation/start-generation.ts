@@ -13,6 +13,7 @@ import { createGenerationAgentRuntime } from "./agent-runner";
 import { consumePendingConnectedInfluences, persistConnectedCommandTags } from "./connected-commands";
 import { fitMessagesToContextWindow } from "./context-window";
 import type { LLMToolCall } from "../generation-core/llm/base-provider";
+import { createInlineThinkingStreamParser } from "../generation-core/llm/inline-thinking";
 import {
   buildMainToolDefinitions,
   executeMainToolCall,
@@ -319,6 +320,133 @@ function mirrorSavedUserMessageToDiscord(args: {
   });
 }
 
+function imageExtension(mimeType: string): string {
+  const subtype = mimeType.split("/")[1]?.split(";")[0]?.toLowerCase() || "png";
+  if (subtype === "jpeg") return "jpg";
+  if (/^[a-z0-9]+$/.test(subtype)) return subtype;
+  return "png";
+}
+
+function illustrationSize(value: unknown): { width: number; height: number } {
+  const text = readString(value).trim();
+  const match = text.match(/^(\d{2,5})\s*x\s*(\d{2,5})$/i);
+  const width = match ? readNumber(match[1], 1024) : 1024;
+  const height = match ? readNumber(match[2], 768) : 768;
+  return {
+    width: Math.max(256, Math.min(2048, Math.trunc(width))),
+    height: Math.max(256, Math.min(2048, Math.trunc(height))),
+  };
+}
+
+function illustratorPromptData(result: AgentResult): { prompt: string; reason: string } | null {
+  if (result.agentType !== "illustrator" && result.type !== "image_prompt") return null;
+  if (!result.success) return null;
+  const data = parseRecord(result.data);
+  if (data.shouldGenerate !== true) return null;
+  const prompt = readString(data.prompt ?? data.imagePrompt ?? data.positivePrompt).trim();
+  if (!prompt) return null;
+  return {
+    prompt,
+    reason: readString(data.reason).trim(),
+  };
+}
+
+async function generateIllustrationAttachments(args: {
+  deps: GenerationEngineDeps;
+  chat: JsonRecord;
+  results: AgentResult[];
+  signal?: AbortSignal;
+}): Promise<{ attachments: JsonRecord[]; events: GenerationEvent[] }> {
+  const attachments: JsonRecord[] = [];
+  const events: GenerationEvent[] = [];
+  const meta = parseRecord(args.chat.metadata);
+  const connectionId = readString(meta.imageGenConnectionId).trim();
+  const prompts = args.results
+    .map(illustratorPromptData)
+    .filter((value): value is { prompt: string; reason: string } => !!value);
+  if (prompts.length === 0) return { attachments, events };
+
+  if (!connectionId) {
+    events.push({
+      type: "illustration_error",
+      data: { error: "No image generation connection configured for this chat." },
+    });
+    return { attachments, events };
+  }
+  if (!args.deps.integrations?.image) {
+    events.push({ type: "illustration_error", data: { error: "Image generation is not available." } });
+    return { attachments, events };
+  }
+
+  const size = illustrationSize(meta.illustrationResolution ?? meta.selfieResolution);
+  const negativePrompt = readString(meta.illustrationNegativePrompt ?? meta.selfieNegativePrompt).trim();
+  for (let index = 0; index < prompts.length; index += 1) {
+    throwIfAborted(args.signal);
+    const item = prompts[index]!;
+    try {
+      const image = await args.deps.integrations.image.generate<{
+        base64?: string;
+        mimeType?: string;
+        image?: string;
+        provider?: string;
+        model?: string;
+      }>({
+        connectionId,
+        kind: "illustration",
+        reviewId: `illustration:${readString(args.chat.id)}:${index}`,
+        reviewTitle: "Scene illustration",
+        prompt: item.prompt,
+        negativePrompt: negativePrompt || undefined,
+        width: size.width,
+        height: size.height,
+      });
+      throwIfAborted(args.signal);
+      const mimeType = image.mimeType || "image/png";
+      const base64 = readString(image.base64).trim();
+      const imageUrl = readString(image.image).trim() || (base64 ? `data:${mimeType};base64,${base64}` : "");
+      if (!imageUrl) throw new Error("Image provider returned no image data.");
+
+      const filename = `illustration_${Date.now()}_${index + 1}.${imageExtension(mimeType)}`;
+      const gallery = await args.deps.storage.create<JsonRecord>("gallery", {
+        chatId: readString(args.chat.id),
+        filePath: filename,
+        filename,
+        url: imageUrl,
+        prompt: item.prompt,
+        provider: image.provider ?? "image_generation",
+        model: image.model ?? null,
+        width: size.width,
+        height: size.height,
+      });
+      const attachment = {
+        type: "image",
+        url: imageUrl,
+        filename,
+        prompt: item.prompt,
+        galleryId: readString(gallery.id) || null,
+      };
+      attachments.push(attachment);
+      events.push({
+        type: "illustration",
+        data: {
+          imageUrl,
+          prompt: item.prompt,
+          reason: item.reason,
+          galleryId: readString(gallery.id) || null,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      events.push({
+        type: "illustration_error",
+        data: { error: error instanceof Error ? error.message : "Illustration generation failed." },
+      });
+    }
+  }
+
+  return { attachments, events };
+}
+
 async function mirrorSavedAssistantMessageToDiscord(args: {
   deps: GenerationEngineDeps;
   chat: JsonRecord;
@@ -590,6 +718,7 @@ async function saveAssistantMessage(args: {
   input: StartGenerationInput;
   connection: JsonRecord;
   content: string;
+  thinking?: string | null;
   agentResults: AgentResult[];
   noteCount: number;
   chatSummaryFingerprint: string | null;
@@ -599,6 +728,7 @@ async function saveAssistantMessage(args: {
   const regenerateMessageId = readString(args.input.regenerateMessageId).trim();
   const generationReplay = buildGenerationReplay(args.input);
   const content = collapseExcessBlankLines(args.content);
+  const thinking = collapseExcessBlankLines(readString(args.thinking).trim());
 
   if (args.input.impersonate === true) {
     if (regenerateMessageId) {
@@ -607,6 +737,7 @@ async function saveAssistantMessage(args: {
         chatId: args.input.chatId,
         messageId: regenerateMessageId,
         content,
+        thinking: thinking || undefined,
         generationReplay,
         chatSummaryFingerprint: args.chatSummaryFingerprint,
       });
@@ -618,6 +749,7 @@ async function saveAssistantMessage(args: {
       content,
       extra: {
         isGenerated: true,
+        ...(thinking ? { thinking } : {}),
         ...(generationReplay ? { generationReplay } : {}),
         chatSummaryFingerprint: args.chatSummaryFingerprint,
       },
@@ -630,6 +762,7 @@ async function saveAssistantMessage(args: {
       chatId: args.input.chatId,
       messageId: regenerateMessageId,
       content,
+      thinking: thinking || undefined,
       generationReplay,
       chatSummaryFingerprint: args.chatSummaryFingerprint,
     });
@@ -651,6 +784,7 @@ async function saveAssistantMessage(args: {
     content,
     extra: {
       ...(args.attachments?.length ? { attachments: args.attachments } : {}),
+      ...(thinking ? { thinking } : {}),
       ...(generationReplay ? { generationReplay } : {}),
       chatSummaryFingerprint: args.chatSummaryFingerprint,
     },
@@ -669,21 +803,25 @@ async function saveRegeneratedMessage(args: {
   chatId: string;
   messageId: string;
   content: string;
+  thinking?: string | null;
   generationReplay: GenerationReplay | null;
   chatSummaryFingerprint: string | null;
 }): Promise<unknown | null> {
   await args.storage.addChatMessageSwipe(args.chatId, args.messageId, collapseExcessBlankLines(args.content));
-  const extraPatch = generationReplayExtraPatch(args.generationReplay, args.chatSummaryFingerprint);
+  const extraPatch = generationReplayExtraPatch(args.generationReplay, args.chatSummaryFingerprint, args.thinking);
   return args.storage.patchChatMessageExtra(args.messageId, extraPatch);
 }
 
 function generationReplayExtraPatch(
   generationReplay: GenerationReplay | null,
   chatSummaryFingerprint: string | null,
+  thinking?: string | null,
 ): Record<string, unknown> {
   const extraPatch: Record<string, unknown> = {};
   if (generationReplay) extraPatch.generationReplay = generationReplay;
   extraPatch.chatSummaryFingerprint = chatSummaryFingerprint;
+  const trimmedThinking = collapseExcessBlankLines(readString(thinking).trim());
+  if (trimmedThinking) extraPatch.thinking = trimmedThinking;
   return extraPatch;
 }
 
@@ -1116,7 +1254,7 @@ export async function* startGeneration(
     const baseMessages: LlmMessage[] = [...prompt, generationGuide(input)].filter(
       (message): message is LlmMessage => !!message,
     );
-    const { content: streamedContent, usage } = yield* streamMainGenerationLoop({
+    const { content: streamedContent, thinking: streamedThinking, usage } = yield* streamMainGenerationLoop({
       deps,
       connection,
       input,
@@ -1140,6 +1278,16 @@ export async function* startGeneration(
     }
     agentEvents.length = 0;
     const allAgentResults = uniqueAgentResults([...(runtime?.preResults ?? []), ...emittedAgentResults]);
+    const hasIllustrationRequest = emittedAgentResults.some((result) => illustratorPromptData(result) !== null);
+    if (hasIllustrationRequest) yield { type: "phase", data: "Generating illustration..." };
+    const illustration = await generateIllustrationAttachments({
+      deps,
+      chat,
+      results: emittedAgentResults,
+      signal,
+    });
+    throwIfAborted(signal);
+    for (const event of illustration.events) yield event;
     content = await applyRuntimeRegexScripts(deps.storage, "ai_output", content);
     throwIfAborted(signal);
     const connected = await persistConnectedCommandTags(
@@ -1161,10 +1309,11 @@ export async function* startGeneration(
           input,
           connection,
           content: connected.displayContent,
+          thinking: streamedThinking,
           agentResults: allAgentResults,
           noteCount: connected.createdNotes.length + connected.executedCommands.length,
           chatSummaryFingerprint: assembly.chatSummaryFingerprint,
-          attachments: connected.assistantAttachments,
+          attachments: [...connected.assistantAttachments, ...illustration.attachments],
           usage,
         });
     if (saved && input.impersonate !== true) {
@@ -1221,7 +1370,7 @@ export async function* startGeneration(
   const baseMessagesDirect: LlmMessage[] = [...(prompt ?? []), generationGuide(input)].filter(
     (message): message is LlmMessage => !!message,
   );
-  const { content: streamedContentDirect, usage } = yield* streamMainGenerationLoop({
+  const { content: streamedContentDirect, thinking: streamedThinkingDirect, usage } = yield* streamMainGenerationLoop({
     deps,
     connection,
     input,
@@ -1255,6 +1404,7 @@ export async function* startGeneration(
         input,
         connection,
         content: connected.displayContent,
+        thinking: streamedThinkingDirect,
         agentResults: [],
         noteCount: connected.createdNotes.length + connected.executedCommands.length,
         chatSummaryFingerprint: assembly.chatSummaryFingerprint,
@@ -1348,9 +1498,10 @@ async function* streamMainGenerationLoop(args: {
   mainTools: MainToolDefinitions | null;
   toolRuntimeInput: ToolRuntimeInput;
   signal: AbortSignal | undefined;
-}): AsyncGenerator<GenerationEvent, { content: string; usage: unknown }> {
+}): AsyncGenerator<GenerationEvent, { content: string; thinking: string; usage: unknown }> {
   const { deps, connection, input, chat, parameters, baseMessages, mainTools, toolRuntimeInput, signal } = args;
   let content = "";
+  let thinking = "";
   const usages: unknown[] = [];
   const conversation: LlmMessage[] = [...baseMessages];
   let iteration = 0;
@@ -1360,6 +1511,19 @@ async function* streamMainGenerationLoop(args: {
     iteration++;
     const pendingToolCalls: LLMToolCall[] = [];
     let turnContent = "";
+    const thinkingParser = createInlineThinkingStreamParser();
+    const emitInlineParts = function* (text: string): Generator<GenerationEvent> {
+      for (const part of thinkingParser.push(text)) {
+        if (!part.text) continue;
+        if (part.type === "thinking") {
+          thinking += part.text;
+          yield { type: "thinking", data: part.text };
+        } else {
+          turnContent += part.text;
+          yield { type: "token", data: part.text };
+        }
+      }
+    };
 
     for await (const chunk of deps.llm.stream(
       {
@@ -1373,15 +1537,25 @@ async function* streamMainGenerationLoop(args: {
     )) {
       throwIfAborted(signal);
       if (chunk.type === "token" && chunk.text) {
-        turnContent += chunk.text;
-        yield { type: "token", data: chunk.text };
+        yield* emitInlineParts(chunk.text);
       } else if (chunk.type === "thinking" && chunk.text) {
+        thinking += chunk.text;
         yield { type: "thinking", data: chunk.text };
       } else if (chunk.type === "tool_call") {
         const normalized = normalizeToolCall(chunk.data);
         if (normalized) pendingToolCalls.push(normalized);
       } else if (chunk.type === "usage" && chunk.data != null) {
         usages.push(chunk.data);
+      }
+    }
+    for (const part of thinkingParser.flush()) {
+      if (!part.text) continue;
+      if (part.type === "thinking") {
+        thinking += part.text;
+        yield { type: "thinking", data: part.text };
+      } else {
+        turnContent += part.text;
+        yield { type: "token", data: part.text };
       }
     }
 
@@ -1436,7 +1610,7 @@ async function* streamMainGenerationLoop(args: {
     }
   }
 
-  return { content, usage: mergeUsages(usages) };
+  return { content, thinking, usage: mergeUsages(usages) };
 }
 
 /**

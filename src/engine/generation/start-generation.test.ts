@@ -231,6 +231,34 @@ describe("startGeneration chat message loading", () => {
     expect(createChatMessage.mock.calls.some(([, value]) => value.role === "assistant")).toBe(false);
   });
 
+  it("routes inline thinking tags into message metadata instead of visible content", async () => {
+    const { deps, createChatMessage } = generationDepsForChat();
+    deps.llm.stream = vi.fn(async function* () {
+      yield { type: "token" as const, text: "<thin" };
+      yield { type: "token" as const, text: "king>private reasoning</thinking>Visible reply." };
+    });
+
+    const events: Array<{ type?: string; data?: unknown }> = [];
+    for await (const event of startGeneration(
+      deps,
+      { chatId: "chat-1", userMessage: "hello", impersonateBlockAgents: true },
+    )) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "token").map((event) => event.data).join("")).toBe("Visible reply.");
+    expect(events.filter((event) => event.type === "thinking").map((event) => event.data).join("")).toBe(
+      "private reasoning",
+    );
+    const assistantCreate = createChatMessage.mock.calls.find(
+      (call) => (call[1] as { role?: unknown }).role === "assistant",
+    );
+    expect(assistantCreate?.[1]).toMatchObject({
+      content: "Visible reply.",
+      extra: { thinking: "private reasoning" },
+    });
+  });
+
   it("reuses the pre-commit messages and appends the saved user message for normal sends", async () => {
     const { deps, listChatMessages, streamedRequests } = generationDepsForChat();
 
