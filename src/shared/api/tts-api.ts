@@ -19,6 +19,21 @@ interface TtsSpeakResponse {
   error?: string;
 }
 
+function isTtsSpeakResponse(value: unknown): value is TtsSpeakResponse {
+  return typeof value === "object" && value !== null;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function ttsFailureMessage(response: unknown): string {
+  if (!isTtsSpeakResponse(response)) {
+    return `TTS request returned an invalid response: ${String(response)}`;
+  }
+  return optionalString(response.error) ?? optionalString(response.message) ?? "TTS request did not return audio.";
+}
+
 function base64ToBlob(base64: string, contentType: string): Blob {
   const binary = atob(base64);
   const chunks: ArrayBuffer[] = [];
@@ -45,10 +60,13 @@ export const ttsApi = {
     throwIfAborted(signal);
     const response = await invokeTauri<TtsSpeakResponse>("tts_speak", { input });
     throwIfAborted(signal);
-    const audio = response.audioBase64 ?? response.base64 ?? response.audio;
-    if (!audio) {
-      throw new Error(response.error ?? response.message ?? "TTS request did not return audio.");
+    if (!isTtsSpeakResponse(response)) {
+      throw new Error(ttsFailureMessage(response));
     }
-    return base64ToBlob(audio, response.contentType ?? response.mimeType ?? "audio/mpeg");
+    const audio = optionalString(response.audioBase64) ?? optionalString(response.base64) ?? optionalString(response.audio);
+    if (!audio) {
+      throw new Error(ttsFailureMessage(response));
+    }
+    return base64ToBlob(audio, optionalString(response.contentType) ?? optionalString(response.mimeType) ?? "audio/mpeg");
   },
 };
