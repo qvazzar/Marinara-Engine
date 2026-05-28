@@ -103,11 +103,9 @@ pub async fn stream_events(
     emit(json!({ "type": "start" }))?;
     if should_use_openai_responses(&request) || request.connection.provider == "openai_chatgpt" {
         stream_openai_responses(request, &mut emit).await?;
-    } else if request.connection.provider != "anthropic"
-        && request.connection.provider != "google"
-        && request.connection.provider != "google_vertex"
-        && request.connection.provider != "claude_subscription"
-    {
+    } else if request.connection.provider == "google" || request.connection.provider == "google_vertex" {
+        stream_google(request, &mut emit).await?;
+    } else if request.connection.provider != "anthropic" && request.connection.provider != "claude_subscription" {
         stream_openai_compatible(request, &mut emit).await?;
     } else {
         let result = complete_rich(request).await?;
@@ -1900,9 +1898,9 @@ fn google_vertex_endpoint(base: &str, model: &str, endpoint: &str) -> String {
     format!("{base}/publishers/google/models/{model}:{endpoint}")
 }
 
-async fn complete_google(request: LlmRequest) -> AppResult<String> {
+fn google_api_base(request: &LlmRequest) -> String {
     let base = base_url(&request.connection.provider, &request.connection.base_url);
-    let base = if request.connection.provider == "google"
+    if request.connection.provider == "google"
         && (base.ends_with("/v1beta") || base.ends_with("/v1"))
     {
         base
@@ -1910,18 +1908,31 @@ async fn complete_google(request: LlmRequest) -> AppResult<String> {
         format!("{base}/v1beta")
     } else {
         base
-    };
+    }
+}
+
+fn google_endpoint(request: &LlmRequest, endpoint: &str, streaming: bool) -> String {
+    let base = google_api_base(request);
     let url = if request.connection.provider == "google_vertex" {
-        google_vertex_endpoint(&base, &request.connection.model, "generateContent")
+        google_vertex_endpoint(&base, &request.connection.model, endpoint)
     } else {
         format!(
-            "{base}/models/{}:generateContent?key={}",
+            "{base}/models/{}:{}?key={}",
             request.connection.model,
+            endpoint,
             request.connection.api_key.trim()
         )
     };
-    ensure_url_allowed(&url)?;
-    let contents: Vec<Value> = request_messages(&request)
+    if streaming {
+        let separator = if url.contains('?') { '&' } else { '?' };
+        format!("{url}{separator}alt=sse")
+    } else {
+        url
+    }
+}
+
+fn google_contents(request: &LlmRequest) -> Vec<Value> {
+    request_messages(request)
         .into_iter()
         .filter(|message| message.role != "system")
         .map(|message| {
@@ -1941,34 +1952,63 @@ async fn complete_google(request: LlmRequest) -> AppResult<String> {
             }
             json!({ "role": role, "parts": parts })
         })
-        .collect();
+        .collect()
+}
+
+fn google_system_instruction(request: &LlmRequest) -> Option<Value> {
+    let system = request_messages(request)
+        .into_iter()
+        .filter(|message| message.role == "system")
+        .map(|message| message.content.trim().to_string())
+        .filter(|content| !content.is_empty())
+        .collect::<Vec<_>>();
+    (!system.is_empty()).then(|| json!({ "parts": [{ "text": system.join("\n\n") }] }))
+}
+
+fn google_generation_config(request: &LlmRequest) -> Value {
     let is_gemini_3 = is_gemini_3_model(&request.connection.model);
-    let mut body = json!({
-        "contents": contents,
-        "generationConfig": {
-            "maxOutputTokens": request_max_tokens(&request, 1024),
-        }
+    let mut generation_config = json!({
+        "maxOutputTokens": request_max_tokens(request, 1024),
     });
     if !is_gemini_3 {
-        body["generationConfig"]["temperature"] =
-            json!(temperature(&request.parameters).unwrap_or(0.7));
+        generation_config["temperature"] = json!(temperature(&request.parameters).unwrap_or(0.7));
         if let Some(top_p) = param_f64(&request.parameters, &["topP", "top_p"]) {
-            body["generationConfig"]["topP"] = json!(top_p);
+            generation_config["topP"] = json!(top_p);
         }
         if let Some(top_k) =
             param_i64(&request.parameters, &["topK", "top_k"]).filter(|value| *value > 0)
         {
-            body["generationConfig"]["topK"] = json!(top_k);
+            generation_config["topK"] = json!(top_k);
         }
     }
     if let Some(thinking_config) =
         google_thinking_config(&request.connection.model, &request.parameters)
     {
-        body["generationConfig"]["thinkingConfig"] = thinking_config;
+        generation_config["thinkingConfig"] = thinking_config;
     }
-    if let Some(stop) = stop_sequences(&request.parameters) {
-        body["generationConfig"]["stopSequences"] = json!(stop);
+    if !is_gemini_3 {
+        if let Some(stop) = stop_sequences(&request.parameters) {
+            generation_config["stopSequences"] = json!(stop);
+        }
     }
+    generation_config
+}
+
+fn google_generate_body(request: &LlmRequest) -> Value {
+    let mut body = json!({
+        "contents": google_contents(request),
+        "generationConfig": google_generation_config(request),
+    });
+    if let Some(system_instruction) = google_system_instruction(request) {
+        body["systemInstruction"] = system_instruction;
+    }
+    body
+}
+
+async fn complete_google(request: LlmRequest) -> AppResult<String> {
+    let url = google_endpoint(&request, "generateContent", false);
+    ensure_url_allowed(&url)?;
+    let body = google_generate_body(&request);
     log_prompt_connection_request("google.generateContent", &url, &request, &body);
     let response = reqwest::Client::new()
         .post(url)
@@ -1984,13 +2024,104 @@ async fn complete_google(request: LlmRequest) -> AppResult<String> {
             .and_then(|content| content.get("parts"))
             .and_then(Value::as_array)
             .and_then(|parts| {
-                parts
-                    .iter()
-                    .find_map(|part| part.get("text").and_then(Value::as_str))
+                parts.iter().find_map(|part| {
+                    if part.get("thought").and_then(Value::as_bool).unwrap_or(false) {
+                        None
+                    } else {
+                        part.get("text").and_then(Value::as_str)
+                    }
+                })
             })
             .map(ToOwned::to_owned)
     })
     .await
+}
+
+async fn stream_google(
+    request: LlmRequest,
+    emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
+) -> AppResult<()> {
+    let url = google_endpoint(&request, "streamGenerateContent", true);
+    ensure_url_allowed(&url)?;
+    let body = google_generate_body(&request);
+    log_prompt_connection_request("google.streamGenerateContent", &url, &request, &body);
+    let response = reqwest::Client::new()
+        .post(url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| AppError::new("llm_network_error", error.to_string()))?;
+    let status = response.status();
+    if !status.is_success() {
+        let error_body = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
+        return Err(provider_http_error(status, error_body));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| AppError::new("llm_stream_error", error.to_string()))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(index) = buffer.find("\n\n") {
+            let block = buffer[..index].to_string();
+            buffer = buffer[index + 2..].to_string();
+            process_google_sse_block(&block, emit)?;
+        }
+    }
+    if !buffer.trim().is_empty() {
+        process_google_sse_block(&buffer, emit)?;
+    }
+    Ok(())
+}
+
+fn process_google_sse_block(
+    block: &str,
+    emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
+) -> AppResult<()> {
+    let payload = block
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("data:"))
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if payload.is_empty() || payload == "[DONE]" {
+        return Ok(());
+    }
+    let value: Value = serde_json::from_str(&payload)
+        .map_err(|error| AppError::new("llm_stream_parse_error", error.to_string()))?;
+    if let Some(error) = value.get("error") {
+        return Err(AppError::with_details(
+            "llm_provider_error",
+            "Gemini API stream error",
+            error.clone(),
+        ));
+    }
+    if let Some(usage) = value.get("usageMetadata") {
+        emit(json!({ "type": "usage", "data": usage }))?;
+    }
+    let Some(candidates) = value.get("candidates").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for candidate in candidates {
+        let Some(parts) = candidate
+            .get("content")
+            .and_then(|content| content.get("parts"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for part in parts {
+            let Some(text) = part.get("text").and_then(Value::as_str).filter(|text| !text.is_empty()) else {
+                continue;
+            };
+            if part.get("thought").and_then(Value::as_bool).unwrap_or(false) {
+                emit(json!({ "type": "thinking", "text": text, "data": text }))?;
+            } else {
+                emit(json!({ "type": "token", "text": text, "data": text }))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn parse_json_response<F>(response: reqwest::Response, extract: F) -> AppResult<String>
@@ -2294,6 +2425,57 @@ mod tests {
             .expect("Gemini 3 reasoning effort should create thinking config");
         assert_eq!(config["thinkingLevel"], json!("medium"));
         assert_eq!(config["includeThoughts"], json!(true));
+    }
+
+    #[test]
+    fn gemini_35_flash_uses_gemini_3_rules() {
+        assert!(is_gemini_3_model("gemini-3.5-flash"));
+        assert!(is_gemini_3_model("google/gemini-3.5-flash"));
+    }
+
+    #[test]
+    fn google_gemini_3_generation_config_keeps_max_tokens_and_strips_sampling() {
+        let request = request_for(
+            "google",
+            "gemini-3.5-flash",
+            json!({
+                "maxTokens": 4096,
+                "reasoningEffort": "high",
+                "temperature": 0.8,
+                "topP": 0.9,
+                "topK": 40,
+                "stop": ["</END>"]
+            }),
+        );
+        let body = google_generate_body(&request);
+        let config = &body["generationConfig"];
+
+        assert_eq!(config["maxOutputTokens"], json!(4096));
+        assert_eq!(config["thinkingConfig"]["thinkingLevel"], json!("high"));
+        assert_eq!(config["thinkingConfig"]["includeThoughts"], json!(true));
+        assert!(config.get("temperature").is_none());
+        assert!(config.get("topP").is_none());
+        assert!(config.get("topK").is_none());
+        assert!(config.get("stopSequences").is_none());
+    }
+
+    #[test]
+    fn google_stream_sse_emits_thinking_tokens_and_usage() {
+        let mut emitted = Vec::new();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        process_google_sse_block(
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"pondering","thought":true},{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}"#,
+            &mut emit,
+        )
+        .expect("Gemini stream block should parse");
+
+        assert_eq!(emitted[0]["type"], json!("usage"));
+        assert_eq!(emitted[1], json!({ "type": "thinking", "text": "pondering", "data": "pondering" }));
+        assert_eq!(emitted[2], json!({ "type": "token", "text": "hello", "data": "hello" }));
     }
 
     #[test]

@@ -155,6 +155,8 @@ export const OPENAI_CHATGPT_MODELS: KnownModel[] = [
 // ── Google AI Studio (from #model_google_select) ──
 
 export const GOOGLE_MODELS: KnownModel[] = [
+  // Gemini 3.5
+  { id: "gemini-3.5-flash", name: "gemini-3.5-flash", context: 1000000, maxOutput: 65536 },
   // Gemini 3.1
   { id: "gemini-3.1-pro-preview", name: "gemini-3.1-pro-preview", context: 1000000, maxOutput: 65536 },
   { id: "gemini-3.1-flash-image-preview", name: "gemini-3.1-flash-image-preview", context: 65535, maxOutput: 8192 },
