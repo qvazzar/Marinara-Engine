@@ -784,11 +784,13 @@ export function useUpdateMessage(chatId: string | null) {
   return useMutation({
     mutationFn: ({ messageId, content }: { messageId: string; content: string }) =>
       storageApi.updateChatMessage<Message>(messageId, { content }),
-    onMutate: async ({ messageId, content }) => {
+    onMutate: ({ messageId, content }) => {
       if (!chatId) return;
-      // Cancel in-flight refetches (e.g. from generation events) so they
-      // don't overwrite the optimistic value with stale stored data.
-      await qc.cancelQueries({ queryKey: chatKeys.messages(chatId) });
+      // Do not block the optimistic edit on slow in-flight message refetches.
+      // The recent edit overlay below keeps stale refetches from flashing over it.
+      void qc
+        .cancelQueries({ queryKey: chatKeys.messages(chatId) })
+        .catch((error) => console.warn("Failed to cancel stale message refetch before edit.", error));
       const previous = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId));
       const previousMessage = findCachedMessage(previous, messageId);
       rememberRecentMessageContentEdit(chatId, messageId, content, previousMessage?.activeSwipeIndex);

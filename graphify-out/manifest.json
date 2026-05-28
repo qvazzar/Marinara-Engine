@@ -990,8 +990,8 @@
     "semantic_hash": ""
   },
   "src/features/modes/shared/chat-ui/hooks/use-chat-timeline-actions.ts": {
-    "mtime": 1779961269.2024815,
-    "ast_hash": "c0558d8841e96031316f3066a039baad",
+    "mtime": 1779965751.7634614,
+    "ast_hash": "2770d7e325df290c39ff314e9e5f87b4",
     "semantic_hash": ""
   },
   "src/features/modes/shared/chat-ui/hooks/use-chat-surface-data.ts": {
@@ -1960,8 +1960,8 @@
     "semantic_hash": ""
   },
   "src/features/catalog/chats/hooks/use-chats.ts": {
-    "mtime": 1779961269.1963432,
-    "ast_hash": "d2dc587792b39293acf151021d008b8f",
+    "mtime": 1779965751.7618346,
+    "ast_hash": "4f63d61036fdd1d66688156180ddabdd",
     "semantic_hash": ""
   },
   "src/features/catalog/chats/hooks/use-chat-folders.ts": {

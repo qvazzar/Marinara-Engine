@@ -453,7 +453,17 @@ export function useChatTimelineActions({
   );
 
   const handleEdit = useCallback(
-    (messageId: string, content: string) => updateMessage.mutateAsync({ messageId, content }).then(() => undefined),
+    (messageId: string, content: string) => {
+      updateMessage.mutate(
+        { messageId, content },
+        {
+          onError: (error) => {
+            toast.error(error instanceof Error ? error.message : "Could not save edit.");
+          },
+        },
+      );
+      return Promise.resolve();
+    },
     [updateMessage],
   );
 
