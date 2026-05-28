@@ -59,6 +59,7 @@ type QueryClient = ReturnType<typeof useQueryClient>;
 type GenerationStreamFactory = (args: GenerateArgs, signal: AbortSignal) => AsyncGenerator<StreamEvent>;
 const HAPTIC_COMMAND_INTERVAL_MS = 225;
 const STREAM_REVEAL_INTERVAL_MS = 24;
+const scheduledChatRefreshTimers = new Map<string, number>();
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
@@ -159,6 +160,93 @@ function insertOptimisticUserMessage(queryClient: QueryClient, args: GenerateArg
     pages[0] = sortMessagesByCreatedAt([...(pages[0] ?? []), optimistic]);
     return { ...old, pages };
   });
+}
+
+function savedMessagePayload(value: unknown, chatId: string): Message | null {
+  const record = parseMaybeRecord(value);
+  const id = readString(record.id).trim();
+  const role = readString(record.role).trim();
+  const content = readString(record.content);
+  const messageChatId = readString(record.chatId).trim() || chatId;
+  if (!id || messageChatId !== chatId || !role) return null;
+  return {
+    ...(record as unknown as Message),
+    id,
+    chatId: messageChatId,
+    role: role as Message["role"],
+    content,
+    characterId: readString(record.characterId).trim() || null,
+    activeSwipeIndex:
+      typeof record.activeSwipeIndex === "number" && Number.isFinite(record.activeSwipeIndex)
+        ? record.activeSwipeIndex
+        : 0,
+    createdAt: readString(record.createdAt).trim() || new Date().toISOString(),
+    extra: (record.extra ?? {}) as Message["extra"],
+  };
+}
+
+function isOptimisticMatch(message: Message, saved: Message): boolean {
+  return (
+    readString(message.id).startsWith("__optimistic_") &&
+    message.role === saved.role &&
+    readString(message.content).trim() === readString(saved.content).trim()
+  );
+}
+
+function upsertCachedMessage(
+  queryClient: QueryClient,
+  chatId: string,
+  value: unknown,
+  options: { replaceMessageId?: string | null } = {},
+): boolean {
+  const saved = savedMessagePayload(value, chatId);
+  if (!saved) return false;
+  const replaceMessageId = readString(options.replaceMessageId).trim();
+  queryClient.setQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId), (old) => {
+    if (!old?.pages?.length) return old;
+    let found = false;
+    const pages = old.pages.map((page) =>
+      page.map((message) => {
+        const shouldReplace =
+          message.id === saved.id ||
+          (replaceMessageId && message.id === replaceMessageId) ||
+          isOptimisticMatch(message, saved);
+        if (shouldReplace) {
+          found = true;
+          return { ...message, ...saved };
+        }
+        return message;
+      }),
+    );
+    if (!found) {
+      pages[0] = sortMessagesByCreatedAt([...(pages[0] ?? []), saved]);
+    }
+    return { ...old, pages };
+  });
+  return true;
+}
+
+function runDeferredGenerationWork(label: string, task: () => Promise<void> | void): void {
+  window.setTimeout(() => {
+    void Promise.resolve()
+      .then(task)
+      .catch((error) => console.warn(`[generation] ${label} failed`, error));
+  }, 0);
+}
+
+function scheduleChatQueryRefresh(queryClient: QueryClient, chatId: string): void {
+  const previous = scheduledChatRefreshTimers.get(chatId);
+  if (previous) window.clearTimeout(previous);
+  const timer = window.setTimeout(() => {
+    scheduledChatRefreshTimers.delete(chatId);
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: chatKeys.messages(chatId) }),
+      queryClient.invalidateQueries({ queryKey: chatKeys.messageCount(chatId) }),
+      queryClient.invalidateQueries({ queryKey: chatKeys.detail(chatId) }),
+      queryClient.invalidateQueries({ queryKey: chatKeys.list() }),
+    ]).catch((error) => console.warn("[generation] chat cache refresh failed", error));
+  }, 75);
+  scheduledChatRefreshTimers.set(chatId, timer);
 }
 
 function parseMaybeRecord(value: unknown): Record<string, unknown> {
@@ -928,41 +1016,46 @@ export async function runGenerationWithUi(
         case "message":
         case "user_message":
           if (event.data && typeof event.data === "object") {
-            await queryClient.invalidateQueries({ queryKey: ["chats"] });
+            upsertCachedMessage(queryClient, chatId, event.data);
+            scheduleChatQueryRefresh(queryClient, chatId);
           }
           break;
         case "assistant_message":
           if (event.data && typeof event.data === "object") {
             await flushVisibleStreamText();
-            await queryClient.invalidateQueries({ queryKey: ["chats"] });
-            await refreshGameStateFromStorage(chatId, trackerTargetFromMessagePayload(event.data));
+            upsertCachedMessage(queryClient, chatId, event.data, { replaceMessageId: regenerateMessageId });
+            scheduleChatQueryRefresh(queryClient, chatId);
+            const trackerTarget = trackerTargetFromMessagePayload(event.data);
+            runDeferredGenerationWork("game state refresh", () => refreshGameStateFromStorage(chatId, trackerTarget));
           }
           break;
         case "agent_result":
-          await applyAgentResultEffects(queryClient, chatId, event.data);
+          runDeferredGenerationWork("agent result effects", () => applyAgentResultEffects(queryClient, chatId, event.data));
           break;
         case "cross_post": {
           const data = parseMaybeRecord(event.data);
           const target = readString(data.targetChatName).trim();
           toast(target ? `Message moved to ${target}.` : "Message moved to another chat.");
-          await queryClient.invalidateQueries({ queryKey: ["chats"] });
+          scheduleChatQueryRefresh(queryClient, chatId);
           break;
         }
         case "assistant_action":
           applyAssistantAction(event.data);
-          await queryClient.invalidateQueries({ queryKey: ["chats"] });
+          scheduleChatQueryRefresh(queryClient, chatId);
           break;
         case "ooc_posted": {
           const data = parseMaybeRecord(event.data);
           const count = typeof data.count === "number" ? data.count : 1;
           toast(`${count} message${count === 1 ? "" : "s"} posted.`);
-          await queryClient.invalidateQueries({ queryKey: ["chats"] });
+          scheduleChatQueryRefresh(queryClient, chatId);
           break;
         }
         case "selfie": {
           toast("Selfie generated.");
-          await queryClient.invalidateQueries({ queryKey: ["chats"] });
-          await queryClient.invalidateQueries({ queryKey: ["gallery", "images", chatId] });
+          scheduleChatQueryRefresh(queryClient, chatId);
+          runDeferredGenerationWork("gallery refresh", () =>
+            queryClient.invalidateQueries({ queryKey: ["gallery", "images", chatId] }),
+          );
           break;
         }
         case "selfie_error": {
@@ -972,7 +1065,9 @@ export async function runGenerationWithUi(
         }
         case "illustration": {
           toast("Illustration generated.");
-          await queryClient.invalidateQueries({ queryKey: ["gallery", "images", chatId] });
+          runDeferredGenerationWork("gallery refresh", () =>
+            queryClient.invalidateQueries({ queryKey: ["gallery", "images", chatId] }),
+          );
           break;
         }
         case "illustration_error": {
@@ -985,7 +1080,7 @@ export async function runGenerationWithUi(
           const sceneChatId = readString(data.chatId).trim();
           if (sceneChatId) useChatStore.getState().setActiveChatId(sceneChatId);
           toast("Scene created.");
-          await queryClient.invalidateQueries({ queryKey: ["chats"] });
+          scheduleChatQueryRefresh(queryClient, sceneChatId || chatId);
           break;
         }
         case "done":
@@ -994,7 +1089,7 @@ export async function runGenerationWithUi(
       }
     }
     await flushVisibleStreamText();
-    await queryClient.invalidateQueries({ queryKey: ["chats"] });
+    scheduleChatQueryRefresh(queryClient, chatId);
     return received.length > 0;
   } catch (error) {
     if (!isAbortError(error)) {
@@ -1015,7 +1110,7 @@ export async function runGenerationWithUi(
     finalChatStore.setTypingCharacterName(null);
     finalChatStore.setStreamingCharacterId(null);
     useAgentStore.getState().setProcessing(false);
-    await queryClient.invalidateQueries({ queryKey: ["chats"] });
+    scheduleChatQueryRefresh(queryClient, chatId);
   }
 }
 
@@ -1141,11 +1236,13 @@ export function useGenerate() {
           { chatId, agentTypes, options: { ...(options ?? {}), bypassActivation: options?.bypassActivation ?? true } },
         );
         for (const result of results) {
-          await applyAgentResultEffects(queryClient, chatId, result);
+          runDeferredGenerationWork("agent retry result effects", () => applyAgentResultEffects(queryClient, chatId, result));
         }
-        await refreshGameStateFromStorage(chatId);
-        await queryClient.invalidateQueries({ queryKey: ["agents"] });
-        await queryClient.invalidateQueries({ queryKey: ["chats"] });
+        runDeferredGenerationWork("agent retry refresh", async () => {
+          await refreshGameStateFromStorage(chatId);
+          await queryClient.invalidateQueries({ queryKey: ["agents"] });
+        });
+        scheduleChatQueryRefresh(queryClient, chatId);
       } catch (error) {
         toast.error(errorMessage(error));
         throw error;

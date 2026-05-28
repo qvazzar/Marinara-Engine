@@ -2048,10 +2048,6 @@ fn google_generate_body(request: &LlmRequest) -> Value {
     body
 }
 
-fn should_fallback_google_stream_status(status: reqwest::StatusCode) -> bool {
-    status.is_server_error()
-}
-
 async fn complete_google(request: LlmRequest) -> AppResult<String> {
     let url = google_endpoint(&request, "generateContent", false);
     ensure_url_allowed(&url)?;
@@ -2104,13 +2100,6 @@ async fn stream_google(
         .map_err(|error| AppError::new("llm_network_error", error.to_string()))?;
     let status = response.status();
     if !status.is_success() {
-        if should_fallback_google_stream_status(status) {
-            let content = complete_google(request).await?;
-            if !content.is_empty() {
-                emit(json!({ "type": "token", "text": content, "data": content }))?;
-            }
-            return Ok(());
-        }
         let error_body = read_error_response_details(response).await?;
         return Err(provider_http_error(status, error_body));
     }
@@ -2505,16 +2494,13 @@ mod tests {
     }
 
     #[test]
-    fn google_stream_fallback_is_limited_to_server_errors() {
-        assert!(should_fallback_google_stream_status(
-            reqwest::StatusCode::from_u16(530).expect("530 should be a valid status")
-        ));
-        assert!(should_fallback_google_stream_status(
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR
-        ));
-        assert!(!should_fallback_google_stream_status(
-            reqwest::StatusCode::UNAUTHORIZED
-        ));
+    fn google_stream_endpoint_uses_sse_stream_generate_content() {
+        let request = request_for("google", "gemini-3.5-flash", json!({}));
+
+        assert_eq!(
+            google_endpoint(&request, "streamGenerateContent", true),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?key=&alt=sse"
+        );
     }
 
     #[test]

@@ -180,8 +180,8 @@
     "semantic_hash": ""
   },
   "src-tauri/crates/llm/src/lib.rs": {
-    "mtime": 1779968245.821077,
-    "ast_hash": "8627440068ad01073d57579d0afe9fd9",
+    "mtime": 1779984295.7290561,
+    "ast_hash": "2d5e4c5d77e8ce410952a2f4defbc47d",
     "semantic_hash": ""
   },
   "src-tauri/crates/core/src/lib.rs": {
@@ -2450,8 +2450,8 @@
     "semantic_hash": ""
   },
   "src/features/runtime/generation/hooks/use-generate.ts": {
-    "mtime": 1779971558.1761289,
-    "ast_hash": "41760f81985354890995e67fc4339a54",
+    "mtime": 1779984675.0680475,
+    "ast_hash": "7cc32dd812bbd460b4a276ceeb1b1d42",
     "semantic_hash": ""
   },
   "src/features/runtime/world-state/types.ts": {
