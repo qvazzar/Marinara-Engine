@@ -496,10 +496,8 @@ export const ChatInput = memo(function ChatInput({
         // Retry (last msg is user) or Continue (last msg is assistant, roleplay mode)
         try {
           await generate({ chatId: activeChatId, connectionId: null });
-        } catch (error) {
-          if (isAbortError(error)) return;
-          const msg = error instanceof Error ? error.message : "Generation failed";
-          toast.error(msg);
+        } catch {
+          // Generation failures are reported by the generation hook; aborts are an expected Stop path.
         }
       }
       return;
@@ -639,8 +637,6 @@ export const ChatInput = memo(function ChatInput({
       });
     } catch (error) {
       if (isAbortError(error)) return;
-      const msg = error instanceof Error ? error.message : "Generation failed";
-      toast.error(msg);
       console.error("Send failed:", error);
     }
   }, [
@@ -1084,8 +1080,7 @@ export const ChatInput = memo(function ChatInput({
         );
       } catch (error) {
         if (isAbortError(error)) return;
-        const msg = error instanceof Error ? error.message : "Generation failed";
-        toast.error(msg);
+        console.error("Character response failed:", error);
       }
     },
     [activeChatId, isStreaming, generate, hasInput, currentInput, guideGenerations],

@@ -70,29 +70,11 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
-async function persistGenerationFailureNotice(
-  queryClient: QueryClient,
-  chatId: string,
-  message: string,
-): Promise<void> {
-  const content = `Generation failed: ${message || "Unknown provider error"}\n\nYour message was kept. Fix the connection or provider issue, then retry.`;
-  try {
-    await storageApi.createChatMessage<Message>(chatId, {
-      role: "system",
-      content,
-      characterId: null,
-      extra: {
-        hiddenFromAi: true,
-        hiddenFromAI: true,
-        generationError: true,
-      },
-    });
-    await queryClient.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
-    await queryClient.invalidateQueries({ queryKey: chatKeys.messageCount(chatId) });
-    await queryClient.invalidateQueries({ queryKey: chatKeys.list() });
-  } catch {
-    // The toast still carries the provider error if persistence itself fails.
-  }
+function showGenerationFailureToast(message: string): void {
+  toast.error(message || "Generation failed", {
+    description: "Your message was kept. Fix the connection or provider issue, then retry.",
+    duration: 10_000,
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -979,8 +961,7 @@ export async function runGenerationWithUi(
   } catch (error) {
     if (!isAbortError(error)) {
       const message = errorMessage(error);
-      toast.error(message);
-      await persistGenerationFailureNotice(queryClient, chatId, message);
+      showGenerationFailureToast(message);
     }
     throw error;
   } finally {

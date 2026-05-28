@@ -935,8 +935,8 @@
     "semantic_hash": ""
   },
   "src/features/modes/shared/chat-ui/components/ChatInput.tsx": {
-    "mtime": 1779961269.2003086,
-    "ast_hash": "ca3bb8c89105950669615495e75743a0",
+    "mtime": 1779968721.5836012,
+    "ast_hash": "7607ffff4fea472651f6e14425ea04e0",
     "semantic_hash": ""
   },
   "src/features/modes/shared/chat-ui/components/PeekPromptModal.tsx": {
@@ -995,8 +995,8 @@
     "semantic_hash": ""
   },
   "src/features/modes/shared/chat-ui/hooks/use-chat-surface-data.ts": {
-    "mtime": 1779908734.0362144,
-    "ast_hash": "6040de1ac81c4cdc8f86b66a3be8cd17",
+    "mtime": 1779968745.492184,
+    "ast_hash": "515e131d724e6a1fb57333b6bc7aea99",
     "semantic_hash": ""
   },
   "src/features/modes/shared/chat-ui/hooks/use-streaming-tts.test.tsx": {
@@ -2415,8 +2415,8 @@
     "semantic_hash": ""
   },
   "src/features/runtime/generation/hooks/use-generate.ts": {
-    "mtime": 1779961269.203726,
-    "ast_hash": "dda7b5188a9ecaa1921e31ec64ae3c04",
+    "mtime": 1779968688.7890277,
+    "ast_hash": "ab3986cb665216eb1f6961f47b9ffb4d",
     "semantic_hash": ""
   },
   "src/features/runtime/world-state/types.ts": {
@@ -2545,8 +2545,8 @@
     "semantic_hash": ""
   },
   "src/shared/components/ui/ChibiProfessorMariEasterEgg.tsx": {
-    "mtime": 1779867918.3566964,
-    "ast_hash": "fe734140c58858fff3f890b10f7846a1",
+    "mtime": 1779968731.2236164,
+    "ast_hash": "96dd67f9daa0ceeb25868098d8dd3bd5",
     "semantic_hash": ""
   },
   "src/shared/components/ui/ExportFormatDialog.tsx": {

@@ -76,6 +76,23 @@ function extractMessageCharacterIds(messages: MessageWithSwipes[] | undefined): 
   return normalizeIds(messages.map((message) => message.characterId));
 }
 
+function parseMessageExtra(extra: unknown): Record<string, unknown> {
+  if (typeof extra === "string") {
+    try {
+      const parsed = JSON.parse(extra);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return extra && typeof extra === "object" && !Array.isArray(extra) ? (extra as Record<string, unknown>) : {};
+}
+
+function isLegacyGenerationFailureNotice(message: MessageWithSwipes): boolean {
+  const extra = parseMessageExtra(message.extra);
+  return extra.generationError === true && message.role === "system";
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
 }
@@ -172,7 +189,10 @@ export function useChatSurfaceData({
       : null,
   );
   const messages = useMemo<MessageWithSwipes[] | undefined>(
-    () => (msgData ? [...msgData.pages].reverse().flat() : undefined),
+    () =>
+      msgData
+        ? [...msgData.pages].reverse().flat().filter((message) => !isLegacyGenerationFailureNotice(message))
+        : undefined,
     [msgData],
   );
   const loadedMessageCount = messages?.length ?? 0;
