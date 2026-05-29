@@ -37,12 +37,15 @@ export function AgentDebugPanel() {
   const toolEntries = groupedEntries.tools;
   const detailEntries = groupedEntries.details;
 
+  // Dock bottom-right to clear the main editor content pane. Use a tall bottom
+  // offset so this sits above the AgentThoughtBubbles overlay (bottom-20 right-4)
+  // and the two bottom-right panels do not overlap.
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 20 }}
-      className="fixed bottom-20 left-4 z-50 w-80 max-w-[calc(100vw-2rem)]"
+      className="fixed bottom-96 right-4 z-50 w-80 max-w-[calc(100vw-2rem)]"
     >
       {/* Header */}
       <div

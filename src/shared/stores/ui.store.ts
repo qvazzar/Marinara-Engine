@@ -23,6 +23,7 @@ import {
   clampImageDimension,
   mergeLearnedGameSetupOptions,
   mobilePanelClosePatch,
+  mobilePanelReopenPatch,
   normalizeLearnedGameSetupOption,
   normalizeRememberedGameSetupText,
   normalizeSummaryPopoverSettings,
@@ -304,7 +305,10 @@ export const useUIStore = create<UIState>()(
       closeConnectionDetail: () => set({ connectionDetailId: null, editorDirty: false }),
       openAgentDetail: (agentType) =>
         set(openDetailRouteState({ agentDetailId: agentType, characterLibraryOpen: false })),
-      closeAgentDetail: () => set({ agentDetailId: null, editorDirty: false }),
+      closeAgentDetail: () =>
+        // On narrow viewports opening the editor closed the catalog panel; reopen it so
+        // Back returns to the Agents list instead of falling through to chat.
+        set({ agentDetailId: null, editorDirty: false, ...mobilePanelReopenPatch() }),
       openToolDetail: (id) =>
         set(openDetailRouteState({ toolDetailId: id, characterLibraryOpen: false })),
       closeToolDetail: () => set({ toolDetailId: null, editorDirty: false }),

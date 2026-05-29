@@ -128,7 +128,8 @@ export function RegexScriptEditor() {
     if (!regexDetailId) return;
     if (dbRow) {
       setLocalName(dbRow.name);
-      setLocalEnabled(dbRow.enabled === "true");
+      // Stored as a boolean; tolerate the legacy string form too.
+      setLocalEnabled(dbRow.enabled === true || dbRow.enabled === "true" || dbRow.enabled === "1");
       setLocalFindRegex(dbRow.findRegex);
       setLocalReplaceString(dbRow.replaceString);
       try {
@@ -146,7 +147,7 @@ export function RegexScriptEditor() {
         setLocalPlacement(["ai_output"]);
       }
       setLocalFlags(dbRow.flags);
-      setLocalPromptOnly(dbRow.promptOnly === "true");
+      setLocalPromptOnly(dbRow.promptOnly === true || dbRow.promptOnly === "true" || dbRow.promptOnly === "1");
       setLocalOrder(dbRow.order);
       setLocalMinDepth(dbRow.minDepth);
       setLocalMaxDepth(dbRow.maxDepth);

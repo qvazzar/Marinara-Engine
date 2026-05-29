@@ -91,6 +91,7 @@ import { SpriteFrameEditor } from "../../../../shared/components/ui/SpriteFrameE
 import { SpriteWandCleanupEditor } from "../../../../shared/components/ui/sprite-wand-cleanup/SpriteWandCleanupEditor";
 import { ExportFormatDialog, type ExportFormatChoice } from "../../../../shared/components/ui/ExportFormatDialog";
 import type { CharacterCardVersion, CharacterData, RPGStatsConfig } from "../../../../engine/contracts/types/character";
+import { characterDataSchema, characterExtensionsSchema } from "../../../../engine/contracts/schemas/character.schema";
 import {
   parseTrackerCardColorConfig,
   serializeTrackerCardColorConfig,
@@ -228,7 +229,29 @@ export function CharacterEditor() {
 
     loadedCharacterIdRef.current = char.id;
 
-    setFormData(char.data ?? null);
+    // Normalize raw storage data through the engine schema before the editor
+    // reads it. The schema applies the same defaults used on write (notably
+    // extensions.default({})), so corrupt or partial cards can't crash the
+    // many bare formData.extensions.* reads downstream. On parse failure (e.g.
+    // a card missing the required name), fall back to the raw data but still
+    // guarantee extensions exists.
+    if (char.data) {
+      const parsed = characterDataSchema.safeParse(char.data);
+      if (parsed.success) {
+        setFormData(parsed.data as CharacterData);
+      } else {
+        // Card failed top-level validation (e.g. missing name). Still normalize
+        // extensions through its own schema so nested defaults (talkativeness,
+        // fav, ...) exist and the editor's bare reads don't render NaN/undefined.
+        const ext = characterExtensionsSchema.safeParse(char.data.extensions ?? {});
+        setFormData({
+          ...char.data,
+          extensions: (ext.success ? ext.data : {}) as CharacterData["extensions"],
+        });
+      }
+    } else {
+      setFormData(null);
+    }
     setCharacterComment(char.comment ?? "");
     setAvatarPreview(char.avatarPath);
     setDirtyState(false);

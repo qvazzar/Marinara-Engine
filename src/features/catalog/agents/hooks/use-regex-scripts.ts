@@ -12,13 +12,15 @@ const regexKeys = {
 export interface RegexScriptRow {
   id: string;
   name: string;
-  enabled: string;
+  // Stored verbatim as a JSON boolean (matches the engine contract and seed_defaults);
+  // legacy rows may still carry the string form, so reads must tolerate both.
+  enabled: boolean | string;
   findRegex: string;
   replaceString: string;
   trimStrings: string[];
   placement: string[];
   flags: string;
-  promptOnly: string;
+  promptOnly: boolean | string;
   order: number;
   minDepth: number | null;
   maxDepth: number | null;

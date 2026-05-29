@@ -246,8 +246,18 @@ export const CLEARED_DETAIL_IDS = {
   regexDetailId: null,
 } satisfies FullPageRoutePatch;
 
+// Narrow viewports overlay the right catalog panel over chat, so opening a full-page
+// editor must close it (and Back must reopen it). Keep the width check in one place.
+function isMobilePanelViewport(): boolean {
+  return typeof window !== "undefined" && window.innerWidth < 768;
+}
+
 export function mobilePanelClosePatch(): FullPageRoutePatch {
-  return typeof window !== "undefined" && window.innerWidth < 768 ? { rightPanelOpen: false } : {};
+  return isMobilePanelViewport() ? { rightPanelOpen: false } : {};
+}
+
+export function mobilePanelReopenPatch(): FullPageRoutePatch {
+  return isMobilePanelViewport() ? { rightPanelOpen: true } : {};
 }
 
 export function openDetailRouteState(patch: FullPageRoutePatch): FullPageRoutePatch {
