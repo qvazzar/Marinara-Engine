@@ -1082,9 +1082,10 @@ const datacatProvider: ProviderConfig = {
     const id = (card._raw as any)?.characterId || (card._raw as any)?.character_id || card.id;
     if (!id) return null;
     // Prefer the download endpoint for V2-shaped data, fall back to the character endpoint.
-    // The download endpoint legitimately 404s for cards that have no V2 download, so a failure
-    // there falls through to the character endpoint. The character endpoint is authoritative —
-    // its transport/API errors throw rather than being swallowed into a benign empty result.
+    // The download endpoint is optional and best-effort (commonly a 404 for cards with no V2
+    // download), so ANY failure here falls through to the character endpoint. The character
+    // endpoint is authoritative — its transport/API errors throw rather than being swallowed
+    // into a benign empty result.
     try {
       const dl = await botBrowserGet<any>(`datacat/download/${encodeURIComponent(id)}`);
       const d = dl?.data;
@@ -1100,7 +1101,7 @@ const datacatProvider: ProviderConfig = {
         };
       }
     } catch {
-      /* download endpoint absent for this card — fall through to the character endpoint */
+      /* optional download endpoint failed (commonly a 404); fall through to the authoritative character endpoint */
     }
     const data = await botBrowserGet<any>(`datacat/character/${encodeURIComponent(id)}`);
     if (!data) return null;
@@ -1426,7 +1427,11 @@ export function BotBrowserView() {
         });
         const file = new File([blob], "character.png", { type: "image/png" });
         const { json, imageDataUrl } = await parsePngCharacterCard(file);
-        const cardDetail = sourceId === "chub" ? (detail ?? (await provider.fetchDetail(card))) : detail;
+        // Import-time enrichment re-fetch is optional: the authoritative PNG is
+        // already downloaded and parsed, so a transient detail failure must not
+        // abort the import (the detail-view path surfaces failures; this one degrades).
+        const cardDetail =
+          sourceId === "chub" ? (detail ?? (await provider.fetchDetail(card).catch(() => null))) : detail;
         const importJson = attachEmbeddedLorebookToCharacterJson(
           json as Record<string, unknown>,
           cardDetail?.embeddedLorebook,
@@ -1449,8 +1454,10 @@ export function BotBrowserView() {
           if (data.lorebook) qc.invalidateQueries({ queryKey: lorebookKeys.all });
         } else throw new Error(data.error ?? "Import failed");
       } else {
+        // Optional enrichment re-fetch: degrade to the search-result-backed card
+        // on failure rather than aborting the import (see the chub branch above).
         let cardDetail = detail;
-        if (!cardDetail) cardDetail = await provider.fetchDetail(card);
+        if (!cardDetail) cardDetail = await provider.fetchDetail(card).catch(() => null);
         const importEmbeddedLorebook = confirmEmbeddedLorebookImport(card.name, cardDetail?.embeddedLorebook);
         // For extracted JanitorAI data, description contains the full personality definition
         const descriptionText = cardDetail?.description || "";
