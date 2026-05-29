@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // React Query: Character, Group & Persona hooks
 // ──────────────────────────────────────────────
+import { useMemo } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { characterKeys, spriteKeys } from "../query-keys";
 import {
@@ -31,6 +32,8 @@ export type CharacterSummary = {
   };
   comment?: string | null;
   avatarPath?: string | null;
+  avatarFilePath?: string | null;
+  avatarFilename?: string | null;
 };
 
 export type PersonaSummary = {
@@ -49,9 +52,10 @@ export type PersonaSummary = {
 };
 
 const CHARACTER_SUMMARY_OPTIONS = {
-  fields: ["id", "data", "comment", "avatarPath"],
+  fields: ["id", "data", "comment", "avatarFilePath", "avatarFilename"],
   fieldSelections: { data: ["name", "tags", "extensions"] },
 };
+const EMPTY_CHARACTER_SUMMARIES: CharacterSummary[] = [];
 
 const PERSONA_SUMMARY_OPTIONS = {
   fields: [
@@ -75,6 +79,14 @@ function isCharacterListRecord(value: unknown): value is CharacterListRecord & {
   return Boolean(
     value && typeof value === "object" && !Array.isArray(value) && typeof (value as { id?: unknown }).id === "string",
   );
+}
+
+function isPresent<T>(value: T | null | undefined): value is NonNullable<T> {
+  return value != null;
+}
+
+function listCharacterSummaries(): Promise<CharacterSummary[]> {
+  return storageApi.list<CharacterSummary>("characters", CHARACTER_SUMMARY_OPTIONS);
 }
 
 export function upsertCharacterListRecord(current: unknown[] | undefined, record: unknown): unknown[] | undefined {
@@ -187,7 +199,7 @@ export function useCharacters(enabled = true) {
 export function useCharacterSummaries(enabled = true) {
   return useQuery({
     queryKey: characterKeys.summaries(),
-    queryFn: () => storageApi.list<CharacterSummary>("characters", CHARACTER_SUMMARY_OPTIONS),
+    queryFn: listCharacterSummaries,
     enabled,
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
@@ -217,28 +229,36 @@ export function useCharactersByIds(ids: string[], enabled = true) {
   });
 
   return {
-    data: queries.map((query) => query.data).filter(Boolean),
+    data: queries.map((query) => query.data).filter(isPresent),
     isLoading: queries.some((query) => query.isLoading),
     isFetching: queries.some((query) => query.isFetching),
   };
 }
 
 export function useCharacterSummariesByIds(ids: string[], enabled = true) {
-  const uniqueIds = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
-  const queries = useQueries({
-    queries: uniqueIds.map((id) => ({
-      queryKey: characterKeys.summaryDetail(id),
-      queryFn: () => storageApi.get<CharacterSummary>("characters", id, CHARACTER_SUMMARY_OPTIONS),
-      enabled: enabled && !!id,
-      staleTime: 5 * 60_000,
-      refetchOnWindowFocus: false,
-    })),
+  const normalizedIdKey = ids
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .join("\0");
+  const shouldRead = enabled && normalizedIdKey.length > 0;
+  const query = useQuery({
+    queryKey: characterKeys.summaries(),
+    queryFn: listCharacterSummaries,
+    enabled: shouldRead,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
+  const data = useMemo(() => {
+    if (!shouldRead) return EMPTY_CHARACTER_SUMMARIES;
+    const uniqueIds = Array.from(new Set(normalizedIdKey.split("\0").filter(Boolean)));
+    const byId = new Map((query.data ?? []).map((character) => [character.id, character]));
+    return uniqueIds.map((id) => byId.get(id)).filter(isPresent);
+  }, [normalizedIdKey, query.data, shouldRead]);
 
   return {
-    data: queries.map((query) => query.data).filter(Boolean),
-    isLoading: queries.some((query) => query.isLoading),
-    isFetching: queries.some((query) => query.isFetching),
+    data,
+    isLoading: shouldRead ? query.isLoading : false,
+    isFetching: shouldRead ? query.isFetching : false,
   };
 }
 
