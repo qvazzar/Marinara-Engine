@@ -8,5 +8,10 @@
   "ignoreDependencies": [
     "@tauri-apps/cli",
     "tailwindcss"
-  ]
+  ],
+  "ignoreIssues": {
+    "src/features/runtime/tracker/components/tracker-data-sidebar.constants.ts": [
+      "duplicates"
+    ]
+  }
 }
