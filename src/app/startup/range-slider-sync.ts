@@ -7,6 +7,54 @@ function syncRangeSliderProgress(input: HTMLInputElement) {
   input.style.setProperty("--range-progress", `${Math.max(0, Math.min(100, percent))}%`);
 }
 
+// Capture the genuine native value descriptor once, at module load, before
+// anything can wrap it. Re-installs (HMR, React StrictMode, concurrent remount)
+// must never capture an already-wrapped setter as the "original", or a later
+// disposer can leave the prototype permanently patched.
+const NATIVE_VALUE_DESCRIPTOR = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+const RANGE_SYNC_PATCHED = Symbol("rangeSliderSyncPatched");
+
+type PatchedSetter = ((value: string) => void) & { [RANGE_SYNC_PATCHED]?: true };
+
+// Patch the shared HTMLInputElement value setter so a programmatic value
+// assignment on a range input re-syncs its track fill. React updates a
+// controlled slider by assigning the existing node's .value with no input/change
+// event, so the listeners in installRangeSliderSync never fire. Idempotent and
+// self-aware: it won't double-wrap, and its disposer only restores when our
+// setter is still the active one (so a later third-party patch isn't clobbered).
+function patchRangeValueSetter(): () => void {
+  const nativeSetter = NATIVE_VALUE_DESCRIPTOR?.set;
+  if (!NATIVE_VALUE_DESCRIPTOR || !nativeSetter) return () => {};
+
+  const activeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set as
+    | PatchedSetter
+    | undefined;
+  if (activeSetter?.[RANGE_SYNC_PATCHED]) {
+    // Already patched by a prior install that hasn't disposed yet; leave it.
+    return () => {};
+  }
+
+  const patchedSetter: PatchedSetter = function (this: HTMLInputElement, next: string) {
+    nativeSetter.call(this, next);
+    if (this.type === "range") {
+      syncRangeSliderProgress(this);
+    }
+  };
+  patchedSetter[RANGE_SYNC_PATCHED] = true;
+
+  Object.defineProperty(HTMLInputElement.prototype, "value", {
+    ...NATIVE_VALUE_DESCRIPTOR,
+    set: patchedSetter,
+  });
+
+  return () => {
+    const current = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (current === patchedSetter) {
+      Object.defineProperty(HTMLInputElement.prototype, "value", NATIVE_VALUE_DESCRIPTOR);
+    }
+  };
+}
+
 export function installRangeSliderSync() {
   const syncAll = () => {
     document.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach(syncRangeSliderProgress);
@@ -38,22 +86,7 @@ export function installRangeSliderSync() {
   document.addEventListener("focusin", syncEventTarget, true);
   document.addEventListener("pointerover", syncEventTarget, true);
 
-  // React updates a controlled slider by assigning the existing node's .value with no
-  // input/change event, so the listeners above never fire and the track fill goes stale.
-  // Patch the shared value setter to re-sync range inputs whenever their value is assigned.
-  const valueDescriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
-  const originalValueSetter = valueDescriptor?.set;
-  if (valueDescriptor && originalValueSetter) {
-    Object.defineProperty(HTMLInputElement.prototype, "value", {
-      ...valueDescriptor,
-      set(this: HTMLInputElement, next: string) {
-        originalValueSetter.call(this, next);
-        if (this.type === "range") {
-          syncRangeSliderProgress(this);
-        }
-      },
-    });
-  }
+  const disposeValueSetter = patchRangeValueSetter();
 
   return () => {
     observer.disconnect();
@@ -61,8 +94,6 @@ export function installRangeSliderSync() {
     document.removeEventListener("change", syncEventTarget, true);
     document.removeEventListener("focusin", syncEventTarget, true);
     document.removeEventListener("pointerover", syncEventTarget, true);
-    if (valueDescriptor) {
-      Object.defineProperty(HTMLInputElement.prototype, "value", valueDescriptor);
-    }
+    disposeValueSetter();
   };
 }

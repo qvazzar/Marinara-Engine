@@ -57,4 +57,46 @@ describe("installRangeSliderSync", () => {
     afterDispose.value = "75";
     expect(afterDispose.style.getPropertyValue("--range-progress")).toBe("");
   });
+
+  it("does not leak a permanently-patched prototype across overlapping installs", () => {
+    // Overlapping install/dispose (HMR / StrictMode / concurrent remount): install
+    // twice before disposing either, then dispose both. The native setter must be
+    // fully restored, not left wrapped.
+    const dispose1 = installRangeSliderSync();
+    const dispose2 = installRangeSliderSync();
+    dispose1();
+    dispose2();
+
+    const afterBoth = createRangeInput("0");
+    afterBoth.value = "70";
+    expect(afterBoth.style.getPropertyValue("--range-progress")).toBe("");
+  });
+
+  it("does not clobber a third-party value-setter patch installed after slider-sync", () => {
+    dispose = installRangeSliderSync();
+
+    // A later subsystem wraps the value setter (e.g. a validation/analytics shim).
+    const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!;
+    const wrappedSetter = descriptor.set!;
+    let thirdPartyCalls = 0;
+    Object.defineProperty(window.HTMLInputElement.prototype, "value", {
+      ...descriptor,
+      set(this: HTMLInputElement, next: string) {
+        thirdPartyCalls += 1;
+        wrappedSetter.call(this, next);
+      },
+    });
+
+    // slider-sync disposes; it must NOT write back the native descriptor over the
+    // third-party patch, since its own setter is no longer the active one.
+    dispose!();
+    dispose = undefined;
+
+    const input = createRangeInput("0");
+    input.value = "40";
+    expect(thirdPartyCalls).toBeGreaterThan(0);
+
+    // Clean up the third-party patch so other tests see a pristine prototype.
+    Object.defineProperty(window.HTMLInputElement.prototype, "value", descriptor);
+  });
 });
