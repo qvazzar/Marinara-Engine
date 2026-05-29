@@ -11,7 +11,7 @@ use super::{
     finish_profile_import_assets, insert_profile_import_aliases, normalize_profile_prompt_overrides,
 };
 use crate::state::AppState;
-use marinara_core::AppResult;
+use marinara_core::{AppError, AppResult};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::Path;
@@ -104,8 +104,17 @@ where
         // Skipping the replacement leaves the user's existing collection
         // untouched; a table that is present but empty is still an explicit
         // clear and falls through to a normal empty replacement.
-        if !tables.contains_key(*table) {
+        let Some(table_value) = tables.get(*table) else {
             continue;
+        };
+        // A present-but-non-array table is malformed (e.g. `"characters": {}`).
+        // `table_rows` would coerce it to an empty array, which silently clears
+        // the collection - the same data loss the absent-key skip above guards
+        // against. Reject the import instead so nothing is replaced.
+        if !table_value.is_array() {
+            return Err(AppError::invalid_input(format!(
+                "Legacy profile table `{table}` must be a JSON array"
+            )));
         }
         let mut rows = table_rows(tables, table);
         match *collection {
@@ -1117,6 +1126,35 @@ mod tests {
             .storage
             .get("lorebooks", "lore-1")
             .expect("lorebook lookup should not fail")
+            .is_some());
+    }
+
+    #[test]
+    fn legacy_present_but_malformed_table_is_rejected_without_wiping() {
+        let state = test_state("malformed-table-no-wipe");
+        state
+            .storage
+            .upsert_with_id(
+                "characters",
+                "char-1",
+                json!({ "name": "Keep Me", "data": { "name": "Keep Me" } }),
+            )
+            .expect("seeded character should write");
+
+        let mut tables = Map::new();
+        // Object instead of array: malformed, must not be treated as a clear.
+        tables.insert("characters".to_string(), json!({}));
+
+        let error =
+            import_legacy_profile_tables_with_restored_assets(&state, &tables, 0, None, || Ok(()))
+                .expect_err("a present-but-non-array table should be rejected");
+        assert_eq!(error.code, "invalid_input");
+
+        // The rejected import must not have wiped the existing collection.
+        assert!(state
+            .storage
+            .get("characters", "char-1")
+            .expect("character lookup should not fail")
             .is_some());
     }
 }

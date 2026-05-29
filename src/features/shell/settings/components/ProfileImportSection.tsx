@@ -128,7 +128,7 @@ export function ProfileImportSection() {
       const confirmed = await showConfirmDialog({
         title: "Import Profile",
         message:
-          "Importing a profile replaces the collections contained in the file (for example characters, chats, lorebooks, and personas). Collections not present in the file are left untouched. This cannot be undone. Continue?",
+          "Importing a profile replaces data from the selected file and may remove existing collections, depending on the export format. This cannot be undone. Continue?",
         confirmLabel: "Import",
         cancelLabel: "Cancel",
         tone: "destructive",
