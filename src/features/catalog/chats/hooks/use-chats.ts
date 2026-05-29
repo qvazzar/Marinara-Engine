@@ -84,7 +84,7 @@ function findCachedMessage(data: InfiniteData<Message[]> | undefined, messageId:
   return null;
 }
 
-export function rememberRecentMessageContentEdit(
+function rememberRecentMessageContentEdit(
   chatId: string,
   messageId: string,
   content: string,
@@ -99,7 +99,7 @@ export function rememberRecentMessageContentEdit(
   });
 }
 
-export function forgetRecentMessageContentEdit(chatId: string, messageId: string) {
+function forgetRecentMessageContentEdit(chatId: string, messageId: string) {
   const edit = recentMessageContentEdits.get(messageId);
   if (edit?.chatId === chatId) {
     recentMessageContentEdits.delete(messageId);
@@ -113,32 +113,6 @@ export function preserveRecentMessageContentEdit(chatId: string, message: Messag
   if (edit.activeSwipeIndex !== null && edit.activeSwipeIndex !== (message.activeSwipeIndex ?? 0)) return message;
   if (message.content === edit.content) return message;
   return { ...message, content: edit.content };
-}
-
-export function applyRecentMessageContentEditsToData(
-  chatId: string,
-  data: InfiniteData<Message[]> | undefined,
-): InfiniteData<Message[]> | undefined {
-  if (!data?.pages || recentMessageContentEdits.size === 0) return data;
-  let changed = false;
-  const pages = data.pages.map((page) =>
-    page.map((message) => {
-      const next = preserveRecentMessageContentEdit(chatId, message);
-      if (next !== message) changed = true;
-      return next;
-    }),
-  );
-  return changed ? { ...data, pages } : data;
-}
-
-export interface ConversationSummaryBackfillResult {
-  generatedDays: string[];
-  consolidatedWeeks: string[];
-  failedDays: Array<{ date: string; error: string }>;
-  failedWeeks: Array<{ weekKey: string; error: string }>;
-  missingDayCount: number;
-  processedDayCount: number;
-  remainingMissingDayCount: number;
 }
 
 const CHAT_SUMMARY_FIELDS = [
