@@ -101,6 +101,7 @@ export interface StartGenerationInput extends JsonRecord {
   };
   debugMode?: boolean;
   debugSink?: AgentContext["debugSink"];
+  agentInjectionOverrides?: AgentInjectionOverride[];
 }
 
 export interface GenerationEngineDeps {
@@ -125,6 +126,12 @@ interface PreparedUserInput {
   mentionedCharacterNames: string[];
 }
 
+interface AgentInjectionOverride {
+  agentType: string;
+  agentName?: string;
+  text: string;
+}
+
 const LOREBOOK_KEEPER_AGENT_TYPE = "lorebook-keeper";
 const DEFAULT_LOREBOOK_KEEPER_RUN_INTERVAL = BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS[LOREBOOK_KEEPER_AGENT_TYPE] ?? 8;
 
@@ -146,6 +153,30 @@ function throwIfAborted(signal?: AbortSignal): void {
 
 function inputUserMessage(input: StartGenerationInput): string {
   return collapseExcessBlankLines(readString(input.message) || readString(input.userMessage));
+}
+
+function normalizedAgentInjectionOverrides(input: StartGenerationInput): AgentInjectionOverride[] {
+  if (!Array.isArray(input.agentInjectionOverrides)) return [];
+  const overrides: AgentInjectionOverride[] = [];
+  for (const entry of input.agentInjectionOverrides) {
+    if (!isRecord(entry)) continue;
+    const agentType = readString(entry.agentType).trim();
+    const text = readString(entry.text).trim();
+    if (!agentType || !text) continue;
+    const agentName = readString(entry.agentName).trim();
+    overrides.push({ agentType, ...(agentName ? { agentName } : {}), text });
+  }
+  return overrides;
+}
+
+function shouldPauseForAgentInjectionReview(
+  chat: JsonRecord,
+  input: StartGenerationInput,
+  injections: AgentInjectionOverride[],
+): boolean {
+  if (normalizedAgentInjectionOverrides(input).length > 0) return false;
+  if (injections.length === 0) return false;
+  return parseRecord(chat.metadata).reviewWriterAgentOutputs === true;
 }
 
 function generationEmbeddingSource(llm: LlmGateway, connection: JsonRecord) {
@@ -1408,6 +1439,7 @@ export async function* startGeneration(
   const directMessages = requestMessages(input);
   const agentEvents: AgentResult[] = [];
   const continueAssistantResponse = shouldContinueAssistantResponse(input, preparedUserInput, generationMessages);
+  const agentInjectionOverrides = normalizedAgentInjectionOverrides(input);
 
   yield { type: "phase", data: "Assembling prompt..." };
   let prompt = directMessages;
@@ -1441,6 +1473,7 @@ export async function* startGeneration(
             debugSink: input.debugSink,
             signal,
             regenerateMessageId: readString(input.regenerateMessageId).trim() || null,
+            agentInjectionOverrides,
           },
           (result) => agentEvents.push(result),
         )
@@ -1450,6 +1483,22 @@ export async function* startGeneration(
       yield { type: "agent_result", data: result };
     }
     agentEvents.length = 0;
+
+    if (runtime && shouldPauseForAgentInjectionReview(chatForGeneration, input, runtime.preInjections)) {
+      yield {
+        type: "agent_injection_review",
+        data: {
+          chatId,
+          injections: runtime.preInjections.map((injection) => ({
+            agentType: injection.agentType,
+            agentName: injection.agentName || injection.agentType,
+            text: injection.text,
+          })),
+        },
+      };
+      yield { type: "done" };
+      return;
+    }
 
     assembly = await assembleGenerationPrompt(deps.storage, {
       chat: chatForGeneration,

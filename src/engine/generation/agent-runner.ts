@@ -71,6 +71,7 @@ export interface GenerationAgentRuntimeInput {
   agentTypes?: Set<string>;
   bypassCustomAgentActivation?: boolean;
   regenerateMessageId?: string | null;
+  agentInjectionOverrides?: AgentInjection[];
 }
 
 export interface GenerationAgentRuntime {
@@ -120,6 +121,28 @@ const DEFAULT_ROLEPLAY_EXPRESSIONS = [
   "surprised",
   "thinking",
 ] as const;
+
+function normalizedAgentInjectionOverrides(value: unknown): AgentInjection[] {
+  if (!Array.isArray(value)) return [];
+  const overrides: AgentInjection[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const agentType = readString(entry.agentType).trim();
+    const text = readString(entry.text).trim();
+    if (!agentType || !text) continue;
+    const agentName = readString(entry.agentName).trim();
+    overrides.push({ agentType, ...(agentName ? { agentName } : {}), text });
+  }
+  return overrides;
+}
+
+function agentDataFromInjections(injections: AgentInjection[]): Record<string, string> {
+  const data: Record<string, string> = {};
+  for (const injection of injections) {
+    if (injection.text.trim()) data[injection.agentType] = injection.text.trim();
+  }
+  return data;
+}
 
 function uniqueStrings(values: string[]): string[] {
   const seen = new Set<string>();
@@ -251,6 +274,16 @@ async function loadConnection(storage: StorageGateway, connectionId: string | nu
   if (!connectionId) return null;
   const connection = await storage.get<JsonRecord>("connections", connectionId);
   return isRecord(connection) ? connection : null;
+}
+
+async function loadDefaultAgentConnection(storage: StorageGateway): Promise<JsonRecord | null> {
+  const connections = await storage.list<JsonRecord>("connections");
+  return (
+    connections.find(
+      (connection) =>
+        readString(connection.provider).trim() !== "image_generation" && boolish(connection.defaultForAgents, false),
+    ) ?? null
+  );
 }
 
 function enabledToolNames(settings: Record<string, unknown>): string[] {
@@ -549,6 +582,7 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
   let customTools: Map<string, CustomToolRecord> | null = null;
   const resolved: ResolvedAgent[] = [];
   const skippedResults: AgentResult[] = [];
+  let defaultAgentConnection: JsonRecord | null | undefined;
   for (const agent of rows) {
     const type = readString(agent.type || agent.agentType) || "agent";
     if (suppressAgentForTurn(input, type)) continue;
@@ -564,7 +598,11 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
       continue;
     }
     const requestedConnectionId = readString(agent.connectionId).trim();
-    const fallbackConnectionId = readString(input.connection.id).trim() || null;
+    if (!requestedConnectionId && defaultAgentConnection === undefined) {
+      defaultAgentConnection = await loadDefaultAgentConnection(deps.storage);
+    }
+    const fallbackConnection = defaultAgentConnection ?? input.connection;
+    const fallbackConnectionId = readString(fallbackConnection.id).trim() || null;
     const connectionId = requestedConnectionId || fallbackConnectionId;
     let connection: JsonRecord;
     if (requestedConnectionId) {
@@ -575,7 +613,7 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
       }
       connection = loadedConnection;
     } else {
-      connection = input.connection;
+      connection = fallbackConnection;
     }
     const model = readString(agent.model).trim() || readString(connection.model).trim();
     if (!model) continue;
@@ -890,13 +928,14 @@ export async function createGenerationAgentRuntime(
 ): Promise<GenerationAgentRuntime> {
   const { agents, skippedResults } = await resolveAgents(deps, input);
   const preResults: AgentResult[] = [...skippedResults];
-  const agentData: Record<string, string> = {};
+  const overrideInjections = normalizedAgentInjectionOverrides(input.agentInjectionOverrides);
+  const agentData: Record<string, string> = agentDataFromInjections(overrideInjections);
   for (const result of skippedResults) {
     onResult?.(result);
   }
   if (agents.length === 0) {
     return {
-      preInjections: [],
+      preInjections: overrideInjections,
       preResults,
       agentData,
       runParallel: async () => [],
@@ -910,6 +949,16 @@ export async function createGenerationAgentRuntime(
     if (text) agentData[result.agentType] = text;
     onResult?.(resultEventData(result));
   });
+
+  if (overrideInjections.length > 0) {
+    return {
+      preInjections: overrideInjections,
+      preResults,
+      agentData,
+      runParallel: async () => pipeline.runParallel(),
+      runPost: async (mainResponse) => pipeline.postGenerate(mainResponse, { preGenInjections: overrideInjections }),
+    };
+  }
 
   const preInjections = await pipeline.preGenerate((type) => type !== "prompt-reviewer");
   for (const result of pipeline.results) {

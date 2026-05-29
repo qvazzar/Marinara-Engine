@@ -149,6 +149,12 @@ async function drainGeneration(stream: AsyncGenerator<unknown>) {
   }
 }
 
+async function collectGeneration(stream: AsyncGenerator<unknown>): Promise<unknown[]> {
+  const events: unknown[] = [];
+  for await (const event of stream) events.push(event);
+  return events;
+}
+
 const illustratorDrawData = {
   shouldGenerate: true,
   reason: "Important visual beat",
@@ -1137,6 +1143,105 @@ describe("startGeneration automatic custom agent cadence", () => {
 });
 
 describe("startGeneration agent runtime parity", () => {
+  it("pauses for writer agent review when chat metadata requests it", async () => {
+    const { deps, streamedRequests, createChatMessage } = generationDepsForChat({
+      chatPatch: { mode: "roleplay" },
+      chatMetadata: { enableAgents: true, activeAgentIds: ["agent-a"], reviewWriterAgentOutputs: true },
+      agents: [
+        {
+          id: "agent-a",
+          type: "prose-guardian",
+          name: "Prose Guardian",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Add a concise style note.",
+        },
+      ],
+    });
+
+    const events = await collectGeneration(startGeneration(deps, { chatId: "chat-1", userMessage: "hello" }));
+
+    expect(streamedRequests).toHaveLength(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "agent_injection_review",
+        data: expect.objectContaining({
+          chatId: "chat-1",
+          injections: [
+            expect.objectContaining({
+              agentType: "prose-guardian",
+              agentName: "Prose Guardian",
+              text: "Done.",
+            }),
+          ],
+        }),
+      }),
+    );
+    expect(createChatMessage).not.toHaveBeenCalledWith("chat-1", expect.objectContaining({ role: "assistant" }));
+  });
+
+  it("uses reviewed writer agent overrides when continuing after review", async () => {
+    const { deps, streamedRequests } = generationDepsForChat({
+      chatPatch: { mode: "roleplay", promptPresetId: "preset-1" },
+      chatMetadata: { enableAgents: true, activeAgentIds: ["agent-a"], reviewWriterAgentOutputs: true },
+      initialMessages: [{ id: "user-1", chatId: "chat-1", role: "user", content: "hello" }],
+      agents: [
+        {
+          id: "agent-a",
+          type: "prose-guardian",
+          name: "Prose Guardian",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Add a concise style note.",
+        },
+      ],
+      prompts: [{ id: "preset-1", parameters: {} }],
+      promptSections: [
+        {
+          id: "main",
+          presetId: "preset-1",
+          name: "Main",
+          role: "system",
+          content: "Main prompt.",
+          enabled: true,
+          sortOrder: 0,
+        },
+        {
+          id: "agent-data",
+          presetId: "preset-1",
+          name: "Agent Data",
+          role: "system",
+          enabled: true,
+          markerConfig: { type: "agent_data", agentType: "prose-guardian" },
+          sortOrder: 1,
+        },
+      ],
+    });
+
+    await drainGeneration(
+      startGeneration(deps, {
+        chatId: "chat-1",
+        agentInjectionOverrides: [
+          {
+            agentType: "prose-guardian",
+            agentName: "Prose Guardian",
+            text: "Edited writer guidance.",
+          },
+        ],
+      }),
+    );
+
+    expect(streamedRequests).toHaveLength(1);
+    const mainRequest = streamedRequests[0] as { messages: Array<{ content: string }> };
+    const mainPrompt = mainRequest.messages.map((message) => message.content).join("\n\n");
+    expect(mainPrompt).toContain("Main prompt.");
+    expect(mainPrompt).toContain("Edited writer guidance.");
+  });
+
   it("injects pre-generation agent data into preset agent_data markers before the main call", async () => {
     const { deps, streamedRequests } = generationDepsForChat({
       chatPatch: { mode: "roleplay", promptPresetId: "preset-1" },

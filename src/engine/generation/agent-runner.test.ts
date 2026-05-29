@@ -314,6 +314,61 @@ describe("createGenerationAgentRuntime", () => {
     expect(calls[0]?.parameters).not.toHaveProperty("temperature");
   });
 
+  it("uses the default agent connection before the chat connection when no agent override is set", async () => {
+    const calls: LlmRequest[] = [];
+    await createGenerationAgentRuntime(
+      {
+        storage: storage(
+          [
+            {
+              id: "agent-a",
+              type: "prose-guardian",
+              name: "Prose Guardian",
+              enabled: true,
+              phase: "pre_generation",
+              connectionId: null,
+              model: "",
+              promptTemplate: "Add a concise style note.",
+            },
+          ],
+          {
+            connections: [
+              {
+                id: "agent-default",
+                provider: "anthropic",
+                model: "agent-default-model",
+                defaultForAgents: true,
+                defaultParameters: { topP: 0.61 },
+              },
+            ],
+          },
+        ),
+        llm: countingLlm(calls),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["agent-a"] } },
+        connection: {
+          id: "chat-connection",
+          provider: "google",
+          model: "chat-model",
+          defaultParameters: { topP: 0.24 },
+        },
+        storedMessages: [],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(calls[0]).toMatchObject({
+      connectionId: "agent-default",
+      model: "agent-default-model",
+      parameters: expect.objectContaining({ topP: 0.61 }),
+    });
+  });
+
   it("does not run Echo Chamber during assistant message regeneration", async () => {
     const calls: LlmRequest[] = [];
     const runtime = await createGenerationAgentRuntime(
