@@ -158,7 +158,7 @@ export function NumberField({
   );
 }
 
-export function insertTabAtSelection(
+function insertTabAtSelection(
   element: HTMLTextAreaElement,
   value: string,
   applyValue: (nextValue: string) => void,
@@ -173,7 +173,7 @@ export function insertTabAtSelection(
   });
 }
 
-export function handleTextareaTabKeyDown(
+function handleTextareaTabKeyDown(
   event: ReactKeyboardEvent<HTMLTextAreaElement>,
   value: string,
   applyValue: (nextValue: string) => void,
@@ -246,7 +246,7 @@ export function ExpandableTextarea({
 }
 
 /** Fullscreen modal editor for lorebook entry fields. */
-export function ExpandedContentModal({
+function ExpandedContentModal({
   title,
   value,
   onChange,
