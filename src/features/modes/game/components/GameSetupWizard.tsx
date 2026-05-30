@@ -35,6 +35,7 @@ import { useConnections } from "../../../catalog/connections/index";
 import {
   characterAvatarUrl,
   useCharacterSummaries,
+  useCharacterSummariesByIds,
   usePersonas,
   type CharacterSummary,
 } from "../../../catalog/characters/index";
@@ -65,6 +66,7 @@ type SetupCharacterInfo = {
   comment?: string | null;
   avatarUrl?: string | null;
   avatarCrop?: AvatarCropValue | null;
+  searchText: string[];
 };
 
 function parseAvatarCropValue(raw: unknown): AvatarCropValue | null {
@@ -75,6 +77,19 @@ function parseAvatarCropValue(raw: unknown): AvatarCropValue | null {
     return null;
   }
   return parseAvatarCropJson(JSON.stringify(raw));
+}
+
+function useDebouncedValue(value: string, delayMs: number): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    if (value === "") {
+      setDebounced("");
+      return;
+    }
+    const handle = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(handle);
+  }, [delayMs, value]);
+  return debounced;
 }
 
 function CharacterAvatar({
@@ -106,6 +121,29 @@ function CharacterAvatar({
       />
     </span>
   );
+}
+
+function characterSearchValues(
+  character: CharacterSummary,
+  display: { name: string; comment?: string | null },
+): string[] {
+  const data = character.data && typeof character.data === "object" ? (character.data as Record<string, unknown>) : {};
+  const tags = Array.isArray(data.tags) ? data.tags.map(String) : [];
+  return [
+    character.id,
+    display.name,
+    display.comment,
+    data.creator,
+    data.creator_notes,
+    data.character_version,
+    ...tags,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
+function setupCharacterMatchesSearch(character: SetupCharacterInfo, search: string): boolean {
+  const query = search.trim().toLowerCase();
+  if (!query) return true;
+  return character.searchText.some((value) => value.toLowerCase().includes(query));
 }
 
 function getPersonaTitle(persona: PersonaDisplayInfo): string | null {
@@ -323,6 +361,8 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading }: Game
   );
   const [gmSearch, setGmSearch] = useState("");
   const [partySearch, setPartySearch] = useState("");
+  const debouncedGmSearch = useDebouncedValue(gmSearch, 180);
+  const debouncedPartySearch = useDebouncedValue(partySearch, 180);
   const [personaId, setPersonaId] = useState<string | null>(null);
   const [gmConnectionId, setGmConnectionId] = useState<string | null>(null);
   const [customizeParameters, setCustomizeParameters] = useState(false);
@@ -358,11 +398,26 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading }: Game
 
   const { data: connectionsList } = useConnections();
   const { data: personasList } = usePersonas();
+  const selectedCharacterIds = useMemo(
+    () => Array.from(new Set([gmCharacterId, ...partyCharacterIds].filter((id): id is string => !!id))),
+    [gmCharacterId, partyCharacterIds],
+  );
+  const { data: selectedRawCharacters } = useCharacterSummariesByIds(
+    selectedCharacterIds,
+    selectedCharacterIds.length > 0,
+  );
   const {
-    data: rawCharacters,
-    isLoading: isCharactersLoading,
-    isError: isCharactersError,
-  } = useCharacterSummaries(step === 1);
+    data: gmRawCharacters,
+    isLoading: isGmCharactersLoading,
+    isFetching: isGmCharactersFetching,
+    isError: isGmCharactersError,
+  } = useCharacterSummaries(step === 1, debouncedGmSearch);
+  const {
+    data: partyRawCharacters,
+    isLoading: isPartyCharactersLoading,
+    isFetching: isPartyCharactersFetching,
+    isError: isPartyCharactersError,
+  } = useCharacterSummaries(step === 1, debouncedPartySearch);
   const { data: lorebooksList } = useLorebooks();
   const spotifyPlaylistsQuery = useQuery({
     queryKey: ["spotify", "playlists", 50],
@@ -412,32 +467,40 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading }: Game
       }>) ?? [],
     [personasList],
   );
-  const characters = useMemo<SetupCharacterInfo[]>(
-    () =>
-      ((rawCharacters ?? []) as CharacterSummary[])
-        .map((character) => {
-          const display = parseCharacterDisplayData({
-            data: character.data,
-            comment: character.comment,
-          });
-          const rawCrop = character.data?.extensions?.avatarCrop;
-          return {
-            id: character.id,
-            name: display.name,
-            comment: display.comment,
-            avatarUrl: characterAvatarUrl(character),
-            avatarCrop: parseAvatarCropValue(rawCrop),
-          };
-        })
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [rawCharacters],
-  );
+  const characters = useMemo<SetupCharacterInfo[]>(() => {
+    const byId = new Map<string, CharacterSummary>();
+    for (const character of (selectedRawCharacters ?? []) as CharacterSummary[]) byId.set(character.id, character);
+    for (const character of (gmRawCharacters ?? []) as CharacterSummary[]) byId.set(character.id, character);
+    for (const character of (partyRawCharacters ?? []) as CharacterSummary[]) byId.set(character.id, character);
+    return Array.from(byId.values())
+      .map((character) => {
+        const display = parseCharacterDisplayData({
+          data: character.data,
+          comment: character.comment,
+        });
+        const rawCrop = character.data?.extensions?.avatarCrop;
+        return {
+          id: character.id,
+          name: display.name,
+          comment: display.comment,
+          avatarUrl: characterAvatarUrl(character),
+          avatarCrop: parseAvatarCropValue(rawCrop),
+          searchText: characterSearchValues(character, display),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [gmRawCharacters, partyRawCharacters, selectedRawCharacters]);
 
-  const emptyCharacterMessage = isCharactersLoading
-    ? "Loading characters..."
-    : isCharactersError
-      ? "Characters could not be loaded."
-      : "No characters found.";
+  const isCharactersLoading = isGmCharactersLoading || isPartyCharactersLoading;
+  const isCharactersError = isGmCharactersError || isPartyCharactersError;
+  const gmCharacterSearchPending = isGmCharactersFetching || gmSearch.trim() !== debouncedGmSearch.trim();
+  const partyCharacterSearchPending = isPartyCharactersFetching || partySearch.trim() !== debouncedPartySearch.trim();
+  const emptyCharacterMessage = (pending: boolean) =>
+    isCharactersLoading || pending
+      ? "Loading characters..."
+      : isCharactersError
+        ? "Characters could not be loaded."
+        : "No characters found.";
 
   const lorebooks = useMemo(
     () => (lorebooksList as Array<{ id: string; name: string; enabled?: boolean }>) ?? [],
@@ -523,9 +586,7 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading }: Game
   const filteredGmCharacters = useMemo(
     () =>
       characters.filter((c) => {
-        const query = gmSearch.toLowerCase();
-        const title = getCharacterTitle(c)?.toLowerCase() ?? "";
-        return c.name.toLowerCase().includes(query) || title.includes(query);
+        return setupCharacterMatchesSearch(c, gmSearch);
       }),
     [characters, gmSearch],
   );
@@ -534,9 +595,7 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading }: Game
     () =>
       characters.filter((c) => {
         if (c.id === gmCharacterId) return false;
-        const query = partySearch.toLowerCase();
-        const title = getCharacterTitle(c)?.toLowerCase() ?? "";
-        return c.name.toLowerCase().includes(query) || title.includes(query);
+        return setupCharacterMatchesSearch(c, partySearch);
       }),
     [characters, gmCharacterId, partySearch],
   );
@@ -994,7 +1053,11 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading }: Game
                     ))}
                     {filteredGmCharacters.length === 0 && (
                       <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                        {characters.length === 0 ? emptyCharacterMessage : "No matches."}
+                        {gmCharacterSearchPending
+                          ? "Loading characters..."
+                          : characters.length === 0
+                            ? emptyCharacterMessage(false)
+                            : "No matches."}
                       </p>
                     )}
                   </div>
@@ -1081,11 +1144,13 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading }: Game
                   })}
                   {filteredPartyCharacters.length === 0 && (
                     <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                      {characters.length === 0
-                        ? isCharactersLoading || isCharactersError
-                          ? emptyCharacterMessage
-                          : "No characters found. Create characters first."
-                        : "No matches."}
+                      {partyCharacterSearchPending
+                        ? "Loading characters..."
+                        : characters.length === 0
+                          ? isCharactersLoading || isCharactersError
+                            ? emptyCharacterMessage(false)
+                            : "No characters found. Create characters first."
+                          : "No matches."}
                     </p>
                   )}
                 </div>

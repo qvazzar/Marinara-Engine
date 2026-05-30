@@ -80,6 +80,7 @@ import {
 import {
   characterAvatarUrl,
   useCharacterSummaries,
+  useCharacterSummariesByIds,
   usePersonaSummaries,
   useCharacterGroups,
   type SpriteInfo,
@@ -262,6 +263,59 @@ type DrawerCharacter = {
   avatarFilename?: string | null;
 };
 
+function useDebouncedValue(value: string, delayMs: number): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    if (value === "") {
+      setDebounced("");
+      return;
+    }
+    const handle = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(handle);
+  }, [delayMs, value]);
+  return debounced;
+}
+
+function mergeDrawerCharacters(
+  ...sources: Array<Array<DrawerCharacter | undefined> | null | undefined>
+): DrawerCharacter[] {
+  const byId = new Map<string, DrawerCharacter>();
+  for (const source of sources) {
+    for (const character of source ?? []) {
+      if (!character?.id) continue;
+      byId.set(character.id, {
+        ...character,
+        avatarPath: characterAvatarUrl(character),
+      });
+    }
+  }
+  return Array.from(byId.values());
+}
+
+function characterSearchValues(character: { id?: string; data?: unknown; comment?: string | null }): string[] {
+  const info = parseCharacterDisplayData({ data: character.data, comment: character.comment });
+  const data = character.data && typeof character.data === "object" ? (character.data as Record<string, unknown>) : {};
+  const tags = Array.isArray(data.tags) ? data.tags.map(String) : [];
+  return [
+    character.id,
+    info.name,
+    info.comment,
+    data.creator,
+    data.creator_notes,
+    data.character_version,
+    ...tags,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
+function splitSearchTerms(value: string): string[] {
+  return value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function searchValuesMatchTerms(values: string[], terms: string[]): boolean {
+  if (terms.length === 0) return true;
+  return terms.every((term) => values.some((value) => value.includes(term)));
+}
+
 function useDeferredDrawerContent(open: boolean, contentKey: string): boolean {
   const [ready, setReady] = useState(false);
 
@@ -406,7 +460,19 @@ function ChatSettingsDrawerInner({
   const setScheduleGenerationPreferences = useUIStore((s) => s.setScheduleGenerationPreferences);
   const roleplaySpriteScale = useUIStore((s) => s.roleplaySpriteScale);
 
-  const { data: allCharacters } = useCharacterSummaries();
+  const [showCharPicker, setShowCharPicker] = useState(false);
+  const [charSearch, setCharSearch] = useState("");
+  const debouncedCharSearch = useDebouncedValue(charSearch, 180);
+  const chatCharIds: string[] = useMemo(() => chat.characterIds ?? [], [chat.characterIds]);
+  const { data: selectedCharacters, isLoading: selectedCharactersLoading } = useCharacterSummariesByIds(
+    chatCharIds,
+    chatCharIds.length > 0,
+  );
+  const {
+    data: searchedCharacters,
+    isFetching: searchedCharactersFetching,
+    isError: searchedCharactersError,
+  } = useCharacterSummaries(showCharPicker, debouncedCharSearch);
   const { data: characterGroups } = useCharacterGroups();
   const { data: lorebooks } = useLorebooks();
   const { data: presets, isLoading: presetsLoading } = usePresetSummaries();
@@ -464,8 +530,6 @@ function ChatSettingsDrawerInner({
   const { data: customToolCapabilities } = useCustomToolCapabilities();
   const { data: allChats } = useChatSummaries();
   const personas = useMemo(() => (allPersonas ?? []) as DrawerPersona[], [allPersonas]);
-
-  const chatCharIds: string[] = useMemo(() => chat.characterIds ?? [], [chat.characterIds]);
 
   const metadata = useMemo<Record<string, any>>(
     () => (chat.metadata && typeof chat.metadata === "object" && !Array.isArray(chat.metadata) ? chat.metadata : {}),
@@ -713,11 +777,34 @@ function ChatSettingsDrawerInner({
   // ── Helpers ──
   const characters = useMemo<DrawerCharacter[]>(
     () =>
-      ((allCharacters ?? []) as DrawerCharacter[]).map((character) => ({
-        ...character,
-        avatarPath: characterAvatarUrl(character),
+      mergeDrawerCharacters(
+        selectedCharacters as DrawerCharacter[] | undefined,
+        searchedCharacters as DrawerCharacter[] | undefined,
+      ),
+    [searchedCharacters, selectedCharacters],
+  );
+  const characterSearchPending =
+    showCharPicker && (searchedCharactersFetching || charSearch.trim() !== debouncedCharSearch.trim());
+  const characterSearchFailed = showCharPicker && searchedCharactersError;
+  const availableCharacters = useMemo(() => {
+    const selectedIds = new Set(chatCharIds);
+    return characters.filter((character) => !selectedIds.has(character.id));
+  }, [characters, chatCharIds]);
+  const availableCharacterSearchEntries = useMemo(
+    () =>
+      availableCharacters.map((character) => ({
+        character,
+        searchValues: characterSearchValues(character).map((value) => value.toLowerCase()),
       })),
-    [allCharacters],
+    [availableCharacters],
+  );
+  const characterSearchTerms = useMemo(() => splitSearchTerms(charSearch), [charSearch]);
+  const filteredAvailableCharacters = useMemo(
+    () =>
+      availableCharacterSearchEntries
+        .filter(({ searchValues }) => searchValuesMatchTerms(searchValues, characterSearchTerms))
+        .map(({ character }) => character),
+    [availableCharacterSearchEntries, characterSearchTerms],
   );
 
   const chatCharacters = useMemo(
@@ -755,7 +842,7 @@ function ChatSettingsDrawerInner({
     return Array.isArray(sprites) && sprites.length > 0;
   });
   const chatSpriteSubjectsLoading =
-    (chatCharIds.length > 0 && allCharacters == null) || (!!chat.personaId && allPersonas == null);
+    (chatCharIds.length > 0 && selectedCharactersLoading) || (!!chat.personaId && allPersonas == null);
   const chatSpriteChoicesLoading =
     chatSpriteSubjects.length > 0 &&
     chatSpriteSubjectsWithSprites.length === 0 &&
@@ -1232,7 +1319,6 @@ function ChatSettingsDrawerInner({
 
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(chat.name);
-  const [showCharPicker, setShowCharPicker] = useState(false);
   const [showGroupPicker, setShowGroupPicker] = useState(false);
   const [showLbPicker, setShowLbPicker] = useState(false);
   const [showToolPicker, setShowToolPicker] = useState(false);
@@ -1251,7 +1337,6 @@ function ChatSettingsDrawerInner({
   const [connectionSearch, setConnectionSearch] = useState("");
   const [personaSearch, setPersonaSearch] = useState("");
   const [pendingToolIds, setPendingToolIds] = useState<string[]>([]);
-  const [charSearch, setCharSearch] = useState("");
   const [lbSearch, setLbSearch] = useState("");
   const [toolSearch, setToolSearch] = useState("");
   const [choiceModalPresetId, setChoiceModalPresetId] = useState<string | null>(null);
@@ -2312,37 +2397,41 @@ function ChatSettingsDrawerInner({
                   onClose={() => setShowCharPicker(false)}
                   placeholder="Search characters…"
                 >
-                  {characters
-                    .filter((c) => !chatCharIds.includes(c.id))
-                    .filter((c) => {
-                      const query = charSearch.toLowerCase();
-                      const title = charTitle(c)?.toLowerCase() ?? "";
-                      return charName(c).toLowerCase().includes(query) || title.includes(query);
-                    })
-                    .map((c) => {
-                      const name = charName(c);
-                      const title = charTitle(c);
-                      return (
-                        <button
-                          key={c.id}
-                          onClick={() => {
-                            toggleCharacter(c.id);
-                            setShowCharPicker(false);
-                          }}
-                          className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <span className="block truncate text-xs">{name}</span>
-                            {title && (
-                              <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
-                                {title}
-                              </span>
-                            )}
-                          </div>
-                          <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
-                        </button>
-                      );
-                    })}
+                  {filteredAvailableCharacters.map((c) => {
+                    const name = charName(c);
+                    const title = charTitle(c);
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => {
+                          toggleCharacter(c.id);
+                          setShowCharPicker(false);
+                        }}
+                        className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <span className="block truncate text-xs">{name}</span>
+                          {title && (
+                            <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                              {title}
+                            </span>
+                          )}
+                        </div>
+                        <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
+                      </button>
+                    );
+                  })}
+                  {filteredAvailableCharacters.length === 0 && (
+                    <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
+                      {characterSearchFailed
+                        ? "Characters could not be loaded."
+                        : characterSearchPending
+                          ? "Loading characters..."
+                          : availableCharacters.length === 0
+                            ? "All characters already added."
+                            : "No matches."}
+                    </p>
+                  )}
                 </PickerDropdown>
               )}
             </Section>
@@ -2633,63 +2722,54 @@ function ChatSettingsDrawerInner({
                   onClose={() => setShowCharPicker(false)}
                   placeholder="Search characters…"
                 >
-                  {characters
-                    .filter((c) => !chatCharIds.includes(c.id))
-                    .filter((c) => {
-                      const query = charSearch.toLowerCase();
-                      const title = charTitle(c)?.toLowerCase() ?? "";
-                      return charName(c).toLowerCase().includes(query) || title.includes(query);
-                    })
-                    .map((c) => {
-                      const name = charName(c);
-                      const title = charTitle(c);
-                      return (
-                        <button
-                          key={c.id}
-                          onClick={() => {
-                            toggleCharacter(c.id);
-                            setShowCharPicker(false);
-                          }}
-                          className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]"
-                        >
-                          {c.avatarPath ? (
-                            <span className="relative block h-6 w-6 shrink-0 overflow-hidden rounded-full">
-                              <img
-                                src={c.avatarPath}
-                                alt={name}
-                                loading="lazy"
-                                className="h-full w-full object-cover"
-                                style={getAvatarCropStyle(charAvatarCrop(c))}
-                              />
-                            </span>
-                          ) : (
-                            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--accent)] text-[0.5625rem] font-bold">
-                              {name[0]}
-                            </div>
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <span className="block truncate text-xs">{name}</span>
-                            {title && (
-                              <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
-                                {title}
-                              </span>
-                            )}
+                  {filteredAvailableCharacters.map((c) => {
+                    const name = charName(c);
+                    const title = charTitle(c);
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => {
+                          toggleCharacter(c.id);
+                          setShowCharPicker(false);
+                        }}
+                        className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]"
+                      >
+                        {c.avatarPath ? (
+                          <span className="relative block h-6 w-6 shrink-0 overflow-hidden rounded-full">
+                            <img
+                              src={c.avatarPath}
+                              alt={name}
+                              loading="lazy"
+                              className="h-full w-full object-cover"
+                              style={getAvatarCropStyle(charAvatarCrop(c))}
+                            />
+                          </span>
+                        ) : (
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--accent)] text-[0.5625rem] font-bold">
+                            {name[0]}
                           </div>
-                          <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
-                        </button>
-                      );
-                    })}
-                  {characters
-                    .filter((c) => !chatCharIds.includes(c.id))
-                    .filter((c) => {
-                      const query = charSearch.toLowerCase();
-                      const title = charTitle(c)?.toLowerCase() ?? "";
-                      return charName(c).toLowerCase().includes(query) || title.includes(query);
-                    }).length === 0 && (
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <span className="block truncate text-xs">{name}</span>
+                          {title && (
+                            <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                              {title}
+                            </span>
+                          )}
+                        </div>
+                        <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
+                      </button>
+                    );
+                  })}
+                  {filteredAvailableCharacters.length === 0 && (
                     <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                      {characters.filter((c) => !chatCharIds.includes(c.id)).length === 0
-                        ? "All characters already added."
-                        : "No matches."}
+                      {characterSearchFailed
+                        ? "Characters could not be loaded."
+                        : characterSearchPending
+                          ? "Loading characters..."
+                          : availableCharacters.length === 0
+                            ? "All characters already added."
+                            : "No matches."}
                     </p>
                   )}
                 </PickerDropdown>

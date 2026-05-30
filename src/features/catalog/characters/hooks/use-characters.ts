@@ -11,6 +11,7 @@ import {
   updateGroupSchema,
 } from "../../../../engine/contracts/schemas/character.schema";
 import { characterApi } from "../../../../shared/api/character-api";
+import { ApiError } from "../../../../shared/api/api-errors";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { storageCommandsApi } from "../../../../shared/api/storage-commands-api";
 import { galleryApi, spriteApi } from "../../../../shared/api/image-generation-api";
@@ -25,6 +26,9 @@ export type CharacterSummary = {
   id: string;
   data?: {
     name?: string;
+    creator?: string;
+    creator_notes?: string;
+    character_version?: string;
     tags?: unknown[];
     extensions?: Record<string, unknown>;
   };
@@ -32,6 +36,8 @@ export type CharacterSummary = {
   avatarPath?: string | null;
   avatarFilePath?: string | null;
   avatarFilename?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type PersonaSummary = {
@@ -50,9 +56,10 @@ export type PersonaSummary = {
 };
 
 const CHARACTER_SUMMARY_OPTIONS = {
-  fields: ["id", "data", "comment", "avatarFilePath", "avatarFilename"],
-  fieldSelections: { data: ["name", "tags", "extensions"] },
+  fields: ["id", "data", "comment", "avatarPath", "avatarFilePath", "avatarFilename", "createdAt", "updatedAt"],
+  fieldSelections: { data: ["name", "creator", "creator_notes", "character_version", "tags", "extensions"] },
 };
+const CHARACTER_SUMMARY_BY_ID_CONCURRENCY = 8;
 const EMPTY_CHARACTER_SUMMARIES: CharacterSummary[] = [];
 
 const PERSONA_SUMMARY_OPTIONS = {
@@ -83,8 +90,40 @@ function isPresent<T>(value: T | null | undefined): value is NonNullable<T> {
   return value != null;
 }
 
-function listCharacterSummaries(): Promise<CharacterSummary[]> {
-  return storageApi.list<CharacterSummary>("characters", CHARACTER_SUMMARY_OPTIONS);
+function normalizeSearchQuery(search: string | null | undefined): string {
+  return search?.trim() ?? "";
+}
+
+function listCharacterSummaries(search?: string): Promise<CharacterSummary[]> {
+  const query = normalizeSearchQuery(search);
+  return storageApi.list<CharacterSummary>("characters", {
+    ...CHARACTER_SUMMARY_OPTIONS,
+    ...(query ? { search: query } : {}),
+  });
+}
+
+async function listCharacterSummariesByIds(ids: string[]): Promise<CharacterSummary[]> {
+  const results = new Array<CharacterSummary | null>(ids.length).fill(null);
+  let nextIndex = 0;
+  const workerCount = Math.min(CHARACTER_SUMMARY_BY_ID_CONCURRENCY, ids.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < ids.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        try {
+          results[index] = await storageApi.get<CharacterSummary>("characters", ids[index]!, CHARACTER_SUMMARY_OPTIONS);
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 404) {
+            results[index] = null;
+            continue;
+          }
+          throw error;
+        }
+      }
+    }),
+  );
+  return results.filter(isPresent);
 }
 
 function upsertCharacterListRecord(current: unknown[] | undefined, record: unknown): unknown[] | undefined {
@@ -144,13 +183,14 @@ export function cacheCharacterListRecordFromResult(
 }
 
 export function removeCachedCharacterRecord(
-  queryClient: Pick<QueryClient, "setQueryData" | "removeQueries">,
+  queryClient: Pick<QueryClient, "setQueryData" | "removeQueries" | "invalidateQueries">,
   id: string,
 ) {
   removeCharacterCollectionRecord(queryClient, characterKeys.list(), id);
   removeCharacterCollectionRecord(queryClient, characterKeys.summaries(), id);
   queryClient.removeQueries({ queryKey: characterKeys.detail(id) });
   queryClient.removeQueries({ queryKey: characterKeys.summaryDetail(id) });
+  queryClient.invalidateQueries({ queryKey: characterKeys.summaries() });
 }
 
 function refreshCharacterCollectionAfterMutation(
@@ -159,6 +199,7 @@ function refreshCharacterCollectionAfterMutation(
 ): void {
   const updated = cacheCharacterListRecordFromResult(queryClient, { character: result });
   if (!updated) invalidateCharacterCollectionQueries(queryClient);
+  else queryClient.invalidateQueries({ queryKey: characterKeys.summaries() });
 }
 
 function invalidateCharacterDetailQueries(
@@ -194,10 +235,11 @@ export function useCharacters(enabled = true) {
   });
 }
 
-export function useCharacterSummaries(enabled = true) {
+export function useCharacterSummaries(enabled = true, search?: string) {
+  const query = normalizeSearchQuery(search);
   return useQuery({
-    queryKey: characterKeys.summaries(),
-    queryFn: listCharacterSummaries,
+    queryKey: query ? characterKeys.summarySearch(query) : characterKeys.summaries(),
+    queryFn: () => listCharacterSummaries(query),
     enabled,
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
@@ -238,20 +280,23 @@ export function useCharacterSummariesByIds(ids: string[], enabled = true) {
     .map((id) => id.trim())
     .filter(Boolean)
     .join("\0");
+  const uniqueIds = useMemo(
+    () => (normalizedIdKey ? Array.from(new Set(normalizedIdKey.split("\0").filter(Boolean))) : []),
+    [normalizedIdKey],
+  );
   const shouldRead = enabled && normalizedIdKey.length > 0;
   const query = useQuery({
-    queryKey: characterKeys.summaries(),
-    queryFn: listCharacterSummaries,
+    queryKey: characterKeys.summaryByIds(uniqueIds),
+    queryFn: () => listCharacterSummariesByIds(uniqueIds),
     enabled: shouldRead,
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
   });
   const data = useMemo(() => {
     if (!shouldRead) return EMPTY_CHARACTER_SUMMARIES;
-    const uniqueIds = Array.from(new Set(normalizedIdKey.split("\0").filter(Boolean)));
     const byId = new Map((query.data ?? []).map((character) => [character.id, character]));
     return uniqueIds.map((id) => byId.get(id)).filter(isPresent);
-  }, [normalizedIdKey, query.data, shouldRead]);
+  }, [query.data, shouldRead, uniqueIds]);
 
   return {
     data,

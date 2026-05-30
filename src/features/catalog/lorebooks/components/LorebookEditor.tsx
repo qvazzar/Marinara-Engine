@@ -116,11 +116,35 @@ function writeCollapsedFolderIds(lorebookId: string, ids: Set<string>) {
   }
 }
 
+function useDebouncedValue(value: string, delayMs: number): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    if (value === "") {
+      setDebounced("");
+      return;
+    }
+    const handle = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(handle);
+  }, [delayMs, value]);
+  return debounced;
+}
+
+function splitSearchTerms(value: string): string[] {
+  return value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function searchValuesMatchTerms(values: string[], terms: string[]): boolean {
+  if (terms.length === 0) return true;
+  const normalizedValues = values.map((value) => value.toLowerCase());
+  return terms.every((term) => normalizedValues.some((value) => value.includes(term)));
+}
+
 // ── Types ──
 type LinkedResourceItem = {
   id: string;
   name: string;
   description?: string | null;
+  searchText?: string[];
   deleted?: boolean;
 };
 
@@ -146,6 +170,7 @@ function LinkedResourcePicker({
   search,
   onSearchChange,
   isLoading = false,
+  isError = false,
   isOpen,
   onOpen,
   onClose,
@@ -163,6 +188,7 @@ function LinkedResourcePicker({
   search: string;
   onSearchChange: (value: string) => void;
   isLoading?: boolean;
+  isError?: boolean;
   isOpen: boolean;
   onOpen: () => void;
   onClose: () => void;
@@ -178,10 +204,11 @@ function LinkedResourcePicker({
         deleted: true,
       },
   );
+  const searchTerms = useMemo(() => splitSearchTerms(search), [search]);
   const availableItems = items.filter(
     (item) =>
       !selectedIds.includes(item.id) &&
-      [item.name, item.description ?? ""].some((value) => value.toLowerCase().includes(search.toLowerCase())),
+      searchValuesMatchTerms(item.searchText ?? [item.name, item.description ?? ""], searchTerms),
   );
 
   return (
@@ -268,9 +295,11 @@ function LinkedResourcePicker({
               <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
                 {isLoading
                   ? "Loading..."
-                  : items.length === selectedItems.length
-                    ? `All ${label.toLowerCase()} already added.`
-                    : "No matches."}
+                  : isError
+                    ? `${label} could not be loaded.`
+                    : items.length === selectedItems.length
+                      ? `All ${label.toLowerCase()} already added.`
+                      : "No matches."}
               </p>
             )}
           </div>
@@ -432,13 +461,21 @@ export function LorebookEditor() {
   const [formTags, setFormTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState("");
   const [characterLinkSearch, setCharacterLinkSearch] = useState("");
+  const debouncedCharacterLinkSearch = useDebouncedValue(characterLinkSearch, 180);
   const [personaLinkSearch, setPersonaLinkSearch] = useState("");
   const [characterLinkPickerOpen, setCharacterLinkPickerOpen] = useState(false);
   const [personaLinkPickerOpen, setPersonaLinkPickerOpen] = useState(false);
 
   const { data: linkedRawCharacters } = useCharacterSummariesByIds(formCharacterIds, formCharacterIds.length > 0);
   const shouldLoadAllCharacters = characterLinkPickerOpen || activeTab === "entries";
-  const { data: allRawCharacters, isLoading: allRawCharactersLoading } = useCharacterSummaries(shouldLoadAllCharacters);
+  const {
+    data: allRawCharacters,
+    isFetching: allRawCharactersFetching,
+    isError: allRawCharactersError,
+  } = useCharacterSummaries(
+    shouldLoadAllCharacters,
+    characterLinkPickerOpen ? debouncedCharacterLinkSearch : undefined,
+  );
   const rawCharacters = useMemo(() => {
     const byId = new Map<string, NonNullable<typeof linkedRawCharacters>[number]>();
     for (const character of linkedRawCharacters ?? []) byId.set(character.id, character);
@@ -449,7 +486,17 @@ export function LorebookEditor() {
     return rawCharacters.map((c) => {
       const parsed = c.data ?? {};
       const tags = Array.isArray(parsed?.tags) ? parsed.tags.map(String).filter(Boolean) : [];
-      return { id: c.id, name: typeof parsed?.name === "string" ? parsed.name : "Unknown", tags };
+      const name = typeof parsed?.name === "string" ? parsed.name : "Unknown";
+      const searchText = [
+        c.id,
+        name,
+        c.comment,
+        typeof parsed?.creator === "string" ? parsed.creator : null,
+        typeof parsed?.creator_notes === "string" ? parsed.creator_notes : null,
+        typeof parsed?.character_version === "string" ? parsed.character_version : null,
+        ...tags,
+      ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+      return { id: c.id, name, tags, searchText };
     });
   }, [rawCharacters]);
   const characterTags = useMemo(
@@ -1326,7 +1373,12 @@ export function LorebookEditor() {
                         selectedIds={formCharacterIds}
                         search={characterLinkSearch}
                         onSearchChange={setCharacterLinkSearch}
-                        isLoading={characterLinkPickerOpen && allRawCharactersLoading}
+                        isLoading={
+                          characterLinkPickerOpen &&
+                          (allRawCharactersFetching ||
+                            characterLinkSearch.trim() !== debouncedCharacterLinkSearch.trim())
+                        }
+                        isError={characterLinkPickerOpen && allRawCharactersError}
                         isOpen={characterLinkPickerOpen}
                         onOpen={() => {
                           setCharacterLinkPickerOpen(true);

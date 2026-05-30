@@ -739,6 +739,166 @@ mod tests {
     }
 
     #[test]
+    fn apply_storage_search_matches_character_summary_fields() {
+        let mut rows = vec![
+            json!({
+                "id": "char-rina",
+                "comment": "ice mage",
+                "avatarPath": "data:image/png;base64,needle",
+                "data": {
+                    "name": "Rina",
+                    "creator": "Xel",
+                    "creator_notes": "Frost academy rival",
+                    "tags": ["Mage", "Winter"]
+                }
+            }),
+            json!({
+                "id": "char-mari",
+                "comment": "assistant",
+                "avatarPath": "data:image/png;base64,very-large-avatar",
+                "data": {
+                    "name": "Professor Mari",
+                    "creator": "Pasta",
+                    "creator_notes": "Codebase helper",
+                    "tags": ["Guide"]
+                }
+            }),
+        ];
+
+        apply_storage_search(&mut rows, Some(&json!({ "search": "winter rina" })));
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], "char-rina");
+    }
+
+    #[test]
+    fn apply_storage_search_ignores_avatar_payload_text() {
+        let mut rows = vec![json!({
+            "id": "char-rina",
+            "avatarPath": "data:image/png;base64,hidden-needle",
+            "data": {
+                "name": "Rina",
+                "tags": []
+            }
+        })];
+
+        apply_storage_search(&mut rows, Some(&json!({ "search": "hidden-needle" })));
+
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn apply_storage_search_matches_message_content_and_swipes() {
+        let mut rows = vec![
+            json!({
+                "id": "message-direct",
+                "content": "The party finds a silver key."
+            }),
+            json!({
+                "id": "message-swipe",
+                "content": "No match here.",
+                "swipes": [
+                    { "content": "Alternate route through the moonlit archive." }
+                ]
+            }),
+            json!({
+                "id": "message-miss",
+                "content": "Plain campfire chatter."
+            }),
+        ];
+
+        apply_storage_search(&mut rows, Some(&json!({ "search": "moonlit" })));
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], "message-swipe");
+    }
+
+    #[test]
+    fn apply_storage_search_matches_string_encoded_character_data() {
+        let mut rows = vec![json!({
+            "id": "char-legacy",
+            "data": r#"{"name":"Legacy Rin","creator_notes":"Imported archive"}"#
+        })];
+
+        apply_storage_search(&mut rows, Some(&json!({ "search": "archive" })));
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], "char-legacy");
+    }
+
+    #[test]
+    fn project_list_rows_applies_field_selections_to_string_encoded_data() {
+        let rows = vec![json!({
+            "id": "char-legacy",
+            "data": r#"{"name":"Legacy Rin","description":"large prompt","creator_notes":"Imported archive"}"#
+        })];
+
+        let projected = project_list_rows(
+            rows,
+            Some(&json!({
+                "fields": ["id", "data"],
+                "fieldSelections": { "data": ["name", "creator_notes"] }
+            })),
+        );
+
+        assert_eq!(
+            projected,
+            vec![json!({
+                "id": "char-legacy",
+                "data": {
+                    "name": "Legacy Rin",
+                    "creator_notes": "Imported archive"
+                }
+            })],
+        );
+    }
+
+    #[test]
+    fn project_list_rows_keeps_only_legacy_avatar_path_for_summary_projection() {
+        let rows = vec![
+            json!({
+                "id": "managed",
+                "avatarPath": "data:image/png;base64,large",
+                "avatarFilePath": "C:\\Marinara\\avatars\\managed.png",
+                "avatarFilename": "managed.png"
+            }),
+            json!({
+                "id": "legacy",
+                "avatarPath": "data:image/png;base64,legacy"
+            }),
+        ];
+
+        let projected = project_list_rows(
+            rows,
+            Some(&json!({
+                "fields": ["id", "avatarPath", "avatarFilePath", "avatarFilename"]
+            })),
+        );
+
+        assert_eq!(
+            projected,
+            vec![
+                json!({
+                    "id": "managed",
+                    "avatarFilePath": "C:\\Marinara\\avatars\\managed.png",
+                    "avatarFilename": "managed.png"
+                }),
+                json!({
+                    "id": "legacy",
+                    "avatarPath": "data:image/png;base64,legacy"
+                })
+            ],
+        );
+    }
+
+    #[test]
+    fn has_storage_search_ignores_empty_terms() {
+        assert!(!has_storage_search(Some(&json!({ "search": "   " }))));
+        assert!(!has_storage_search(Some(&json!({ "search": null }))));
+        assert!(has_storage_search(Some(&json!({ "search": "rina" }))));
+    }
+
+    #[test]
     fn character_update_patch_rejects_invalid_data_shape() {
         for invalid in [
             json!(true),
@@ -1431,12 +1591,116 @@ pub(crate) fn project_record(row: Value, options: Option<&Value>) -> Value {
     project_row(row, &fields, options)
 }
 
+pub(crate) fn projection_fields(options: Option<&Value>) -> Option<Vec<String>> {
+    option_string_array(options, "fields").map(|fields| {
+        fields
+            .into_iter()
+            .map(|field| field.trim().to_string())
+            .filter(|field| !field.is_empty())
+            .collect()
+    })
+}
+
+pub(crate) fn projection_field_selections(
+    options: Option<&Value>,
+) -> &serde_json::Map<String, Value> {
+    if let Some(selections) = options
+        .and_then(|value| value.get("fieldSelections"))
+        .and_then(Value::as_object)
+    {
+        selections
+    } else {
+        empty_projection_field_selections()
+    }
+}
+
+fn empty_projection_field_selections() -> &'static serde_json::Map<String, Value> {
+    static EMPTY: std::sync::OnceLock<serde_json::Map<String, Value>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(serde_json::Map::new)
+}
+
+pub(crate) fn apply_storage_search(rows: &mut Vec<Value>, options: Option<&Value>) {
+    let Some(query) = storage_search_query(options) else {
+        return;
+    };
+    let terms = query
+        .split_whitespace()
+        .map(|term| term.to_ascii_lowercase())
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    if terms.is_empty() {
+        return;
+    }
+    rows.retain(|row| terms.iter().all(|term| row_matches_search_term(row, term)));
+}
+
+pub(crate) fn has_storage_search(options: Option<&Value>) -> bool {
+    storage_search_query(options).is_some()
+}
+
+fn storage_search_query(options: Option<&Value>) -> Option<&str> {
+    options
+        .and_then(|value| value.get("search"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn row_matches_search_term(row: &Value, term: &str) -> bool {
+    let Some(object) = row.as_object() else {
+        return false;
+    };
+    value_matches_search_term(object.get("id"), term)
+        || value_matches_search_term(object.get("name"), term)
+        || value_matches_search_term(object.get("comment"), term)
+        || value_matches_search_term(object.get("content"), term)
+        || swipe_content_matches_search_term(object.get("swipes"), term)
+        || json_object_value(object.get("data")).is_some_and(|data| {
+            let Some(data) = data.as_object() else {
+                return false;
+            };
+            value_matches_search_term(data.get("name"), term)
+                || value_matches_search_term(data.get("creator"), term)
+                || value_matches_search_term(data.get("creator_notes"), term)
+                || value_matches_search_term(data.get("tags"), term)
+        })
+}
+
+fn value_matches_search_term(value: Option<&Value>, term: &str) -> bool {
+    match value {
+        Some(Value::String(value)) => value.to_ascii_lowercase().contains(term),
+        Some(Value::Array(values)) => values
+            .iter()
+            .any(|value| value_matches_search_term(Some(value), term)),
+        _ => false,
+    }
+}
+
+fn swipe_content_matches_search_term(value: Option<&Value>, term: &str) -> bool {
+    let Some(Value::Array(swipes)) = value else {
+        return false;
+    };
+    swipes
+        .iter()
+        .any(|swipe| value_matches_search_term(swipe.get("content"), term))
+}
+
 fn project_row(row: Value, fields: &[String], options: Option<&Value>) -> Value {
     let Value::Object(object) = row else {
         return row;
     };
     let mut projected = Map::new();
+    let omit_redundant_avatar_path = fields
+        .iter()
+        .any(|field| field == "avatarFilePath" || field == "avatarFilename")
+        && [object.get("avatarFilePath"), object.get("avatarFilename")]
+            .into_iter()
+            .flatten()
+            .any(|value| value.as_str().is_some_and(|value| !value.trim().is_empty()));
     for field in fields {
+        if field == "avatarPath" && omit_redundant_avatar_path {
+            continue;
+        }
         let Some(value) = object.get(field) else {
             continue;
         };
@@ -1461,17 +1725,23 @@ fn project_nested_field(field: &str, value: Value, options: Option<&Value>) -> V
         return value;
     }
     match value {
-        Value::Object(object) => {
-            let mut projected = Map::new();
-            for nested_field in nested_fields {
-                if let Some(nested_value) = object.get(&nested_field) {
-                    projected.insert(nested_field, nested_value.clone());
-                }
-            }
-            Value::Object(projected)
-        }
+        Value::String(raw) => match serde_json::from_str::<Value>(&raw) {
+            Ok(Value::Object(object)) => project_object_nested_fields(&object, &nested_fields),
+            _ => Value::String(raw),
+        },
+        Value::Object(object) => project_object_nested_fields(&object, &nested_fields),
         other => other,
     }
+}
+
+fn project_object_nested_fields(object: &Map<String, Value>, nested_fields: &[String]) -> Value {
+    let mut projected = Map::new();
+    for nested_field in nested_fields {
+        if let Some(nested_value) = object.get(nested_field) {
+            projected.insert(nested_field.clone(), nested_value.clone());
+        }
+    }
+    Value::Object(projected)
 }
 
 fn option_string_array(options: Option<&Value>, key: &str) -> Option<Vec<String>> {
