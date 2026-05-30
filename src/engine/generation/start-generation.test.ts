@@ -71,8 +71,9 @@ function generationDepsForChat(
     { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "What now?" },
   ];
   const messagesById = new Map(initialMessages.map((message) => [String(message.id), message]));
-  const listChatMessages = vi.fn(async (_chatId: string, _options?: Parameters<StorageGateway["listChatMessages"]>[1]) =>
-    listChatMessages.mock.calls.length > 1 && options.messagesAfterSave ? options.messagesAfterSave : initialMessages,
+  const listChatMessages = vi.fn(
+    async (_chatId: string, _options?: Parameters<StorageGateway["listChatMessages"]>[1]) =>
+      listChatMessages.mock.calls.length > 1 && options.messagesAfterSave ? options.messagesAfterSave : initialMessages,
   );
   const streamedRequests: unknown[] = [];
   const completedRequests: unknown[] = [];
@@ -1496,21 +1497,27 @@ describe("startGeneration automatic Illustrator cadence", () => {
         model: "test-image-model",
       } as T;
     };
+    const spriteRequests: Array<[string, string | undefined]> = [];
     const visuals: VisualAssetGateway = {
-      listSprites: vi.fn(async (characterId: string) =>
-        characterId === "char-dottore"
-          ? [
-              { expression: "neutral", url: "data:image/png;base64,portrait-sprite" },
-              { expression: "full_idle", url: "data:image/png;base64,full-body-sprite" },
-            ]
-          : [],
-      ),
+      listSprites: vi.fn(async (ownerId: string, ownerType?: "character" | "persona") => {
+        spriteRequests.push([ownerId, ownerType]);
+        if (ownerId === "char-dottore") {
+          return [
+            { expression: "neutral", url: "data:image/png;base64,portrait-sprite" },
+            { expression: "full_idle", url: "data:image/png;base64,full-body-sprite" },
+          ];
+        }
+        if (ownerId === "persona-mari" && ownerType === "persona") {
+          return [{ expression: "full_neutral", url: "data:image/png;base64,mari-full-body-sprite" }];
+        }
+        return [];
+      }),
       listBackgrounds: vi.fn(async () => []),
     };
     const illustratorResponse = JSON.stringify({
       shouldGenerate: true,
       reason: "Important visual beat",
-      prompt: "Dottore and Mari in a moonlit laboratory confrontation",
+      prompt: "Two figures in a moonlit laboratory confrontation",
       negativePrompt: "low detail",
     });
     const { deps, createChatMessage, patchChatMessageExtra } = generationDepsForChat({
@@ -1560,7 +1567,6 @@ describe("startGeneration automatic Illustrator cadence", () => {
             imageConnectionId: "image-conn",
             imagePositivePrompt: "painterly, dramatic lighting",
             imageNegativePrompt: "bad anatomy",
-            useAvatarReferences: true,
           },
         },
       ],
@@ -1587,9 +1593,17 @@ describe("startGeneration automatic Illustrator cadence", () => {
       width: 768,
       height: 1024,
       negativePrompt: "low detail, bad anatomy",
-      referenceImages: ["data:image/png;base64,full-body-sprite", "data:image/png;base64,mari-avatar"],
+      referenceImages: [
+        "data:image/png;base64,full-body-sprite",
+        "data:image/png;base64,mari-full-body-sprite",
+        "data:image/png;base64,mari-avatar",
+      ],
     });
-    expect(String(imageRequest.prompt)).toContain("Dottore and Mari");
+    expect(spriteRequests).toEqual([
+      ["char-dottore", "character"],
+      ["persona-mari", "persona"],
+    ]);
+    expect(String(imageRequest.prompt)).toContain("Two figures");
     expect(String(imageRequest.prompt)).toContain("Il Dottore: blue hair");
     expect(String(imageRequest.prompt)).toContain("Mari: brown hair");
     expect(String(imageRequest.prompt)).toContain("painterly");
@@ -1625,7 +1639,7 @@ describe("startGeneration automatic Illustrator cadence", () => {
         chatId: "chat-1",
         kind: "illustration",
         prompt: imageRequest.prompt,
-        referenceImageCount: 2,
+        referenceImageCount: 3,
       }),
     );
   });

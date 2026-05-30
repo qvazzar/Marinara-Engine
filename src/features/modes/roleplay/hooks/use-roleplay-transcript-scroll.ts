@@ -86,7 +86,7 @@ export function useRoleplayTranscriptScroll({
   useEffect(() => {
     if (isLoadingMoreRef.current) return;
     if (forceScrollToNewest || (isNearBottomRef.current && !userScrolledAwayRef.current)) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? "auto" : "smooth" });
     }
   }, [newestMsgId, newestMsgSwipeIndex, streamBuffer, thinkingBuffer, isStreaming, forceScrollToNewest]);
 

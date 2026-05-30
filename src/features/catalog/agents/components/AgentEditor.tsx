@@ -271,7 +271,9 @@ export function AgentEditor() {
       setLocalSourceFileIds(settings.sourceFileIds ?? []);
       setLocalAutoGenerateAvatars(settings.autoGenerateAvatars ?? false);
       setLocalAutoGenerateBackgrounds(settings.autoGenerateBackgrounds ?? false);
-      setLocalUseAvatarReferences(settings.useAvatarReferences ?? false);
+      setLocalUseAvatarReferences(
+        (settings.useAvatarReferences as boolean | undefined) ?? defaultSettings.useAvatarReferences === true,
+      );
       setLocalImagePositivePrompt((settings.imagePositivePrompt as string) ?? "");
       setLocalImageNegativePrompt((settings.imageNegativePrompt as string) ?? "");
       setLocalResultType(normalizeCustomResultType(settings.resultType));
@@ -296,7 +298,7 @@ export function AgentEditor() {
       setLocalSourceFileIds([]);
       setLocalAutoGenerateAvatars(false);
       setLocalAutoGenerateBackgrounds(false);
-      setLocalUseAvatarReferences(false);
+      setLocalUseAvatarReferences(defaultSettings.useAvatarReferences === true);
       setLocalImagePositivePrompt("");
       setLocalImageNegativePrompt("");
       setLocalResultType("context_injection");
@@ -515,7 +517,7 @@ export function AgentEditor() {
         ...(localImageConnectionId ? { imageConnectionId: localImageConnectionId } : {}),
         ...(localAutoGenerateAvatars ? { autoGenerateAvatars: true } : {}),
         ...(localAutoGenerateBackgrounds ? { autoGenerateBackgrounds: true } : {}),
-        ...(localUseAvatarReferences ? { useAvatarReferences: true } : {}),
+        ...(isIllustratorAgent ? { useAvatarReferences: localUseAvatarReferences } : {}),
         ...(localImagePositivePrompt.trim() ? { imagePositivePrompt: localImagePositivePrompt.trim() } : {}),
         ...(localImageNegativePrompt.trim() ? { imageNegativePrompt: localImageNegativePrompt.trim() } : {}),
       },
@@ -992,11 +994,12 @@ export function AgentEditor() {
                   }}
                   className="rounded border-[var(--border)] bg-[var(--secondary)] text-[var(--primary)] focus:ring-[var(--ring)]"
                 />
-                <span className="text-sm">Send character &amp; persona avatars as reference images</span>
+                <span className="text-sm">Send character &amp; persona references</span>
               </label>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                Sends all character avatars in the scene plus your persona avatar to the image generator for visual
-                reference. Works best with providers that support reference images (NovelAI, Stability, A1111, ComfyUI).
+                Sends full-body sprites when available, otherwise character avatars and your persona avatar, to the
+                image generator for visual reference. Works best with providers that support reference images (NovelAI,
+                Stability, A1111, ComfyUI).
               </p>
             </FieldGroup>
           )}

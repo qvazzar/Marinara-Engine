@@ -12,6 +12,7 @@ const CHAT_MESSAGE_TIMELINE_FIELDS = [
   "characterName",
   "activeSwipeIndex",
   "swipeCount",
+  "swipePreviews",
   "rowid",
   "extra",
   "createdAt",

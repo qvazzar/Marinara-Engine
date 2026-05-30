@@ -5,7 +5,7 @@ import type { EventGateway } from "../capabilities/events";
 import type { IntegrationGateway } from "../capabilities/integrations";
 import type { LlmGateway, LlmMessage } from "../capabilities/llm";
 import type { StorageGateway } from "../capabilities/storage";
-import type { VisualAssetGateway } from "../capabilities/visual-assets";
+import type { SpriteOwnerType, VisualAssetGateway } from "../capabilities/visual-assets";
 import type { GenerationGuideSource } from "../shared/text/generation-guide";
 import { chatSummaryFingerprintMatches, fingerprintChatSummary } from "../shared/text/chat-summary-fingerprint";
 import { collapseExcessBlankLines } from "../shared/text/newlines";
@@ -413,6 +413,7 @@ type IllustrationReferenceSubject = {
   name: string;
   appearance: string;
   avatar: string;
+  spriteOwnerType: SpriteOwnerType;
 };
 
 type IllustrationReferenceData = {
@@ -559,7 +560,9 @@ async function illustrationImageSettings(args: {
       readString(meta.selfieNegativePrompt).trim(),
     ]),
     useAvatarReferences:
-      boolish(settings.useAvatarReferences, false) || boolish(meta.illustrationUseAvatarReferences, false),
+      (settings.useAvatarReferences === undefined || settings.useAvatarReferences === null
+        ? true
+        : boolish(settings.useAvatarReferences, false)) || boolish(meta.illustrationUseAvatarReferences, false),
   };
 }
 
@@ -570,11 +573,12 @@ async function loadIllustrationReferenceSubjects(
   const characterRows = await Promise.all(
     activeCharacterIds(chat).map((id) => storage.get<JsonRecord>("characters", id).catch(() => null)),
   );
-  const subjects = characterRows.filter(isRecord).map((row) => ({
+  const subjects: IllustrationReferenceSubject[] = characterRows.filter(isRecord).map((row) => ({
     id: readString(row.id).trim(),
     name: recordName(row),
     appearance: recordAppearance(row),
     avatar: recordAvatar(row),
+    spriteOwnerType: "character",
   }));
   const personaId = readString(chat.personaId).trim();
   const persona = personaId ? await storage.get<JsonRecord>("personas", personaId).catch(() => null) : null;
@@ -584,6 +588,7 @@ async function loadIllustrationReferenceSubjects(
       name: recordName(persona),
       appearance: recordAppearance(persona),
       avatar: recordAvatar(persona),
+      spriteOwnerType: "persona",
     });
   }
   return subjects.filter((subject) => subject.id && subject.name);
@@ -597,20 +602,29 @@ async function illustrationReferenceData(args: {
   includeAppearances: boolean;
   useAvatarReferences: boolean;
 }): Promise<IllustrationReferenceData> {
-  const subjects = (await loadIllustrationReferenceSubjects(args.storage, args.chat)).filter((subject) =>
-    matchesIllustrationSubject(subject, args.item),
-  );
+  const subjects = await loadIllustrationReferenceSubjects(args.storage, args.chat);
+  const matchedSubjects = subjects.filter((subject) => matchesIllustrationSubject(subject, args.item));
+  const appearanceSubjects = matchedSubjects.length > 0 ? matchedSubjects : subjects;
+  const hasExplicitReferenceSubjects = args.item.characterNames.some((name) => name.trim());
+  const referenceSubjects = hasExplicitReferenceSubjects && matchedSubjects.length > 0 ? matchedSubjects : subjects;
   const referenceImages: string[] = [];
   const appearanceNotes: string[] = [];
-  for (const subject of subjects) {
+  for (const subject of appearanceSubjects) {
     if (args.includeAppearances && subject.appearance) {
       appearanceNotes.push(`${subject.name}: ${subject.appearance}`);
     }
+  }
+  for (const subject of referenceSubjects) {
     if (!args.useAvatarReferences) continue;
-    const sprites = args.visuals ? await args.visuals.listSprites(subject.id).catch(() => []) : [];
+    const sprites = args.visuals
+      ? await args.visuals.listSprites(subject.id, subject.spriteOwnerType).catch(() => [])
+      : [];
     const spriteReference = fullBodySpriteReference(sprites as Array<Record<string, unknown>>);
     const reference = spriteReference || subject.avatar;
-    if (reference) referenceImages.push(reference);
+    if (reference && !referenceImages.includes(reference)) referenceImages.push(reference);
+    if (subject.spriteOwnerType === "persona" && subject.avatar && !referenceImages.includes(subject.avatar)) {
+      referenceImages.push(subject.avatar);
+    }
   }
   return { referenceImages, appearanceNotes };
 }

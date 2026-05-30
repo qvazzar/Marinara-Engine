@@ -72,14 +72,23 @@ pub(crate) fn materialize_message_swipe_fields(message: &mut Value) {
     let Some(object) = message.as_object_mut() else {
         return;
     };
-    let Some((swipe_count, active_index, active_content, active_extra)) = object
+    let Some((swipe_count, active_index, active_content, active_extra, swipe_previews)) = object
         .get("swipes")
         .and_then(Value::as_array)
         .map(|swipes| {
             let swipe_count = swipes.len();
             if swipe_count == 0 {
-                return (0, 0, None, None);
+                return (0, 0, None, None, Vec::new());
             }
+
+            let swipe_previews = swipes
+                .iter()
+                .map(|swipe| {
+                    json!({
+                        "content": swipe.get("content").and_then(Value::as_str).unwrap_or("")
+                    })
+                })
+                .collect::<Vec<_>>();
 
             let requested_index = object
                 .get("activeSwipeIndex")
@@ -93,11 +102,18 @@ pub(crate) fn materialize_message_swipe_fields(message: &mut Value) {
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
             let active_extra = json_object_value(active_swipe.and_then(|swipe| swipe.get("extra")));
-            (swipe_count, active_index, active_content, active_extra)
+            (
+                swipe_count,
+                active_index,
+                active_content,
+                active_extra,
+                swipe_previews,
+            )
         })
     else {
         return;
     };
+    object.insert("swipePreviews".to_string(), Value::Array(swipe_previews));
     object.insert("swipeCount".to_string(), json!(swipe_count));
     if swipe_count == 0 {
         object.insert("activeSwipeIndex".to_string(), json!(0));
@@ -116,7 +132,7 @@ pub(crate) fn materialize_message_swipe_fields(message: &mut Value) {
     }
 }
 
-const TIMELINE_MESSAGE_FIELDS: [&str; 13] = [
+const TIMELINE_MESSAGE_FIELDS: [&str; 14] = [
     "id",
     "chatId",
     "role",
@@ -127,6 +143,7 @@ const TIMELINE_MESSAGE_FIELDS: [&str; 13] = [
     "characterName",
     "activeSwipeIndex",
     "swipeCount",
+    "swipePreviews",
     "rowid",
     "extra",
     "createdAt",
@@ -1162,6 +1179,10 @@ mod tests {
         materialize_message_swipe_fields(&mut message);
 
         assert_eq!(message["content"], json!("second"));
+        assert_eq!(
+            message["swipePreviews"],
+            json!([{ "content": "first" }, { "content": "second" }])
+        );
         assert_eq!(message["extra"]["hiddenFromAI"], json!(true));
         assert_eq!(
             message["extra"]["generationInfo"]["model"],

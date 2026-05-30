@@ -1021,7 +1021,8 @@ function replaceCachedMessage(
 }
 
 function messageWithOptimisticActiveSwipe(message: Message, requestedIndex: number): Message {
-  const rawSwipes = (message as Message & { swipes?: unknown }).swipes;
+  const previewSource = message as Message & { swipePreviews?: unknown; swipes?: unknown };
+  const rawSwipes = Array.isArray(previewSource.swipes) ? previewSource.swipes : previewSource.swipePreviews;
   const swipes = Array.isArray(rawSwipes) ? rawSwipes : [];
   const swipeCount =
     typeof message.swipeCount === "number" && Number.isFinite(message.swipeCount) && message.swipeCount > 0

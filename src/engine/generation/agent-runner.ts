@@ -973,7 +973,7 @@ async function loadAgentAvailableSprites(
 
   const personaId = readString(input.chat.personaId).trim();
   if (personaId && input.persona && (!restrictToSelectedSprites || selectedSpriteIds.has(personaId))) {
-    const sprites = await visuals.listSprites(personaId).catch(() => []);
+    const sprites = await visuals.listSprites(personaId, "persona").catch(() => []);
     const spritePersona = buildAvailableSpriteCharacter(personaId, input.persona.name, sprites, spriteDisplayModes);
     if (spritePersona) perCharacter.push(spritePersona);
   }

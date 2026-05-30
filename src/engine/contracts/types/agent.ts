@@ -516,6 +516,10 @@ export function getDefaultBuiltInAgentSettings(agentType: string): Record<string
     settings.runInterval = runInterval;
   }
 
+  if (agentType === "illustrator") {
+    settings.useAvatarReferences = true;
+  }
+
   return settings;
 }
 

@@ -69,6 +69,7 @@ type AgentResultEffectOptions = {
 };
 const HAPTIC_COMMAND_INTERVAL_MS = 225;
 const TYPEWRITER_MAX_FRAME_MS = 120;
+const STREAM_BUFFER_COMMIT_INTERVAL_MS = 45;
 const AGENT_DEBUG_FLUSH_DELAY_MS = 80;
 const AGENT_DEBUG_FLUSH_CHUNK_SIZE = 8;
 const AGENT_DEBUG_FLUSH_CONTINUE_DELAY_MS = 16;
@@ -973,6 +974,8 @@ export async function runGenerationWithUi(
   let received = "";
   let receivedThinking = false;
   let visibleStreamText = "";
+  let committedStreamText = "";
+  let lastStreamBufferCommitAt = 0;
   let pendingReveal = "";
   let typewriterFrame: number | null = null;
   let typewriterActive = false;
@@ -999,10 +1002,20 @@ export async function runGenerationWithUi(
     revealWaiters.clear();
   };
 
+  const commitVisibleStreamBuffer = (force = false, now = performance.now()) => {
+    if (visibleStreamText === committedStreamText) return;
+    if (!force && lastStreamBufferCommitAt > 0 && now - lastStreamBufferCommitAt < STREAM_BUFFER_COMMIT_INTERVAL_MS) {
+      return;
+    }
+    committedStreamText = visibleStreamText;
+    lastStreamBufferCommitAt = now;
+    useChatStore.getState().setStreamBuffer(visibleStreamText, chatId);
+  };
+
   const appendVisibleStreamText = (text: string) => {
     if (!text) return;
     visibleStreamText += text;
-    useChatStore.getState().setStreamBuffer(visibleStreamText, chatId);
+    commitVisibleStreamBuffer();
     useChatStore.getState().setMariPhase(chatId, "thinking");
   };
 
@@ -1054,6 +1067,7 @@ export async function runGenerationWithUi(
     typewriterActive = false;
     lastTypewriterPaintAt = 0;
     typewriterRemainder = 0;
+    commitVisibleStreamBuffer(true, now);
     resolveRevealWaiters();
   };
 
@@ -1082,7 +1096,7 @@ export async function runGenerationWithUi(
       pendingReveal = "";
       typewriterActive = false;
       visibleStreamText = received;
-      useChatStore.getState().setStreamBuffer(visibleStreamText, chatId);
+      commitVisibleStreamBuffer(true);
       if (visibleStreamText) useChatStore.getState().setMariPhase(chatId, "thinking");
       resolveAllRevealWaiters();
       return;
