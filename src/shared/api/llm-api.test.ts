@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LlmRequest } from "../../engine/capabilities/llm";
+import type { LlmChunk, LlmRequest } from "../../engine/capabilities/llm";
 import { useUIStore } from "../stores/ui.store";
 import { llmApi } from "./llm-api";
 import { invokeTauri } from "./tauri-client";
@@ -24,6 +24,13 @@ function pendingCommand(): Promise<void> {
 
 function sseChunk(event: unknown): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+function sentChannel(): { onmessage: (event: LlmChunk) => void } {
+  const streamCall = vi.mocked(invokeTauri).mock.calls.find(([command]) => command === "llm_stream_channel");
+  const args = streamCall?.[1] as { onEvent?: { onmessage?: (event: LlmChunk) => void } } | undefined;
+  if (!args?.onEvent?.onmessage) throw new Error("llm_stream_channel onEvent was not registered");
+  return { onmessage: args.onEvent.onmessage };
 }
 
 describe("llmApi stream cancellation", () => {
@@ -149,5 +156,46 @@ describe("llmApi stream cancellation", () => {
       expect.objectContaining({ streamId: expect.any(String) }),
     );
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("cancels a local stream when the consumer closes the generator early", async () => {
+    invokeMock.mockImplementation((command) => {
+      if (command === "llm_stream_channel") return pendingCommand();
+      if (command === "llm_stream_cancel") return Promise.resolve();
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+    const iterator = llmApi.stream(request);
+
+    const first = iterator.next();
+    await Promise.resolve();
+    sentChannel().onmessage({ type: "token", text: "hello" });
+
+    await expect(first).resolves.toMatchObject({ done: false, value: { type: "token", text: "hello" } });
+    await iterator.return(undefined);
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      "llm_stream_cancel",
+      expect.objectContaining({ streamId: expect.any(String) }),
+    );
+  });
+
+  it("cancels a local stream if the terminal event arrives before the native command settles", async () => {
+    invokeMock.mockImplementation((command) => {
+      if (command === "llm_stream_channel") return pendingCommand();
+      if (command === "llm_stream_cancel") return Promise.resolve();
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+    const iterator = llmApi.stream(request);
+
+    const doneEvent = iterator.next();
+    await Promise.resolve();
+    sentChannel().onmessage({ type: "done" });
+
+    await expect(doneEvent).resolves.toMatchObject({ done: false, value: { type: "done" } });
+    await expect(iterator.next()).resolves.toMatchObject({ done: true });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "llm_stream_cancel",
+      expect.objectContaining({ streamId: expect.any(String) }),
+    );
   });
 });

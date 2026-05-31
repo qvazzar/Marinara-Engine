@@ -66,14 +66,21 @@ export const llmApi: LlmGateway = {
     let completed = false;
     let failure: unknown = null;
     let wake: (() => void) | null = null;
+    let commandSettled = false;
+    let cancelRequested = false;
 
     const notify = () => {
       wake?.();
       wake = null;
     };
+    const cancelNativeStream = () => {
+      if (cancelRequested || commandSettled) return;
+      cancelRequested = true;
+      void ignoreLlmStreamCancelFailure("tauri", streamId, invokeTauri("llm_stream_cancel", { streamId }));
+    };
     const abort = () => {
       failure = new DOMException("The operation was aborted.", "AbortError");
-      void ignoreLlmStreamCancelFailure("tauri", streamId, invokeTauri("llm_stream_cancel", { streamId }));
+      cancelNativeStream();
       notify();
     };
 
@@ -93,11 +100,17 @@ export const llmApi: LlmGateway = {
       streamId,
       request,
       onEvent,
-    }).catch((error) => {
-      failure = error;
-      completed = true;
-      notify();
-    });
+    }).then(
+      () => {
+        commandSettled = true;
+      },
+      (error) => {
+        commandSettled = true;
+        failure = error;
+        completed = true;
+        notify();
+      },
+    );
 
     try {
       while (!completed || queue.length > 0) {
@@ -112,10 +125,12 @@ export const llmApi: LlmGateway = {
         if (event.type === "error") throw new Error(String(event.text ?? event.data ?? "LLM stream failed"));
         yield event;
       }
-      await command;
+      if (commandSettled) await command;
+      else cancelNativeStream();
       if (failure) throw failure;
     } finally {
       signal?.removeEventListener("abort", abort);
+      cancelNativeStream();
       activeTauriStreamIds.delete(streamId);
     }
   },
