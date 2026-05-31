@@ -5,10 +5,6 @@ import { ChatSidebar, type ChatSidebarTab } from "./ChatSidebar";
 import { AppFindOverlay } from "./AppFindOverlay";
 import { TopBar } from "./TopBar";
 import { WindowTitleBar } from "./WindowTitleBar";
-import { SpotifyMobileWidget } from "../../features/shell/spotify/shell";
-import { ChatNotificationBubbles } from "../../features/shell/notifications/shell";
-import { AgentDebugPanel } from "../../features/catalog/agents/shell";
-import { ProfessorMariSurface } from "../../features/shell/mari/shell";
 import {
   getTrackerPanelWidthForProfile,
   RIGHT_PANEL_WIDTH_MAX,
@@ -19,8 +15,9 @@ import {
 } from "../../shared/stores/ui.store";
 import type { TrackerPanelSizeProfile } from "../../shared/stores/ui.store";
 import { useChatStore } from "../../shared/stores/chat.store";
-import { useBackgroundAutonomousPolling } from "../../features/modes/conversation/index";
-import { useClearAutonomousUnread } from "../../features/catalog/chats/index";
+import { useAgentStore } from "../../shared/stores/agent.store";
+import { useBackgroundAutonomousPolling } from "../../features/modes/conversation/background-autonomous";
+import { useClearAutonomousUnread } from "../../features/catalog/chats/autonomous-unread";
 import { useIdleDetection } from "../../shared/hooks/use-idle-detection";
 import { ImagePromptReviewHost } from "../../shared/components/ui/ImagePromptReviewHost";
 import { cn } from "../../shared/lib/utils";
@@ -57,6 +54,22 @@ const TrackerDataSidebar = lazy(() =>
 const OnboardingTutorial = lazy(() =>
   import("../../features/shell/onboarding/shell").then((module) => ({ default: module.OnboardingTutorial })),
 );
+const ProfessorMariSurface = lazy(() =>
+  import("../../features/shell/mari/shell").then((module) => ({ default: module.ProfessorMariSurface })),
+);
+const ChatNotificationBubbles = lazy(() =>
+  import("../../features/shell/notifications/shell").then((module) => ({
+    default: module.ChatNotificationBubbles,
+  })),
+);
+const AgentDebugPanel = lazy(() =>
+  import("../../features/catalog/agents/debug-shell").then((module) => ({
+    default: module.AgentDebugPanel,
+  })),
+);
+const SpotifyMobileWidget = lazy(() =>
+  import("../../features/shell/spotify/shell").then((module) => ({ default: module.SpotifyMobileWidget })),
+);
 
 function clampWidth(width: number, min: number, max: number) {
   return Math.max(min, Math.min(max, width));
@@ -75,6 +88,7 @@ function getMobileTrackerPanelWidthForProfile(profile: TrackerPanelSizeProfile) 
 }
 
 const PANEL_RESIZE_STEP = 16;
+const NOTIFICATION_BUBBLES_EXIT_MS = 500;
 const PANEL_RESIZE_LARGE_STEP = 48;
 const RESIZER_HITBOX = 10;
 const TRACKER_PANEL_EDGE_OFFSET = 8;
@@ -209,6 +223,11 @@ export function AppShell() {
   const [rightPanelDragWidth, setRightPanelDragWidth] = useState<number | null>(null);
   const [activeChatSidebarTab, setActiveChatSidebarTab] = useState<ChatSidebarTab>("conversation");
   const [professorMariOpen, setProfessorMariOpen] = useState(false);
+  const chatNotificationCount = useChatStore((s) => s.chatNotifications.size);
+  const [notificationBubblesMounted, setNotificationBubblesMounted] = useState(false);
+  const debugMode = useUIStore((s) => s.debugMode);
+  const hasAgentDebugActivity = useAgentStore((s) => debugMode && (s.debugLog.length > 0 || s.lastResults.size > 0));
+  const spotifyPlayerEnabled = useUIStore((s) => s.spotifyPlayerEnabled);
   const sidebarDragWidthRef = useRef<number | null>(null);
   const rightPanelDragWidthRef = useRef<number | null>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -216,6 +235,16 @@ export function AppShell() {
   const liveRightPanelWidth = rightPanelDragWidth ?? rightPanelWidth;
   const trackerPanelWidth = getTrackerPanelWidthForProfile(trackerPanelSizeProfile);
   const mobileTrackerPanelWidth = getMobileTrackerPanelWidthForProfile(trackerPanelSizeProfile);
+
+  useEffect(() => {
+    if (chatNotificationCount > 0) {
+      setNotificationBubblesMounted(true);
+      return;
+    }
+    if (!notificationBubblesMounted) return;
+    const timeoutId = window.setTimeout(() => setNotificationBubblesMounted(false), NOTIFICATION_BUBBLES_EXIT_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [chatNotificationCount, notificationBubblesMounted]);
 
   // Track mobile breakpoint for right-panel animation strategy
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
@@ -1038,7 +1067,11 @@ export function AppShell() {
             </div>
           </div>
           {/* Floating avatar notification bubbles (right edge) */}
-          <ChatNotificationBubbles />
+          {notificationBubblesMounted && (
+            <Suspense fallback={null}>
+              <ChatNotificationBubbles />
+            </Suspense>
+          )}
         </main>
 
         <AnimatePresence initial={false}>
@@ -1153,8 +1186,16 @@ export function AppShell() {
             <OnboardingTutorial onShellInertResync={syncMobilePanelInert} />
           </Suspense>
         )}
-        <AgentDebugPanel />
-        <SpotifyMobileWidget />
+        {debugMode && hasAgentDebugActivity && (
+          <Suspense fallback={null}>
+            <AgentDebugPanel />
+          </Suspense>
+        )}
+        {spotifyPlayerEnabled && (
+          <Suspense fallback={null}>
+            <SpotifyMobileWidget />
+          </Suspense>
+        )}
       </div>
     </div>
   );

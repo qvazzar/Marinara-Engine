@@ -90,11 +90,13 @@
   "size-limit": [
     {
       "path": "dist/assets/*.js",
-      "limit": "1.7 MB"
+      "limit": "1.7 MB",
+      "running": false
     },
     {
       "path": "dist/assets/*.css",
-      "limit": "250 KB"
+      "limit": "250 KB",
+      "running": false
     }
   ]
 }

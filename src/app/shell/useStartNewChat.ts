@@ -8,7 +8,7 @@ import {
   listChatPresets,
   useApplyChatPreset,
 } from "../../features/catalog/chat-presets/index";
-import { useCreateChat } from "../../features/catalog/chats/index";
+import { useCreateChat } from "../../features/catalog/chats/sidebar";
 import { connectionKeys } from "../../features/catalog/connections/index";
 import { storageApi } from "../../shared/api/storage-api";
 import { filterLanguageGenerationConnections } from "../../shared/lib/connection-filters";

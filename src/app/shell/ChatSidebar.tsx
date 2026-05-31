@@ -35,7 +35,7 @@ import {
   useDeleteChatGroup,
   useUpdateChatMetadata,
   type BulkChatExportFormat,
-} from "../../features/catalog/chats/index";
+} from "../../features/catalog/chats/sidebar";
 import {
   useChatFolders,
   useCreateFolder,
@@ -43,7 +43,7 @@ import {
   useDeleteFolder,
   useReorderFolders,
   useMoveChat,
-} from "../../features/catalog/chats/index";
+} from "../../features/catalog/chats/sidebar";
 import { useCharacterSummariesByIds } from "../../features/catalog/characters/index";
 import { useChatStore } from "../../shared/stores/chat.store";
 import { showConfirmDialog } from "../../shared/lib/app-dialogs";

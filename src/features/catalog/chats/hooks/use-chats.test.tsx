@@ -7,12 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearChatActivity } from "../../../../engine/modes/chat/autonomous/autonomous.service";
 import { chatCommandApi } from "../../../../shared/api/chat-command-api";
 import { storageApi } from "../../../../shared/api/storage-api";
-import { chatKeys, useDeleteChat, useDeleteChatGroup, useSetActiveSwipe } from "./use-chats";
+import { chatKeys, useCreateChat, useDeleteChat, useDeleteChatGroup, useSetActiveSwipe } from "./use-chats";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("../../../../shared/api/storage-api", () => ({
   storageApi: {
+    create: vi.fn(),
     delete: vi.fn(),
   },
 }));
@@ -29,6 +30,7 @@ vi.mock("../../../../engine/modes/chat/autonomous/autonomous.service", () => ({
 }));
 
 const storageDeleteMock = vi.mocked(storageApi.delete);
+const storageCreateMock = vi.mocked(storageApi.create);
 const groupDeleteMock = vi.mocked(chatCommandApi.groupDelete);
 const setActiveSwipeMock = vi.mocked(chatCommandApi.setActiveSwipe);
 const clearChatActivityMock = vi.mocked(clearChatActivity);
@@ -68,6 +70,7 @@ describe("chat deletion mutations", () => {
     container.remove();
     queryClient.clear();
     storageDeleteMock.mockReset();
+    storageCreateMock.mockReset();
     groupDeleteMock.mockReset();
     setActiveSwipeMock.mockReset();
     clearChatActivityMock.mockReset();
@@ -113,6 +116,23 @@ describe("chat deletion mutations", () => {
     expect(clearChatActivityMock).toHaveBeenCalledWith("scene-chat");
   });
 
+  it("invalidates the group cache after creating a grouped chat", async () => {
+    const createChat = await renderMutation(useCreateChat);
+    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
+    storageCreateMock.mockResolvedValue({
+      id: "chat-1",
+      name: "Grouped chat",
+      mode: "conversation",
+      groupId: "group-1",
+    });
+
+    await act(async () => {
+      await createChat.mutateAsync({ name: "Grouped chat", mode: "conversation", groupId: "group-1" });
+    });
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({ queryKey: chatKeys.group("group-1") });
+  });
+
   it("keeps autonomous activity when chat deletion fails", async () => {
     const deleteChat = await renderMutation(useDeleteChat);
     storageDeleteMock.mockRejectedValue(new Error("delete failed"));
@@ -145,6 +165,23 @@ describe("chat deletion mutations", () => {
     expect(clearChatActivityMock).toHaveBeenCalledWith("chat-2");
     expect(clearChatActivityMock).toHaveBeenCalledWith("scene-chat");
     expect(clearChatActivityMock).not.toHaveBeenCalledWith("chat-other");
+  });
+
+  it("removes deleted group chats from cached summaries", async () => {
+    const deleteChatGroup = await renderMutation(useDeleteChatGroup);
+    groupDeleteMock.mockResolvedValue({ deleted: 1, deletedChatIds: ["chat-1"] });
+    queryClient.setQueryData(chatKeys.summaries(), [
+      { id: "chat-1", name: "Grouped chat", mode: "conversation", groupId: "group-1" },
+      { id: "chat-other", name: "Other chat", mode: "conversation", groupId: "group-other" },
+    ]);
+
+    await act(async () => {
+      await deleteChatGroup.mutateAsync("group-1");
+    });
+
+    expect(queryClient.getQueryData(chatKeys.summaries())).toEqual([
+      { id: "chat-other", name: "Other chat", mode: "conversation", groupId: "group-other" },
+    ]);
   });
 
   it("does not crash when a chat group delete response omits deleted chat ids", async () => {
