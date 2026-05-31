@@ -179,13 +179,10 @@ describe("llmApi stream cancellation", () => {
     );
   });
 
-  it("waits for native cleanup when the terminal event arrives before the native command settles", async () => {
-    let settleCommand: (() => void) | undefined;
+  it("cancels local native cleanup if the terminal event arrives before the native command settles", async () => {
     invokeMock.mockImplementation((command) => {
       if (command === "llm_stream_channel") {
-        return new Promise<void>((resolve) => {
-          settleCommand = resolve;
-        });
+        return pendingCommand();
       }
       if (command === "llm_stream_cancel") return Promise.resolve();
       return Promise.reject(new Error(`Unexpected command: ${command}`));
@@ -199,14 +196,8 @@ describe("llmApi stream cancellation", () => {
     await expect(doneEvent).resolves.toMatchObject({ done: false, value: { type: "done" } });
     const final = iterator.next();
     await Promise.resolve();
-    expect(invokeMock).not.toHaveBeenCalledWith(
-      "llm_stream_cancel",
-      expect.objectContaining({ streamId: expect.any(String) }),
-    );
-
-    settleCommand?.();
     await expect(final).resolves.toMatchObject({ done: true });
-    expect(invokeMock).not.toHaveBeenCalledWith(
+    expect(invokeMock).toHaveBeenCalledWith(
       "llm_stream_cancel",
       expect.objectContaining({ streamId: expect.any(String) }),
     );

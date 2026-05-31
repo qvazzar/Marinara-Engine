@@ -11,6 +11,13 @@ function createStreamId(): string {
 
 const activeTauriStreamIds = new Set<string>();
 let unloadCancellationInstalled = false;
+const TAURI_STREAM_TERMINAL_CLEANUP_GRACE_MS = 250;
+
+function wait(ms: number): Promise<false> {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(() => resolve(false), ms);
+  });
+}
 
 function cancelActiveTauriStreams() {
   for (const streamId of activeTauriStreamIds) {
@@ -129,8 +136,14 @@ export const llmApi: LlmGateway = {
         if (event.type === "error") throw new Error(String(event.text ?? event.data ?? "LLM stream failed"));
         yield event;
       }
-      if (commandSettled || terminalEventReceived) await command;
-      else cancelNativeStream();
+      if (commandSettled) {
+        await command;
+      } else if (terminalEventReceived) {
+        const cleanedUp = await Promise.race([command.then(() => true), wait(TAURI_STREAM_TERMINAL_CLEANUP_GRACE_MS)]);
+        if (!cleanedUp) cancelNativeStream();
+      } else {
+        cancelNativeStream();
+      }
       if (failure) throw failure;
     } finally {
       signal?.removeEventListener("abort", abort);

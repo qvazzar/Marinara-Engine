@@ -1271,6 +1271,14 @@ fn process_openai_sse_block(
                 emit(json!({ "type": "token", "text": content, "data": content }))?;
             }
         }
+        if choice
+            .get("finish_reason")
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.is_empty())
+            .is_some()
+        {
+            return Ok(SseBlockStatus::Complete);
+        }
     }
     Ok(SseBlockStatus::Continue)
 }
@@ -2489,29 +2497,28 @@ fn process_google_sse_block(
         return Ok(SseBlockStatus::Continue);
     };
     for candidate in candidates {
-        let Some(parts) = candidate
+        if let Some(parts) = candidate
             .get("content")
             .and_then(|content| content.get("parts"))
             .and_then(Value::as_array)
-        else {
-            continue;
-        };
-        for part in parts {
-            let Some(text) = part
-                .get("text")
-                .and_then(Value::as_str)
-                .filter(|text| !text.is_empty())
-            else {
-                continue;
-            };
-            if part
-                .get("thought")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                emit(json!({ "type": "thinking", "text": text, "data": text }))?;
-            } else {
-                emit(json!({ "type": "token", "text": text, "data": text }))?;
+        {
+            for part in parts {
+                let Some(text) = part
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                else {
+                    continue;
+                };
+                if part
+                    .get("thought")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    emit(json!({ "type": "thinking", "text": text, "data": text }))?;
+                } else {
+                    emit(json!({ "type": "token", "text": text, "data": text }))?;
+                }
             }
         }
         if candidate
@@ -2835,6 +2842,29 @@ mod tests {
     }
 
     #[test]
+    fn openai_chat_stream_finish_reason_is_terminal() {
+        let mut emitted = Vec::new();
+        let mut tool_calls = OpenAiToolCallAccumulator::default();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        let status = process_openai_sse_block(
+            r#"data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}"#,
+            &mut emit,
+            &mut tool_calls,
+        )
+        .expect("finish_reason chunk should parse");
+
+        assert_eq!(status, SseBlockStatus::Complete);
+        assert_eq!(
+            emitted[0],
+            json!({ "type": "token", "text": "done", "data": "done" })
+        );
+    }
+
+    #[test]
     fn openai_responses_completed_event_is_terminal() {
         let mut emitted = Vec::new();
         let mut emit = |value: Value| {
@@ -3059,6 +3089,24 @@ data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output
             emitted[0],
             json!({ "type": "token", "text": "hello", "data": "hello" })
         );
+    }
+
+    #[test]
+    fn google_stream_finish_reason_is_terminal_without_parts() {
+        let mut emitted = Vec::new();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        let status = process_google_sse_block(
+            r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"totalTokenCount":3}}"#,
+            &mut emit,
+        )
+        .expect("Gemini terminal metadata block should parse");
+
+        assert_eq!(status, SseBlockStatus::Complete);
+        assert_eq!(emitted[0], json!({ "type": "usage", "data": { "totalTokenCount": 3 } }));
     }
 
     #[test]
