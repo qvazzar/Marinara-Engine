@@ -38,7 +38,7 @@ fn strip_snapshot_from_extra(extra: Option<&Value>) -> Option<Value> {
             changed = true;
         }
     }
-    changed.then(|| Value::Object(next))
+    changed.then_some(Value::Object(next))
 }
 
 /// Build a minimal patch that clears prompt snapshots from a raw message record
@@ -64,7 +64,7 @@ fn strip_prompt_snapshot_patch(message: &Value) -> Option<Value> {
             patch.insert("swipes".to_string(), Value::Array(next_swipes));
         }
     }
-    (!patch.is_empty()).then(|| Value::Object(patch))
+    (!patch.is_empty()).then_some(Value::Object(patch))
 }
 
 /// Evict saved prompt snapshots from older assistant messages, retaining only
