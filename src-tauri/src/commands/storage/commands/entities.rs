@@ -1,9 +1,10 @@
 use super::{
-    avatars, characters, chats, game_state_snapshots, lorebook_images, media_uploads, shared,
+    avatars, characters, chats, connection_secrets, game_state_snapshots, lorebook_images,
+    media_uploads, shared,
 };
 use crate::builtins::is_protected_record;
 use crate::state::AppState;
-use marinara_core::AppError;
+use marinara_core::{ensure_object, AppError};
 use serde_json::{json, Map, Value};
 use tauri::State;
 
@@ -129,6 +130,10 @@ fn storage_list_inner(
         )));
     }
 
+    if entity == "connections" {
+        connection_secrets::mask_connection_rows_for_read(&mut rows);
+    }
+
     if let Some(limit) = options
         .as_ref()
         .and_then(|value| value.get("limit"))
@@ -196,6 +201,9 @@ fn storage_get_inner(
     if entity == "messages" {
         shared::materialize_message_swipe_fields(&mut value);
     }
+    if entity == "connections" {
+        connection_secrets::mask_connection_for_read(&mut value);
+    }
     Ok(shared::project_record(value, options.as_ref()))
 }
 
@@ -212,14 +220,18 @@ pub async fn storage_create(
 }
 
 fn storage_create_inner(state: &AppState, entity: String, value: Value) -> Result<Value, AppError> {
+    validate_connection_folder_for_create(state, &entity, &value)?;
     let created = state
         .storage
-        .create(&entity, shared::with_entity_defaults(&entity, value)?)?;
+        .create(&entity, prepare_entity_for_create(state, &entity, value)?)?;
     if entity == "messages" {
         return Ok(shared::project_timeline_message(created));
     }
     if entity == "connections" {
         clear_other_default_agent_connections(state, &created)?;
+        let mut masked = created;
+        connection_secrets::mask_connection_for_read(&mut masked);
+        return Ok(masked);
     }
     Ok(created)
 }
@@ -251,15 +263,123 @@ fn storage_update_inner(
     if entity == "characters" {
         return characters::update_character(state, &id, patch);
     }
-    let updated = state.storage.patch(
-        &entity,
-        &id,
-        shared::normalize_update_patch(&entity, patch)?,
-    )?;
+    validate_connection_folder_for_patch(state, &entity, &patch)?;
+    let updated = if entity == "connections" {
+        connection_secrets::patch_connection(
+            state,
+            &id,
+            shared::normalize_update_patch(&entity, patch)?,
+        )?
+    } else {
+        state.storage.patch(
+            &entity,
+            &id,
+            shared::normalize_update_patch(&entity, patch)?,
+        )?
+    };
     if entity == "connections" {
         clear_other_default_agent_connections(state, &updated)?;
     }
     Ok(updated)
+}
+
+pub(crate) fn prepare_entity_for_create(
+    state: &AppState,
+    entity: &str,
+    value: Value,
+) -> Result<Value, AppError> {
+    let value = shared::with_entity_defaults(entity, value)?;
+    match entity {
+        "connections" => connection_secrets::prepare_connection_for_create(state, value),
+        "connection-folders" => connection_folder_defaults_for_create(state, value),
+        _ => Ok(value),
+    }
+}
+
+fn connection_folder_defaults_for_create(
+    state: &AppState,
+    value: Value,
+) -> Result<Value, AppError> {
+    let mut object = ensure_object(value)?;
+    if !object
+        .get("sortOrder")
+        .and_then(Value::as_i64)
+        .is_some_and(|value| value > 0)
+    {
+        let next_order = state
+            .storage
+            .list("connection-folders")?
+            .into_iter()
+            .filter_map(|folder| {
+                folder
+                    .get("sortOrder")
+                    .or_else(|| folder.get("order"))
+                    .and_then(Value::as_i64)
+            })
+            .max()
+            .map(|value| value + 1)
+            .unwrap_or(0);
+        object.insert("sortOrder".to_string(), json!(next_order));
+        object.insert("order".to_string(), json!(next_order));
+    }
+    Ok(Value::Object(object))
+}
+
+pub(crate) fn validate_connection_folder_for_create(
+    state: &AppState,
+    entity: &str,
+    value: &Value,
+) -> Result<(), AppError> {
+    if entity != "connections" {
+        return Ok(());
+    }
+    validate_connection_folder_id(state, value.get("folderId"))
+}
+
+pub(crate) fn validate_connection_folder_for_patch(
+    state: &AppState,
+    entity: &str,
+    patch: &Value,
+) -> Result<(), AppError> {
+    if entity != "connections"
+        || !patch
+            .as_object()
+            .is_some_and(|object| object.contains_key("folderId"))
+    {
+        return Ok(());
+    }
+    validate_connection_folder_id(state, patch.get("folderId"))
+}
+
+fn validate_connection_folder_id(
+    state: &AppState,
+    folder_id: Option<&Value>,
+) -> Result<(), AppError> {
+    let Some(folder_id) = folder_id else {
+        return Ok(());
+    };
+    if folder_id.is_null() {
+        return Ok(());
+    }
+    let Some(folder_id) = folder_id
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Err(AppError::invalid_input(
+            "folderId must be a folder id or null",
+        ));
+    };
+    if state
+        .storage
+        .get("connection-folders", folder_id)?
+        .is_none()
+    {
+        return Err(AppError::invalid_input(format!(
+            "Connection folder {folder_id} does not exist"
+        )));
+    }
+    Ok(())
 }
 
 fn connection_default_agent_scope(connection: &Value) -> Option<&'static str> {
@@ -368,6 +488,9 @@ pub(crate) fn delete_entity(
         if entity == "lorebooks" {
             delete_lorebook_children(state, id)?;
         }
+        if entity == "connection-folders" {
+            unfile_connections_in_folder(state, id)?;
+        }
         if let Some(record) = existing.as_ref() {
             remove_owned_media(state, entity, record);
         }
@@ -380,6 +503,66 @@ pub(crate) fn delete_entity(
         }
     }
     Ok(json!({ "deleted": deleted }))
+}
+
+#[tauri::command]
+pub fn connection_folder_reorder(
+    state: State<'_, AppState>,
+    ordered_ids: Vec<String>,
+) -> Result<Value, AppError> {
+    connection_folder_reorder_inner(&state, ordered_ids)
+}
+
+pub(crate) fn connection_folder_reorder_inner(
+    state: &AppState,
+    ordered_ids: Vec<String>,
+) -> Result<Value, AppError> {
+    let patches = ordered_ids
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| (id, json!({ "sortOrder": index, "order": index })))
+        .collect::<Vec<_>>();
+    let rows = state.storage.patch_many("connection-folders", patches)?;
+    Ok(Value::Array(rows))
+}
+
+#[tauri::command]
+pub fn connection_move(
+    state: State<'_, AppState>,
+    connection_id: String,
+    folder_id: Option<String>,
+) -> Result<Value, AppError> {
+    connection_move_inner(&state, &connection_id, folder_id)
+}
+
+pub(crate) fn connection_move_inner(
+    state: &AppState,
+    connection_id: &str,
+    folder_id: Option<String>,
+) -> Result<Value, AppError> {
+    let folder_value = folder_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| Value::String(value.to_string()))
+        .unwrap_or(Value::Null);
+    validate_connection_folder_id(state, Some(&folder_value))?;
+    connection_secrets::patch_connection(state, connection_id, json!({ "folderId": folder_value }))
+}
+
+fn unfile_connections_in_folder(state: &AppState, folder_id: &str) -> Result<(), AppError> {
+    let mut filters = Map::new();
+    filters.insert("folderId".to_string(), Value::String(folder_id.to_string()));
+    let rows = state.storage.list_where("connections", &filters)?;
+    let patches = rows
+        .into_iter()
+        .filter_map(|row| row.get("id").and_then(Value::as_str).map(str::to_string))
+        .map(|id| (id, json!({ "folderId": Value::Null })))
+        .collect::<Vec<_>>();
+    if !patches.is_empty() {
+        state.storage.patch_many("connections", patches)?;
+    }
+    Ok(())
 }
 
 fn delete_character_gallery(state: &AppState, character_id: &str) -> Result<(), AppError> {
@@ -445,11 +628,21 @@ pub async fn storage_duplicate(
         .map_err(|error| AppError::new("task_join_error", error.to_string()))?
 }
 
-fn duplicate_entity(state: &AppState, entity: &str, id: &str) -> Result<Value, AppError> {
+pub(crate) fn duplicate_entity(
+    state: &AppState,
+    entity: &str,
+    id: &str,
+) -> Result<Value, AppError> {
     if entity == "characters" {
         return characters::duplicate_character(state, id);
     }
-    shared::duplicate_record(state, entity, id)
+    let duplicated = shared::duplicate_record(state, entity, id)?;
+    if entity == "connections" {
+        let mut masked = duplicated;
+        connection_secrets::mask_connection_for_read(&mut masked);
+        return Ok(masked);
+    }
+    Ok(duplicated)
 }
 
 fn compare_json_values(left: Option<&Value>, right: Option<&Value>) -> std::cmp::Ordering {
@@ -897,5 +1090,131 @@ mod tests {
 
         assert!(!default_for_agents(&state, "image-a"));
         assert!(default_for_agents(&state, "image-b"));
+    }
+
+    #[test]
+    fn connection_api_key_is_encrypted_masked_and_runtime_decrypted() {
+        let state = test_state("connection-secret");
+        let created = storage_create_inner(
+            &state,
+            "connections".to_string(),
+            json!({
+                "id": "secure-connection",
+                "name": "Secure",
+                "provider": "anthropic",
+                "model": "claude-opus-4-8",
+                "apiKey": "sk-secret"
+            }),
+        )
+        .expect("connection should be created");
+        assert_eq!(created["apiKey"], connection_secrets::API_KEY_MASK);
+        assert_eq!(created["hasApiKey"], true);
+
+        let raw = state
+            .storage
+            .get("connections", "secure-connection")
+            .expect("connection should read")
+            .expect("connection should exist");
+        assert!(raw.get("apiKey").is_none());
+        assert_ne!(
+            raw.get("apiKeyEncrypted").and_then(Value::as_str),
+            Some("sk-secret")
+        );
+
+        let read = storage_get_inner(
+            &state,
+            "connections".to_string(),
+            "secure-connection".to_string(),
+            None,
+        )
+        .expect("masked connection should read");
+        assert_eq!(read["apiKey"], connection_secrets::API_KEY_MASK);
+        assert!(read.get("apiKeyEncrypted").is_none());
+
+        let runtime = connection_secrets::connection_for_runtime(&state, "secure-connection")
+            .expect("runtime connection should decrypt");
+        assert_eq!(runtime["apiKey"], "sk-secret");
+    }
+
+    #[test]
+    fn blank_connection_api_key_update_preserves_existing_secret() {
+        let state = test_state("connection-secret-preserve");
+        storage_create_inner(
+            &state,
+            "connections".to_string(),
+            json!({
+                "id": "secure-connection",
+                "name": "Secure",
+                "provider": "anthropic",
+                "model": "claude-opus-4-8",
+                "apiKey": "sk-secret"
+            }),
+        )
+        .expect("connection should be created");
+
+        storage_update_inner(
+            &state,
+            "connections".to_string(),
+            "secure-connection".to_string(),
+            json!({ "apiKey": "", "name": "Still Secure" }),
+        )
+        .expect("blank update should preserve key");
+        let runtime = connection_secrets::connection_for_runtime(&state, "secure-connection")
+            .expect("runtime connection should decrypt");
+        assert_eq!(runtime["apiKey"], "sk-secret");
+    }
+
+    #[test]
+    fn deleting_connection_folder_unfiles_child_connections() {
+        let state = test_state("connection-folder-delete");
+        storage_create_inner(
+            &state,
+            "connection-folders".to_string(),
+            json!({ "id": "folder-a", "name": "Folder A" }),
+        )
+        .expect("folder should be created");
+        storage_create_inner(
+            &state,
+            "connections".to_string(),
+            json!({
+                "id": "connection-a",
+                "name": "Connection A",
+                "provider": "openai",
+                "model": "gpt-4o",
+                "folderId": "folder-a"
+            }),
+        )
+        .expect("connection should be created");
+
+        delete_entity(&state, "connection-folders", "folder-a", false)
+            .expect("folder delete should succeed");
+
+        let connection = state
+            .storage
+            .get("connections", "connection-a")
+            .expect("connection should read")
+            .expect("connection should remain");
+        assert!(connection.get("folderId").is_none_or(Value::is_null));
+    }
+
+    #[test]
+    fn moving_connection_rejects_missing_folder() {
+        let state = test_state("connection-folder-missing");
+        storage_create_inner(
+            &state,
+            "connections".to_string(),
+            json!({
+                "id": "connection-a",
+                "name": "Connection A",
+                "provider": "openai",
+                "model": "gpt-4o"
+            }),
+        )
+        .expect("connection should be created");
+
+        let error =
+            connection_move_inner(&state, "connection-a", Some("missing-folder".to_string()))
+                .expect_err("missing folders should be rejected");
+        assert_eq!(error.code, "invalid_input");
     }
 }

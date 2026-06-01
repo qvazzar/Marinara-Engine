@@ -104,7 +104,7 @@ pub(crate) fn resolve_embedding_connection_for_id(
     if is_legacy_local_sidecar_connection_id(connection_id) {
         return Err(legacy_local_sidecar_embedding_error());
     }
-    let connection = get_required(state, "connections", connection_id)?;
+    let connection = connection_secrets::connection_for_runtime(state, connection_id)?;
     if let Some(embedding_connection_id) = connection
         .get("embeddingConnectionId")
         .and_then(Value::as_str)
@@ -114,7 +114,8 @@ pub(crate) fn resolve_embedding_connection_for_id(
         if is_legacy_local_sidecar_connection_id(embedding_connection_id) {
             return Err(legacy_local_sidecar_embedding_error());
         }
-        let embedding_connection = get_required(state, "connections", embedding_connection_id)?;
+        let embedding_connection =
+            connection_secrets::connection_for_runtime(state, embedding_connection_id)?;
         if is_openai_chatgpt_connection(&embedding_connection) {
             return Err(openai_chatgpt_embedding_error());
         }
@@ -127,7 +128,7 @@ pub(crate) fn resolve_embedding_connection_for_id(
 }
 
 pub(crate) fn resolve_default_embedding_connection(state: &AppState) -> AppResult<(String, Value)> {
-    let connections = state.storage.list("connections")?;
+    let connections = connection_secrets::connections_for_runtime(state)?;
     let embedding_candidates = connections
         .iter()
         .filter(|connection| !is_legacy_local_sidecar_connection(connection))
