@@ -348,6 +348,9 @@ export interface ChatMetadata {
    */
   summaryTailMessages?: number;
 
+  /** How character-scoped regex scripts are applied: "disabled" | "exclusive" | "chat" (default). */
+  scopedRegexMode?: "disabled" | "exclusive" | "chat";
+
   // ── Card Theming ──
   /** How creator-notes CSS is applied: "disabled" | "exclusive" | "chat" (default). */
   cardCssMode?: "disabled" | "exclusive" | "chat";

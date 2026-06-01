@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { importApi } from "../../../../shared/api/import-api";
 import { storageApi } from "../../../../shared/api/storage-api";
+import { importRegexScriptsForCharacter } from "../../../../shared/lib/regex-script-import";
 import {
   inspectCharacterFilesForEmbeddedLorebooks,
   type EmbeddedLorebookImportPreview,
@@ -33,6 +34,22 @@ type PendingLorebookChoice = {
   files: File[];
   previews: EmbeddedLorebookImportPreview[];
 };
+
+type RegexImportSource = Parameters<typeof importRegexScriptsForCharacter>[0];
+
+async function importRegexScriptsSafely(source: RegexImportSource): Promise<{ count: number; failed: boolean }> {
+  try {
+    return { count: await importRegexScriptsForCharacter(source), failed: false };
+  } catch (error) {
+    console.warn("[character-import] Failed to import embedded regex scripts.", error);
+    return { count: 0, failed: true };
+  }
+}
+
+function formatRegexImportSuffix(result: { count: number; failed: boolean }): string {
+  if (result.count > 0) return ` (${result.count} regex scripts)`;
+  return result.failed ? " (regex scripts skipped)" : "";
+}
 
 export function useCharacterImportFlow(open: boolean) {
   const { data: rawCharacters } = useCharacterSummaries(open);
@@ -217,15 +234,34 @@ export function useCharacterImportFlow(open: boolean) {
           if (result.lorebook?.lorebookId) importedLorebook = true;
           if (result.success) {
             if (importMode === "update") {
+              const beforeUpdateResults = nextResults.length;
               await pushUpdateExistingResult({
                 filename: result.filename,
                 imported: result.character,
                 importedName: result.name ?? result.filename,
                 nextResults,
               });
+              const updateResult = nextResults[beforeUpdateResults];
+              if (updateResult?.success && result.character && targetCharacterId) {
+                const regexImport = await importRegexScriptsSafely({
+                  characterId: targetCharacterId,
+                  character: result.character as { data?: Record<string, unknown> },
+                });
+                updateResult.message = `${updateResult.message}${formatRegexImportSuffix(regexImport)}`;
+              }
               continue;
             } else {
               cacheCharacterListRecordFromResult(qc, result);
+            }
+          }
+          let regexImport = { count: 0, failed: false };
+          if (result.success && result.character) {
+            const charRecord = result.character as { id?: string; data?: Record<string, unknown> };
+            if (charRecord.id && charRecord.data) {
+              regexImport = await importRegexScriptsSafely({
+                characterId: charRecord.id,
+                character: charRecord,
+              });
             }
           }
           nextResults.push({
@@ -238,7 +274,7 @@ export function useCharacterImportFlow(open: boolean) {
                     : result.lorebook?.lorebookId
                       ? " with its embedded lorebook"
                       : ""
-                }`
+                }${formatRegexImportSuffix(regexImport)}`
               : (result.error ?? "Import failed"),
           });
         }
