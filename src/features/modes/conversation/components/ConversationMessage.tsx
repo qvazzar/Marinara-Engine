@@ -26,11 +26,12 @@ import { chatKeys } from "../../../catalog/chats/index";
 import { resolveMessageMacros } from "../../../../shared/lib/chat-macros";
 import { useTranslate } from "../../../../shared/hooks/use-translate";
 import { storageApi } from "../../../../shared/api/storage-api";
-import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "../../shared/chat-ui/types";
+import type { CharacterMap, MessageSelectionToggle, PeekPromptOptions, PersonaInfo } from "../../shared/chat-ui/types";
 import {
   GenerationReplayDetailsModal,
   hasGenerationReplayDetails,
   readStoredThinking,
+  resolvePromptSnapshotFromExtra,
 } from "../../shared/chat-ui/index";
 import { ImagePromptPanel } from "../../shared/chat-ui/index";
 import { SwipeJumpControl } from "../../shared/chat-ui/index";
@@ -288,7 +289,7 @@ interface ConversationMessageProps {
   onRegenerate?: (messageId: string) => void;
   onEdit?: (messageId: string, content: string) => void | Promise<void>;
   onSetActiveSwipe?: (messageId: string, index: number) => void;
-  onPeekPrompt?: () => void;
+  onPeekPrompt?: (options?: PeekPromptOptions) => void;
   onToggleHiddenFromAI?: (messageId: string, current: boolean) => void;
   isLastAssistantMessage?: boolean;
   characterMap?: CharacterMap;
@@ -318,7 +319,6 @@ export const ConversationMessage = memo(function ConversationMessage({
   onSetActiveSwipe,
   onPeekPrompt,
   onToggleHiddenFromAI,
-  isLastAssistantMessage,
   characterMap,
   personaInfo,
   onEditClick,
@@ -367,6 +367,10 @@ export const ConversationMessage = memo(function ConversationMessage({
     return typeof message.extra === "string" ? JSON.parse(message.extra) : message.extra;
   }, [message.extra]);
   const generationReplay = hasGenerationReplayDetails(extra.generationReplay) ? extra.generationReplay : null;
+  const activePromptSnapshot = useMemo(
+    () => resolvePromptSnapshotFromExtra(extra, message.activeSwipeIndex),
+    [extra, message.activeSwipeIndex],
+  );
   const isHiddenFromAI = extra.hiddenFromAI === true || extra.hiddenFromAi === true;
   const isHiddenExpanded =
     isHiddenFromAI && (!collapseHiddenMessages || manuallyExpandedHidden || editing || isStreaming === true);
@@ -950,8 +954,18 @@ export const ConversationMessage = memo(function ConversationMessage({
             title={regenerateButtonTitle}
             className={regenerateGuidedClass}
           />
-          {isLastAssistantMessage && (
-            <MsgAction icon={<Eye size="0.75rem" />} onClick={() => onPeekPrompt?.()} title="Peek prompt" />
+          {!isUser && (
+            <MsgAction
+              icon={<Eye size="0.75rem" />}
+              onClick={() =>
+                onPeekPrompt?.({
+                  forCharacterId: message.characterId ?? null,
+                  messageId: message.id,
+                  promptSnapshot: activePromptSnapshot,
+                })
+              }
+              title="Peek prompt"
+            />
           )}
           {onToggleHiddenFromAI && (
             <MsgAction
@@ -1262,8 +1276,18 @@ export const ConversationMessage = memo(function ConversationMessage({
               className={regenerateGuidedClass}
             />
           )}
-          {isLastAssistantMessage && !isUser && (
-            <MsgAction icon={<Eye size="0.75rem" />} onClick={() => onPeekPrompt?.()} title="Peek prompt" />
+          {!isUser && (
+            <MsgAction
+              icon={<Eye size="0.75rem" />}
+              onClick={() =>
+                onPeekPrompt?.({
+                  forCharacterId: message.characterId ?? null,
+                  messageId: message.id,
+                  promptSnapshot: activePromptSnapshot,
+                })
+              }
+              title="Peek prompt"
+            />
           )}
           {onToggleHiddenFromAI && (
             <MsgAction
