@@ -3138,6 +3138,12 @@ function ImportSettings() {
   );
 }
 
+type ImportButtonResult = {
+  success?: boolean;
+  error?: string;
+  chatId?: string;
+};
+
 function ImportButton({
   label,
   accept,
@@ -3149,13 +3155,13 @@ function ImportButton({
   accept: string;
   endpoint: string;
   mode?: "file" | "json" | "auto";
-  onImported?: (data: any) => void;
+  onImported?: (data: ImportButtonResult) => void;
 }) {
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      let data: { success?: boolean; error?: string; chatId?: string };
+      let data: ImportButtonResult;
       let importEmbeddedLorebook: boolean | undefined;
 
       // "auto" mode: send binary files (PNG) as multipart, JSON files as JSON body

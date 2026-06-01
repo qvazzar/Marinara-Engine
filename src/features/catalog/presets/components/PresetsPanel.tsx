@@ -14,6 +14,7 @@ import { ChoiceSelectionModal } from "./ChoiceSelectionModal";
 import { Plus, Download, FileText, Trash2, Check, Copy, Search, Code2, Hash, Star } from "lucide-react";
 import { cn } from "../../../../shared/lib/utils";
 import { boolish } from "../../../../engine/generation/runtime-records";
+import { isRecord, normalizeChoiceSelections, type ChoiceSelections } from "../lib/choice-selections";
 
 type PresetRow = {
   id: string;
@@ -24,6 +25,19 @@ type PresetRow = {
   author?: string;
   sectionOrder?: string | string[];
 };
+
+type PresetChoices = ChoiceSelections;
+
+function getPresetChoices(metadata: unknown): PresetChoices {
+  if (typeof metadata === "string") {
+    try {
+      return getPresetChoices(JSON.parse(metadata));
+    } catch {
+      return {};
+    }
+  }
+  return normalizeChoiceSelections(isRecord(metadata) ? metadata.presetChoices : undefined);
+}
 
 export function PresetsPanel() {
   const { data: presets, isLoading } = usePresets();
@@ -415,11 +429,7 @@ export function PresetsPanel() {
           onClose={() => setChoiceModalPresetId(null)}
           presetId={choiceModalPresetId}
           chatId={activeChat.id}
-          existingChoices={
-            typeof activeChat.metadata === "string"
-              ? (JSON.parse(activeChat.metadata).presetChoices ?? {})
-              : ((activeChat.metadata as any)?.presetChoices ?? {})
-          }
+          existingChoices={getPresetChoices(activeChat.metadata)}
         />
       )}
     </div>
