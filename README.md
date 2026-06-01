@@ -4,6 +4,7 @@ Marinara Engine is a local-first AI chat, roleplay, and game engine built as a T
 
 This repository is an active refactor branch. The app is usable from source, but public release packaging and end-user installation guides are still being rebuilt around the new architecture.
 The refactor build keeps an explicit in-app update check in Settings > Advanced. It checks Marinara Engine GitHub releases and opens the matching release page for manual install; signed Tauri auto-install artifacts are not configured on this branch yet. See [Release Update Strategy](docs/release-update-strategy.md) for the stable refactor update policy.
+Token budget displays and prompt budget paths currently use deterministic estimates rather than provider-exact tokenizers. See [Token Budget Estimates](docs/token-budget-estimates.md) for the tokenizer support decision and future requirements.
 
 ## Screenshots
 
