@@ -77,6 +77,7 @@ import { GenerationReplayDetailsModal, hasGenerationReplayDetails } from "./Gene
 import { ImagePromptPanel } from "./ImagePromptPanel";
 import { SwipeJumpControl } from "./SwipeJumpControl";
 import { readStoredThinking } from "../lib/message-thinking";
+import { resolvePromptSnapshotFromExtra } from "../lib/prompt-snapshot";
 
 const MESSAGE_ACTION_ICON_SIZE = "1em";
 const MESSAGE_SWIPE_ICON_SIZE = "1.15em";
@@ -929,7 +930,6 @@ export const ChatMessage = memo(function ChatMessage({
   onBranch,
   onCloneSceneFromHere,
   isCloneSceneFromHereDisabled,
-  isLastAssistantMessage,
   characterMap,
   chatMode,
   isGrouped,
@@ -1143,16 +1143,7 @@ export const ChatMessage = memo(function ChatMessage({
   const isHiddenFromAI = extra.hiddenFromAI === true || extra.hiddenFromAi === true;
   const thinking = readStoredThinking(extra);
   const generationReplay = hasGenerationReplayDetails(extra.generationReplay) ? extra.generationReplay : null;
-  const promptSnapshotsBySwipe =
-    extra.generationPromptSnapshotsBySwipe &&
-    typeof extra.generationPromptSnapshotsBySwipe === "object" &&
-    !Array.isArray(extra.generationPromptSnapshotsBySwipe)
-      ? (extra.generationPromptSnapshotsBySwipe as Record<string, Message["extra"]["generationPromptSnapshot"]>)
-      : {};
-  const activePromptSnapshot =
-    promptSnapshotsBySwipe[String(message.activeSwipeIndex ?? 0)] ??
-    (extra.generationPromptSnapshot as Message["extra"]["generationPromptSnapshot"] | undefined) ??
-    null;
+  const activePromptSnapshot = resolvePromptSnapshotFromExtra(extra, message.activeSwipeIndex);
   const isHiddenExpanded =
     isHiddenFromAI && (!collapseHiddenMessages || manuallyExpandedHidden || editing || !!isStreaming);
   const isHiddenCollapsed = isHiddenFromAI && collapseHiddenMessages && !isHiddenExpanded;
@@ -2172,7 +2163,7 @@ export const ChatMessage = memo(function ChatMessage({
                   dark
                 />
               )}
-              {isLastAssistantMessage && !isUser && (
+              {!isUser && (
                 <ActionBtn
                   icon={<Search size={MESSAGE_ACTION_ICON_SIZE} />}
                   onClick={() =>
@@ -2610,7 +2601,7 @@ export const ChatMessage = memo(function ChatMessage({
                 className={isConversationStart ? "text-amber-500" : undefined}
               />
             )}
-            {isLastAssistantMessage && !isUser && (
+            {!isUser && (
               <ActionBtn
                 icon={<Search size={MESSAGE_ACTION_ICON_SIZE} />}
                 onClick={() =>

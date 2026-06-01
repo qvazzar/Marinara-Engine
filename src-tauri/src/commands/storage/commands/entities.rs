@@ -119,6 +119,7 @@ fn storage_list_inner(
         apply_message_pagination(&mut rows, options.as_ref());
         for row in &mut rows {
             shared::materialize_message_swipe_fields(row);
+            shared::synthesize_legacy_prompt_snapshot(row);
         }
         return Ok(Value::Array(shared::project_list_rows(
             rows,
