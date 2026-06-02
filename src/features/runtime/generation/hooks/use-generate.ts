@@ -86,6 +86,7 @@ const STREAM_BUFFER_COMMIT_INTERVAL_MS = 45;
 const AGENT_DEBUG_FLUSH_DELAY_MS = 80;
 const AGENT_DEBUG_FLUSH_CHUNK_SIZE = 8;
 const AGENT_DEBUG_FLUSH_CONTINUE_DELAY_MS = 16;
+const MANUAL_WORLD_STATE_FIELDS = ["date", "time", "location", "weather", "temperature"] as const;
 const scheduledChatRefreshTimers = new Map<string, number>();
 const queuedAgentDebugEntries: Array<Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }> = [];
 let agentDebugFlushTimer: number | null = null;
@@ -785,6 +786,42 @@ function readNullableString(value: unknown): string | null {
   return null;
 }
 
+function parseManualOverrides(value: unknown): Record<string, string> | null {
+  if (!isRecord(value)) return null;
+  const overrides = Object.fromEntries(
+    Object.entries(value)
+      .map(([key, overrideValue]) => [key.trim(), readNullableString(overrideValue)] as const)
+      .filter((entry): entry is readonly [string, string] => entry[0].length > 0 && entry[1] !== null),
+  );
+  return Object.keys(overrides).length ? overrides : null;
+}
+
+function preserveManualWorldStatePatch(previous: GameState, patch: Record<string, unknown>): Record<string, unknown> {
+  const manualOverrides = parseManualOverrides(previous.manualOverrides);
+  if (!manualOverrides) return patch;
+
+  const nextPatch: Record<string, unknown> = { ...patch };
+  const nextManualOverrides: Record<string, string> = { ...manualOverrides };
+  let manualOverridesChanged = false;
+  for (const field of MANUAL_WORLD_STATE_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(patch, field)) continue;
+    const text = readNullableString(patch[field]);
+    const override = readNullableString(manualOverrides[field]);
+    if (text) {
+      if (Object.prototype.hasOwnProperty.call(nextManualOverrides, field)) {
+        delete nextManualOverrides[field];
+        manualOverridesChanged = true;
+      }
+    } else if (override) {
+      nextPatch[field] = override;
+    }
+  }
+  if (manualOverridesChanged) {
+    nextPatch.manualOverrides = Object.keys(nextManualOverrides).length ? nextManualOverrides : null;
+  }
+  return nextPatch;
+}
+
 function trackerTargetFromMessagePayload(value: unknown): WorldStateTarget | null {
   const record = parseMaybeRecord(value);
   const messageId = readString(record.id).trim();
@@ -906,7 +943,8 @@ async function applyTrackerResultToGameState(chatId: string, result: AgentResult
 
   const store = useGameStateStore.getState();
   const previous = store.current?.chatId === chatId ? store.current : createEmptyGameState(chatId);
-  store.setGameState({ ...previous, ...patch } as GameState);
+  const visiblePatch = preserveManualWorldStatePatch(previous, patch);
+  store.setGameState({ ...previous, ...visiblePatch } as GameState);
 
   try {
     const saved = await worldStateApi.patch(chatId, { ...patch, targetVisible: false });
