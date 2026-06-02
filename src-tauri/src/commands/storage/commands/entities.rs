@@ -1131,13 +1131,8 @@ mod tests {
         )
         .expect("supported create should succeed");
 
-        let read = storage_get_inner(
-            &state,
-            "characters".to_string(),
-            "char-1".to_string(),
-            None,
-        )
-        .expect("supported get should succeed");
+        let read = storage_get_inner(&state, "characters".to_string(), "char-1".to_string(), None)
+            .expect("supported get should succeed");
         assert_eq!(read["id"], "char-1");
     }
 

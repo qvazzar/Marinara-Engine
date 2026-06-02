@@ -1,8 +1,8 @@
 use crate::state::AppState;
 use crate::storage_commands::{
-    admin, agents, avatars, backgrounds, backup, bot_browser, characters, chats,
-    custom_tools, entity_commands, exports, fonts, game_assets, game_state_snapshots, generation,
-    http, images, imports, integrations, knowledge, llm, lorebook_images, mari, personas, profile,
+    admin, agents, avatars, backgrounds, backup, bot_browser, characters, chats, custom_tools,
+    entity_commands, exports, fonts, game_assets, game_state_snapshots, generation, http, images,
+    imports, integrations, knowledge, llm, lorebook_images, mari, personas, profile,
     profile_commands, prompts, shared, sprites, translation, updates,
 };
 use marinara_core::{AppError, AppResult};
@@ -1144,6 +1144,15 @@ mod tests {
         })
     }
 
+    fn default_for_agents(state: &AppState, id: &str) -> bool {
+        state
+            .storage
+            .get("connections", id)
+            .expect("connection should read")
+            .and_then(|row| row.get("defaultForAgents").and_then(Value::as_bool))
+            .unwrap_or(false)
+    }
+
     fn quoted_commands(source: &str) -> BTreeSet<String> {
         source
             .split('"')
@@ -1333,6 +1342,110 @@ mod tests {
                 "extra": { "thinking": "swipe thought" }
             }])
         );
+    }
+
+    #[tokio::test]
+    async fn dispatch_storage_create_connection_clears_previous_agent_default() {
+        let state = test_state("storage-create-connection-agent-default");
+        for (id, provider) in [("language-a", "anthropic"), ("language-b", "openai")] {
+            dispatch(
+                &state,
+                InvokeRequest {
+                    command: "storage_create".to_string(),
+                    args: Some(json!({
+                        "entity": "connections",
+                        "value": {
+                            "id": id,
+                            "name": id,
+                            "provider": provider,
+                            "defaultForAgents": true
+                        }
+                    })),
+                },
+            )
+            .await
+            .expect("remote connection create should dispatch");
+        }
+
+        assert!(!default_for_agents(&state, "language-a"));
+        assert!(default_for_agents(&state, "language-b"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_storage_update_connection_clears_previous_agent_default() {
+        let state = test_state("storage-update-connection-agent-default");
+        for (id, default_for_agents) in [("language-a", true), ("language-b", false)] {
+            state
+                .storage
+                .create(
+                    "connections",
+                    json!({
+                        "id": id,
+                        "name": id,
+                        "provider": "openai",
+                        "defaultForAgents": default_for_agents
+                    }),
+                )
+                .expect("connection should be seeded");
+        }
+
+        dispatch(
+            &state,
+            InvokeRequest {
+                command: "storage_update".to_string(),
+                args: Some(json!({
+                    "entity": "connections",
+                    "id": "language-b",
+                    "patch": { "defaultForAgents": true }
+                })),
+            },
+        )
+        .await
+        .expect("remote connection update should dispatch");
+
+        assert!(!default_for_agents(&state, "language-a"));
+        assert!(default_for_agents(&state, "language-b"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_storage_update_protects_default_chat_preset_fields() {
+        let state = test_state("storage-update-default-chat-preset");
+        state
+            .storage
+            .create(
+                "chat-presets",
+                json!({
+                    "id": "default-chat-preset",
+                    "name": "Default Chat",
+                    "mode": "chat",
+                    "isDefault": true,
+                    "isActive": true
+                }),
+            )
+            .expect("default chat preset should be seeded");
+
+        let error = dispatch(
+            &state,
+            InvokeRequest {
+                command: "storage_update".to_string(),
+                args: Some(json!({
+                    "entity": "chat-presets",
+                    "id": "default-chat-preset",
+                    "patch": { "name": "Mutated Default" }
+                })),
+            },
+        )
+        .await
+        .expect_err("default chat preset field mutations should be rejected remotely");
+
+        assert_eq!(error.code, "invalid_input");
+        assert_eq!(error.message, "Default chat presets cannot be updated");
+        let preset = state
+            .storage
+            .get("chat-presets", "default-chat-preset")
+            .expect("chat preset should read")
+            .expect("chat preset should still exist");
+        assert_eq!(preset["name"], "Default Chat");
     }
 
     #[tokio::test]
@@ -1594,87 +1707,6 @@ mod tests {
             .get("game-state-snapshots", "snapshot-message-1")
             .unwrap()
             .is_some());
-    }
-
-    #[tokio::test]
-    async fn dispatch_storage_create_connection_clears_previous_agent_default() {
-        let state = test_state("remote-connection-default-create");
-        for (id, provider) in [("language-a", "anthropic"), ("language-b", "openai")] {
-            dispatch(
-                &state,
-                InvokeRequest {
-                    command: "storage_create".to_string(),
-                    args: Some(json!({
-                        "entity": "connections",
-                        "value": {
-                            "id": id,
-                            "name": id,
-                            "provider": provider,
-                            "defaultForAgents": true
-                        }
-                    })),
-                },
-            )
-            .await
-            .expect("remote connection create should dispatch");
-        }
-
-        let language_a = state
-            .storage
-            .get("connections", "language-a")
-            .unwrap()
-            .unwrap();
-        let language_b = state
-            .storage
-            .get("connections", "language-b")
-            .unwrap()
-            .unwrap();
-        assert_eq!(language_a["defaultForAgents"], false);
-        assert_eq!(language_b["defaultForAgents"], true);
-    }
-
-    #[tokio::test]
-    async fn dispatch_storage_update_rejects_default_chat_preset_mutation() {
-        let state = test_state("remote-default-preset-guard");
-        state
-            .storage
-            .create(
-                "chat-presets",
-                json!({
-                    "id": "default-chat",
-                    "name": "Default Chat",
-                    "mode": "chat",
-                    "isDefault": true,
-                    "default": true,
-                    "isActive": true,
-                    "active": true,
-                    "parameters": {},
-                    "settings": {}
-                }),
-            )
-            .expect("default chat preset should be seeded");
-
-        let error = dispatch(
-            &state,
-            InvokeRequest {
-                command: "storage_update".to_string(),
-                args: Some(json!({
-                    "entity": "chat-presets",
-                    "id": "default-chat",
-                    "patch": { "name": "Mutated" }
-                })),
-            },
-        )
-        .await
-        .expect_err("remote default preset mutation should be rejected");
-
-        assert_eq!(error.code, "invalid_input");
-        let preset = state
-            .storage
-            .get("chat-presets", "default-chat")
-            .unwrap()
-            .unwrap();
-        assert_eq!(preset["name"], "Default Chat");
     }
 
     #[tokio::test]
