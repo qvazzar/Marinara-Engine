@@ -13,6 +13,7 @@ dist-ssr
 *.local
 *.tsbuildinfo
 *.test.ts
+*.test.tsx
 .eslint-reports/
 
 # Bunny Review local output artifacts
