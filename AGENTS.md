@@ -62,5 +62,6 @@ For code changes, final responses must include behavior changed, primary files/m
 - `skills/frontend-design`: Repo-local frontend concept, layout, visual direction, and first-pass UI implementation workflow that pairs with Impeccable.
 - `skills/impeccable`: Repo-local frontend design, critique, polish, accessibility, responsive, and live-iteration workflow for UI craft passes.
 - `skills/bunny-style-review`: Repo-local branch and PR review workflow for failure-path review and actionable nitpicks.
+- `skills/marinara-legacy-parity-audit`: Repo-local parityscan workflow for comparing refactor features, contracts, storage, runtime behavior, and product surfaces against legacy Marinara.
 - `skills/marinara-architecture-guard`: Architecture guardrails for placement, import direction, and remote-capable command routing.
 - `skills/marinara-agent-workflow`: Agent workflow references, source maps, handoff formats, and verification discipline.
