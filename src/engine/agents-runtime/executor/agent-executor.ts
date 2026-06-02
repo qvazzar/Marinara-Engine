@@ -172,8 +172,8 @@ export async function executeAgent(
         ? buildExpressionAgentMessages(template, context)
         : config.type === "knowledge-retrieval"
           ? buildKnowledgeRetrievalAgentMessages(config, template, context)
-          : config.type === "spotify" && context.chatMode === "game"
-            ? buildGameSpotifyAgentMessages(template, context)
+          : config.type === "spotify"
+            ? buildSpotifyAgentMessages(template, context)
             : buildStandardAgentMessages(config, template, context);
 
     const temperature = agentTemperature(config);
@@ -821,7 +821,7 @@ function formatAgentParseError(config: Pick<AgentExecConfig, "name">, error: str
 function shouldRunAgentIndividually(config: Pick<AgentExecConfig, "type">): boolean {
   // These agents either need compact prompts or carry large private extras that
   // must not be merged into unrelated batched agent requests.
-  return config.type === "lorebook-keeper";
+  return config.type === "expression" || config.type === "lorebook-keeper" || config.type === "spotify";
 }
 
 function buildStandardAgentMessages(config: AgentExecConfig, template: string, context: AgentContext): ChatMessage[] {
@@ -941,10 +941,11 @@ function findLatestUserMessage(context: AgentContext): { index: number; content:
   return null;
 }
 
-function buildGameSpotifyAgentMessages(template: string, context: AgentContext): ChatMessage[] {
+function buildSpotifyAgentMessages(template: string, context: AgentContext): ChatMessage[] {
+  const modeLabel = context.chatMode === "game" ? "game" : "roleplay";
   const systemParts: string[] = [];
   systemParts.push(`<role>`);
-  systemParts.push(`You are a specialized Spotify DJ agent for the current game turn.`);
+  systemParts.push(`You are a specialized Spotify DJ agent for the current ${modeLabel} turn.`);
   systemParts.push(`</role>`);
   systemParts.push(``);
   systemParts.push(buildLoreBlock(context));
@@ -961,7 +962,7 @@ function buildGameSpotifyAgentMessages(template: string, context: AgentContext):
   }
 
   const latestUser = findLatestUserMessage(context);
-  const latestGameTurn = context.mainResponse?.trim() || findLatestAssistantMessage(context)?.content || "";
+  const latestTurn = context.mainResponse?.trim() || findLatestAssistantMessage(context)?.content || "";
   const userParts: string[] = [];
 
   if (latestUser?.content) {
@@ -971,15 +972,15 @@ function buildGameSpotifyAgentMessages(template: string, context: AgentContext):
     userParts.push(``);
   }
 
-  if (latestGameTurn) {
-    userParts.push(`<last_game_turn>`);
-    userParts.push(truncateAgentText(latestGameTurn, 5000));
-    userParts.push(`</last_game_turn>`);
+  if (latestTurn) {
+    userParts.push(`<last_${modeLabel}_turn>`);
+    userParts.push(truncateAgentText(latestTurn, 5000));
+    userParts.push(`</last_${modeLabel}_turn>`);
     userParts.push(``);
   }
 
   userParts.push(
-    `Pick music for this game turn only. Use tools to inspect playback and fetch/search candidate tracks.`,
+    `Pick music for this ${modeLabel} turn only. Use tools to inspect playback and fetch/search candidate tracks.`,
   );
   userParts.push(`Now return the requested format.`);
 
@@ -1635,16 +1636,120 @@ function extractJson(text: string): string {
     if (jsonMatch) text = jsonMatch[1]!;
   }
 
-  // Repair common LLM JSON issues
-  text = repairJson(text);
-  return text;
+  try {
+    JSON.parse(text);
+    return text;
+  } catch {
+    // Repair only after parse failure so valid strings containing // survive.
+  }
+
+  return repairJson(text);
 }
 
 /** Fix common LLM JSON mistakes: trailing commas, comments, ellipsis placeholders. */
 function repairJson(str: string): string {
-  return str
-    .replace(/\/\/[^\n]*/g, "") // remove single-line comments
-    .replace(/\/\*[\s\S]*?\*\//g, "") // remove multi-line comments
-    .replace(/,\s*([\]}])/g, "$1") // remove trailing commas before ] or }
-    .replace(/\.\.\.[^"\n]*/g, ""); // remove ... continuations/placeholders
+  return removeEllipsesOutsideJsonStrings(
+    removeTrailingCommasOutsideJsonStrings(removeJsonCommentsOutsideStrings(str)),
+  );
+}
+
+function removeJsonCommentsOutsideStrings(str: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < str.length; index += 1) {
+    const char = str[index]!;
+    const next = str[index + 1];
+    if (inString) {
+      result += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      result += char;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      index += 2;
+      while (index < str.length && str[index] !== "\n" && str[index] !== "\r") index += 1;
+      index -= 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      index += 2;
+      while (index < str.length && !(str[index] === "*" && str[index + 1] === "/")) index += 1;
+      index += 1;
+      continue;
+    }
+    result += char;
+  }
+
+  return result;
+}
+
+function removeTrailingCommasOutsideJsonStrings(str: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < str.length; index += 1) {
+    const char = str[index]!;
+    if (inString) {
+      result += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      result += char;
+      continue;
+    }
+    if (char === ",") {
+      let lookahead = index + 1;
+      while (/\s/.test(str[lookahead] ?? "")) lookahead += 1;
+      if (str[lookahead] === "}" || str[lookahead] === "]") continue;
+    }
+    result += char;
+  }
+
+  return result;
+}
+
+function removeEllipsesOutsideJsonStrings(str: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < str.length; index += 1) {
+    const char = str[index]!;
+    if (inString) {
+      result += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      result += char;
+      continue;
+    }
+    if (char === "." && str.slice(index, index + 3) === "...") {
+      index += 2;
+      while (index + 1 < str.length && str[index + 1] !== "\n" && str[index + 1] !== "\r") index += 1;
+      continue;
+    }
+    result += char;
+  }
+
+  return result;
 }
