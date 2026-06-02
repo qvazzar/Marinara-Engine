@@ -525,6 +525,7 @@ export interface MessageSwipe {
   messageId: string;
   index: number;
   content: string;
+  characterId?: string | null;
   createdAt: string;
   extra?: MessageSwipeExtra;
 }
