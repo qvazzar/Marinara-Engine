@@ -2572,6 +2572,7 @@ export async function* startGeneration(
             debugSink: input.debugSink,
             hideAutomatedSummarySourceMessages: input.hideAutomatedSummarySourceMessages === true,
             signal,
+            forCharacterId: readString(input.forCharacterId).trim() || null,
             regenerateMessageId: readString(input.regenerateMessageId).trim() || null,
             agentInjectionOverrides,
           },

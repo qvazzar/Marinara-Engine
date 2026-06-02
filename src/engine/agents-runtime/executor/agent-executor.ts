@@ -24,6 +24,9 @@ const MAX_AGENT_CONTEXT_MESSAGES = 200;
 const EXPRESSION_AGENT_RECENT_CONTEXT_MESSAGES = 2;
 const EXPRESSION_AGENT_CONTEXT_CHAR_LIMIT = 1200;
 const EXPRESSION_AGENT_RESPONSE_CHAR_LIMIT = 6000;
+const ECHO_AGENT_RECENT_CONTEXT_MESSAGES = 6;
+const ECHO_AGENT_CONTEXT_CHAR_LIMIT = 1200;
+const ECHO_AGENT_RESPONSE_CHAR_LIMIT = 6000;
 
 async function yieldToHost(): Promise<void> {
   await new Promise<void>((resolve) => {
@@ -170,11 +173,13 @@ export async function executeAgent(
     const messages =
       config.type === "expression"
         ? buildExpressionAgentMessages(template, context)
-        : config.type === "knowledge-retrieval"
-          ? buildKnowledgeRetrievalAgentMessages(config, template, context)
-          : config.type === "spotify"
-            ? buildSpotifyAgentMessages(template, context)
-            : buildStandardAgentMessages(config, template, context);
+        : config.type === "echo-chamber"
+          ? buildEchoChamberAgentMessages(config, template, context)
+          : config.type === "knowledge-retrieval"
+            ? buildKnowledgeRetrievalAgentMessages(config, template, context)
+            : config.type === "spotify"
+              ? buildSpotifyAgentMessages(template, context)
+              : buildStandardAgentMessages(config, template, context);
 
     const temperature = agentTemperature(config);
     const maxTokens = applyProviderMaxTokensOverride(provider, normalizeAgentMaxTokens(config.settings.maxTokens));
@@ -821,7 +826,12 @@ function formatAgentParseError(config: Pick<AgentExecConfig, "name">, error: str
 function shouldRunAgentIndividually(config: Pick<AgentExecConfig, "type">): boolean {
   // These agents either need compact prompts or carry large private extras that
   // must not be merged into unrelated batched agent requests.
-  return config.type === "expression" || config.type === "lorebook-keeper" || config.type === "spotify";
+  return (
+    config.type === "expression" ||
+    config.type === "echo-chamber" ||
+    config.type === "lorebook-keeper" ||
+    config.type === "spotify"
+  );
 }
 
 function buildStandardAgentMessages(config: AgentExecConfig, template: string, context: AgentContext): ChatMessage[] {
@@ -941,6 +951,24 @@ function findLatestUserMessage(context: AgentContext): { index: number; content:
   return null;
 }
 
+function characterNameForId(context: AgentContext, characterId?: string | null): string | null {
+  const id = characterId?.trim();
+  if (!id) return null;
+  return context.characters.find((character) => character.id === id)?.name?.trim() || null;
+}
+
+function agentSpeakerLabel(message: { role: string; characterId?: string }, context: AgentContext): string {
+  if (message.role === "user") return context.persona?.name?.trim() || "User";
+  if (message.role === "assistant") {
+    return characterNameForId(context, message.characterId) || context.characters[0]?.name?.trim() || "Assistant";
+  }
+  return message.role || "Message";
+}
+
+function mainResponseSpeakerLabel(context: AgentContext): string {
+  return characterNameForId(context, context.mainResponseCharacterId) || context.characters[0]?.name?.trim() || "Assistant";
+}
+
 function buildSpotifyAgentMessages(template: string, context: AgentContext): ChatMessage[] {
   const modeLabel = context.chatMode === "game" ? "game" : "roleplay";
   const systemParts: string[] = [];
@@ -981,6 +1009,54 @@ function buildSpotifyAgentMessages(template: string, context: AgentContext): Cha
 
   userParts.push(
     `Pick music for this ${modeLabel} turn only. Use tools to inspect playback and fetch/search candidate tracks.`,
+  );
+  userParts.push(`Now return the requested format.`);
+
+  return [
+    { role: "system", content: systemParts.join("\n"), contextKind: "prompt" },
+    { role: "user", content: userParts.join("\n"), contextKind: "history" },
+  ];
+}
+
+function buildEchoChamberAgentMessages(
+  config: AgentExecConfig,
+  template: string,
+  context: AgentContext,
+): ChatMessage[] {
+  const systemParts: string[] = [];
+  systemParts.push(`<role>`);
+  systemParts.push(`You are a specialized Echo Chamber agent. Keep the request compact and return only JSON.`);
+  systemParts.push(`</role>`);
+  systemParts.push(``);
+  systemParts.push(`<agents>`);
+  systemParts.push(`Fulfill the requested task here and return the output in the format specified:`);
+  systemParts.push(template);
+  systemParts.push(`</agents>`);
+
+  const agentContextSize = normalizeAgentContextSize(config.settings.contextSize, ECHO_AGENT_RECENT_CONTEXT_MESSAGES);
+  const recentContext = context.recentMessages
+    .slice(-Math.min(agentContextSize, ECHO_AGENT_RECENT_CONTEXT_MESSAGES))
+    .filter((message) => message.content.trim());
+  const responseText = context.mainResponse?.trim() || findLatestAssistantMessage(context)?.content || "";
+  const responseSpeaker = mainResponseSpeakerLabel(context);
+  const userParts: string[] = [];
+
+  if (recentContext.length > 0) {
+    userParts.push(`<recent_context_for_continuity>`);
+    for (const message of recentContext) {
+      const speaker = agentSpeakerLabel(message, context);
+      userParts.push(`${speaker}: ${truncateAgentText(message.content, ECHO_AGENT_CONTEXT_CHAR_LIMIT)}`);
+    }
+    userParts.push(`</recent_context_for_continuity>`);
+    userParts.push(``);
+  }
+
+  userParts.push(`<current_response speaker="${escapeXml(responseSpeaker)}">`);
+  userParts.push(truncateAgentText(responseText, ECHO_AGENT_RESPONSE_CHAR_LIMIT));
+  userParts.push(`</current_response>`);
+  userParts.push(``);
+  userParts.push(
+    `React ONLY to <current_response>. Use <recent_context_for_continuity> only for names, callbacks, and setup. Do not treat earlier assistant messages as the latest beat, especially when multiple group-chat assistants answer one after another.`,
   );
   userParts.push(`Now return the requested format.`);
 

@@ -153,6 +153,7 @@ function buildAgentContext(agentOrAgents: ResolvedAgent | ResolvedAgent[], conte
 function shouldExecuteIndividually(agent: ResolvedAgent): boolean {
   return (
     agent.type === "expression" ||
+    agent.type === "echo-chamber" ||
     agent.type === "spotify" ||
     agent.type === "knowledge-retrieval" ||
     agent.type === "knowledge-router" ||

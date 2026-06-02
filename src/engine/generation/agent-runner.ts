@@ -85,6 +85,7 @@ export interface GenerationAgentRuntimeInput {
   debugMode?: boolean;
   debugSink?: AgentContext["debugSink"];
   signal?: AbortSignal;
+  forCharacterId?: string | null;
   agentTypes?: Set<string>;
   bypassCustomAgentActivation?: boolean;
   hideAutomatedSummarySourceMessages?: boolean;
@@ -1275,6 +1276,7 @@ async function buildAgentContext(
         characterId: readString(message.characterId).trim() || undefined,
       })),
     mainResponse: null,
+    mainResponseCharacterId: readString(input.forCharacterId).trim() || null,
     gameState: isRecord(input.chat.gameState) ? (input.chat.gameState as unknown as AgentContext["gameState"]) : null,
     characters: input.characters.map((character) => ({
       id: character.id,
