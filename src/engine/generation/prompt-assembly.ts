@@ -121,7 +121,12 @@ export interface PromptAssemblyInput {
   request: JsonRecord;
   latestUserInput: string;
   agentData?: Record<string, string>;
-  embeddingSource?: { embed(texts: string[]): Promise<number[][] | null> } | null;
+  embeddingSource?: {
+    embed(
+      texts: string[],
+      request?: { connectionId?: string | null; model?: string | null },
+    ): Promise<number[][] | null>;
+  } | null;
   persistPromptVariables?: boolean;
 }
 
@@ -1510,11 +1515,11 @@ function memoizedEmbeddingSource(
   if (!source) return null;
   const cache = new Map<string, Promise<number[][] | null>>();
   return {
-    embed: (texts) => {
-      const key = JSON.stringify(texts);
+    embed: (texts, request) => {
+      const key = JSON.stringify([texts, request ?? null]);
       const existing = cache.get(key);
       if (existing) return existing;
-      const embedding = source.embed(texts);
+      const embedding = source.embed(texts, request);
       cache.set(key, embedding);
       return embedding;
     },

@@ -74,9 +74,19 @@ export interface LorebookSemanticScanStatus {
   vectorizedEntryCount: number;
 }
 
-interface LorebookEmbeddingSource {
-  embed(texts: string[]): Promise<number[][] | null>;
+interface LorebookEmbeddingRequest {
+  connectionId?: string | null;
+  model?: string | null;
 }
+
+interface LorebookEmbeddingSource {
+  embed(texts: string[], request?: LorebookEmbeddingRequest): Promise<number[][] | null>;
+}
+
+type LorebookEmbeddingRequestSelection =
+  | { type: "default" }
+  | { type: "target"; request: LorebookEmbeddingRequest }
+  | { type: "ambiguous" };
 
 interface LoadedLorebookBudgetSkippedEntry {
   activatedEntry: ActivatedEntry;
@@ -202,6 +212,9 @@ function normalizeLorebookEntry(entry: JsonRecord): LorebookEntry {
     embedding: Array.isArray(entry.embedding)
       ? entry.embedding.filter((item): item is number => typeof item === "number")
       : null,
+    embeddingModel: readString(entry.embeddingModel).trim() || null,
+    embeddingConnectionId: readString(entry.embeddingConnectionId).trim() || null,
+    embeddingUpdatedAt: readString(entry.embeddingUpdatedAt).trim() || null,
     additionalMatchingSources: stringArray(
       entry.additionalMatchingSources,
     ) as LorebookEntry["additionalMatchingSources"],
@@ -557,11 +570,34 @@ function countSemanticCandidateEntries(entries: LorebookEntry[]): number {
   ).length;
 }
 
+function lorebookEntryHasEmbedding(entry: LorebookEntry): boolean {
+  return (
+    !entry.constant &&
+    !entry.excludeFromVectorization &&
+    Array.isArray(entry.embedding) &&
+    entry.embedding.some((value) => Number.isFinite(value))
+  );
+}
+
+function vectorEmbeddingRequest(entries: LorebookEntry[]): LorebookEmbeddingRequestSelection {
+  const requests = entries.filter(lorebookEntryHasEmbedding).map((entry) => ({
+    connectionId: readString(entry.embeddingConnectionId).trim() || null,
+    model: readString(entry.embeddingModel).trim() || null,
+  }));
+  if (requests.length === 0) return { type: "default" };
+  const unique = new Set(requests.map((request) => `${request.connectionId ?? ""}\0${request.model ?? ""}`));
+  if (unique.size !== 1) return { type: "ambiguous" };
+  const [request] = requests;
+  if (!request || (!request.connectionId && !request.model)) return { type: "default" };
+  return { type: "target", request };
+}
+
 async function resolveSemanticChatEmbedding(
   messages: ScanMessage[],
   latestUserInput: string | undefined,
   embeddingSource: LorebookEmbeddingSource | null | undefined,
   vectorizedEntryCount: number,
+  embeddingRequest: LorebookEmbeddingRequestSelection,
 ): Promise<{ chatEmbedding: number[] | null; status: LorebookSemanticScanStatus }> {
   if (vectorizedEntryCount === 0) {
     return { chatEmbedding: null, status: { state: "not_applicable", vectorizedEntryCount } };
@@ -569,12 +605,18 @@ async function resolveSemanticChatEmbedding(
   if (!embeddingSource) {
     return { chatEmbedding: null, status: { state: "missing_embedding_source", vectorizedEntryCount } };
   }
+  if (embeddingRequest.type === "ambiguous") {
+    return { chatEmbedding: null, status: { state: "unavailable", vectorizedEntryCount } };
+  }
   const query = semanticQueryText(messages, latestUserInput);
   if (!query) {
     return { chatEmbedding: null, status: { state: "empty_query", vectorizedEntryCount } };
   }
   try {
-    const sourceEmbedding = await embeddingSource.embed([query]);
+    const sourceEmbedding = await embeddingSource.embed(
+      [query],
+      embeddingRequest.type === "target" ? embeddingRequest.request : undefined,
+    );
     const vector = sourceEmbedding?.[0]?.filter((value): value is number => Number.isFinite(value));
     if (!vector?.length) {
       return { chatEmbedding: null, status: { state: "unavailable", vectorizedEntryCount } };
@@ -634,11 +676,13 @@ async function loadActivatedLore(input: ActiveLorebookScannerInput): Promise<Loa
     (sum, item) => sum + countSemanticCandidateEntries(item.entries),
     0,
   );
+  const embeddingRequest = vectorEmbeddingRequest(entriesByBook.flatMap((item) => item.entries));
   const semantic = await resolveSemanticChatEmbedding(
     messages,
     input.latestUserInput,
     input.embeddingSource,
     vectorizedEntryCount,
+    embeddingRequest,
   );
   const options: ScanOptions = {
     activeCharacterIds,
