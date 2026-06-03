@@ -6,6 +6,7 @@ use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Cursor, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -20,11 +21,36 @@ const STORAGE_SAVE_DEBOUNCE_MS: u64 = 750;
 #[derive(Default)]
 struct StorageCache {
     collections: HashMap<String, CachedCollection>,
+    projected_lists: HashMap<ProjectionCacheKey, CachedProjectedList>,
 }
 
 struct CachedCollection {
     rows: Vec<Value>,
     dirty: bool,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ProjectionCacheKey {
+    collection: String,
+    shape: ProjectionShape,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ProjectionShape {
+    fields: Vec<String>,
+    field_selections: Vec<(String, Vec<String>)>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CollectionFileStamp {
+    len: u64,
+    modified_nanos: u128,
+    content_signature: u64,
+}
+
+struct CachedProjectedList {
+    rows: Vec<Value>,
+    stamp: Option<CollectionFileStamp>,
 }
 
 struct AtomicUpdateGuard {
@@ -723,6 +749,11 @@ impl FileStorage {
             .cache
             .write()
             .map_err(|_| AppError::new("lock_error", "Storage cache lock poisoned"))?;
+        if dirty {
+            cache
+                .projected_lists
+                .retain(|key, _| key.collection != collection);
+        }
         cache.collections.insert(
             collection.to_string(),
             CachedCollection {
@@ -739,6 +770,19 @@ impl FileStorage {
             .write()
             .map_err(|_| AppError::new("lock_error", "Storage cache lock poisoned"))?;
         cache.collections.clear();
+        cache.projected_lists.clear();
+        Ok(())
+    }
+
+    fn invalidate_projected_cache_for_collection(&self, collection: &str) -> AppResult<()> {
+        validate_collection_name(collection)?;
+        let mut cache = self
+            .cache
+            .write()
+            .map_err(|_| AppError::new("lock_error", "Storage cache lock poisoned"))?;
+        cache
+            .projected_lists
+            .retain(|key, _| key.collection != collection);
         Ok(())
     }
 
@@ -995,7 +1039,16 @@ impl FileStorage {
                 .collect());
         }
 
+        let cache_key = ProjectionCacheKey {
+            collection: collection.to_string(),
+            shape: projection_shape(fields, &nested_field_sets),
+        };
         let path = self.collection_path(collection)?;
+        let stamp = collection_file_stamp(&path)?;
+        if let Some(rows) = self.cached_projected_list_rows(&cache_key, stamp)? {
+            return Ok(rows);
+        }
+
         if !path.exists() || fs::metadata(&path)?.len() == 0 {
             return Ok(Vec::new());
         }
@@ -1007,17 +1060,22 @@ impl FileStorage {
             fields: &field_set,
             field_selections: &nested_field_sets,
         }) {
-            Ok(rows) => Ok(rows),
+            Ok(rows) => {
+                self.cache_projected_list(&cache_key, &rows, stamp)?;
+                Ok(rows)
+            }
             Err(_) => {
                 let rows = if recover_on_fallback {
                     self.read_collection(collection)?
                 } else {
                     self.read_collection_no_recovery(collection)?
                 };
-                Ok(rows
+                let projected = rows
                     .into_iter()
                     .map(|row| project_row(row, &field_set, &nested_field_sets))
-                    .collect())
+                    .collect::<Vec<_>>();
+                self.cache_projected_list(&cache_key, &projected, stamp)?;
+                Ok(projected)
             }
         }
     }
@@ -1603,6 +1661,42 @@ impl FileStorage {
             .collect())
     }
 
+    fn cached_projected_list_rows(
+        &self,
+        key: &ProjectionCacheKey,
+        stamp: Option<CollectionFileStamp>,
+    ) -> AppResult<Option<Vec<Value>>> {
+        let cache = self
+            .cache
+            .read()
+            .map_err(|_| AppError::new("lock_error", "Storage cache lock poisoned"))?;
+        Ok(cache
+            .projected_lists
+            .get(key)
+            .filter(|cached| cached.stamp == stamp)
+            .map(|cached| cached.rows.clone()))
+    }
+
+    fn cache_projected_list(
+        &self,
+        key: &ProjectionCacheKey,
+        rows: &[Value],
+        stamp: Option<CollectionFileStamp>,
+    ) -> AppResult<()> {
+        let mut cache = self
+            .cache
+            .write()
+            .map_err(|_| AppError::new("lock_error", "Storage cache lock poisoned"))?;
+        cache.projected_lists.insert(
+            key.clone(),
+            CachedProjectedList {
+                rows: rows.to_vec(),
+                stamp,
+            },
+        );
+        Ok(())
+    }
+
     fn write_collection(&self, collection: &str, rows: &[Value]) -> AppResult<()> {
         self.cache_collection(collection, rows, true)?;
         self.schedule_dirty_flush();
@@ -1611,6 +1705,7 @@ impl FileStorage {
 
     fn write_collection_immediate(&self, collection: &str, rows: &[Value]) -> AppResult<()> {
         self.write_collection_file(collection, rows)?;
+        self.invalidate_projected_cache_for_collection(collection)?;
         self.cache_collection(collection, rows, false)?;
         Ok(())
     }
@@ -1831,6 +1926,7 @@ impl FileStorage {
 
         cleanup_pending_collection_transaction_files(&pending);
         for (collection, rows) in replacements {
+            self.invalidate_projected_cache_for_collection(collection)?;
             self.cache_collection(collection, &rows, false)?;
         }
         Ok(())
@@ -2163,6 +2259,63 @@ fn selected_nested_fields(
             (!nested.is_empty()).then(|| (field.clone(), nested))
         })
         .collect()
+}
+
+fn projection_shape(
+    fields: &[String],
+    field_selections: &HashMap<String, HashSet<String>>,
+) -> ProjectionShape {
+    let mut normalized_fields = fields.to_vec();
+    normalized_fields.sort();
+    normalized_fields.dedup();
+    let mut normalized_selections = field_selections
+        .iter()
+        .map(|(field, selections)| {
+            let mut nested = selections.iter().cloned().collect::<Vec<_>>();
+            nested.sort();
+            nested.dedup();
+            (field.clone(), nested)
+        })
+        .collect::<Vec<_>>();
+    normalized_selections.sort_by(|a, b| a.0.cmp(&b.0));
+    ProjectionShape {
+        fields: normalized_fields,
+        field_selections: normalized_selections,
+    }
+}
+
+fn collection_file_stamp(path: &Path) -> AppResult<Option<CollectionFileStamp>> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let modified_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    Ok(Some(CollectionFileStamp {
+        len: metadata.len(),
+        modified_nanos,
+        content_signature: collection_content_signature(path, metadata.len())?,
+    }))
+}
+
+fn collection_content_signature(path: &Path, len: u64) -> AppResult<u64> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    len.hash(&mut hasher);
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.write(&buffer[..bytes_read]);
+    }
+    Ok(hasher.finish())
 }
 
 fn project_row(
@@ -4374,6 +4527,265 @@ mod tests {
             rows,
             vec![json!({ "id": "target", "data": { "name": "Dirty" } })]
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_projected_caches_clean_projection_shapes_until_file_changes() {
+        let root = temp_storage_root("list-projected-caches-clean-shapes");
+        let storage = FileStorage::new(&root).unwrap();
+
+        storage
+            .replace_all(
+                "characters",
+                vec![json!( {
+                    "id": "target",
+                    "data": { "name": "Disk", "description": "large prompt" },
+                    "avatar": "large image payload"
+                })],
+            )
+            .unwrap();
+
+        let fields = vec!["id".to_string(), "data".to_string()];
+        let reversed_fields = vec!["data".to_string(), "id".to_string()];
+        let mut selections = Map::new();
+        selections.insert("data".to_string(), json!(["name"]));
+
+        let first = storage
+            .list_projected("characters", &fields, &selections)
+            .expect("first projected list should read");
+        assert_eq!(first, vec![json!({ "id": "target", "data": { "name": "Disk" } })]);
+
+        let second = storage
+            .list_projected("characters", &reversed_fields, &selections)
+            .expect("same projection shape should read");
+        assert_eq!(second, first);
+        let projected_cache_len = storage
+            .cache
+            .read()
+            .expect("cache lock should be readable")
+            .projected_lists
+            .len();
+        assert_eq!(projected_cache_len, 1);
+
+        std::thread::sleep(Duration::from_millis(5));
+        let collection = root.join("collections").join("characters.json");
+        fs::write(
+            &collection,
+            serde_json::to_vec_pretty(&json!([
+                {
+                    "id": "target",
+                    "data": { "name": "Changed", "description": "changed large prompt" },
+                    "avatar": "changed large image payload"
+                }
+            ]))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let changed = storage
+            .list_projected("characters", &fields, &selections)
+            .expect("projected list should notice changed collection file");
+        assert_eq!(
+            changed,
+            vec![json!({ "id": "target", "data": { "name": "Changed" } })]
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_projected_cache_detects_same_length_rewrite() {
+        let root = temp_storage_root("list-projected-cache-same-length-rewrite");
+        let storage = FileStorage::new(&root).unwrap();
+
+        storage
+            .replace_all(
+                "characters",
+                vec![json!({
+                    "id": "target",
+                    "data": { "name": "Alpha", "description": "large prompt" },
+                    "avatar": "large image payload"
+                })],
+            )
+            .unwrap();
+
+        let fields = vec!["id".to_string(), "data".to_string()];
+        let mut selections = Map::new();
+        selections.insert("data".to_string(), json!(["name"]));
+
+        let first = storage
+            .list_projected("characters", &fields, &selections)
+            .expect("first projected list should read");
+        assert_eq!(first, vec![json!({ "id": "target", "data": { "name": "Alpha" } })]);
+
+        let collection = root.join("collections").join("characters.json");
+        let replacement = serde_json::to_vec_pretty(&json!([
+            {
+                "id": "target",
+                "data": { "name": "Bravo", "description": "large prompt" },
+                "avatar": "large image payload"
+            }
+        ]))
+        .unwrap();
+        assert_eq!(
+            replacement.len() as u64,
+            fs::metadata(&collection)
+                .expect("collection should exist")
+                .len()
+        );
+        fs::write(&collection, replacement).unwrap();
+
+        let changed = storage
+            .list_projected("characters", &fields, &selections)
+            .expect("projected list should notice same-length file rewrite");
+        assert_eq!(
+            changed,
+            vec![json!({ "id": "target", "data": { "name": "Bravo" } })]
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn collection_content_signature_hashes_large_unsampled_bytes() {
+        let root = temp_storage_root("collection-content-signature-large");
+        let collection = root.join("collections").join("characters.json");
+        fs::create_dir_all(collection.parent().unwrap()).unwrap();
+
+        let mut bytes = vec![b'a'; 20_000];
+        fs::write(&collection, &bytes).unwrap();
+        let len = fs::metadata(&collection).unwrap().len();
+        let first_signature = collection_content_signature(&collection, len).unwrap();
+
+        bytes[6_000] = b'b';
+        fs::write(&collection, &bytes).unwrap();
+
+        assert_eq!(fs::metadata(&collection).unwrap().len(), len);
+        assert_ne!(
+            collection_content_signature(&collection, len).unwrap(),
+            first_signature
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_projected_cache_is_invalidated_by_writes() {
+        let root = temp_storage_root("list-projected-cache-invalidated-by-writes");
+        let storage = FileStorage::new(&root).unwrap();
+
+        storage
+            .replace_all(
+                "characters",
+                vec![json!({
+                    "id": "target",
+                    "data": { "name": "Before", "description": "large prompt" },
+                    "avatar": "large image payload"
+                })],
+            )
+            .unwrap();
+
+        let fields = vec!["id".to_string(), "data".to_string()];
+        let mut selections = Map::new();
+        selections.insert("data".to_string(), json!(["name"]));
+
+        storage
+            .list_projected("characters", &fields, &selections)
+            .expect("projected list should read");
+        assert_eq!(
+            storage
+                .cache
+                .read()
+                .expect("cache lock should be readable")
+                .projected_lists
+                .len(),
+            1
+        );
+
+        storage
+            .patch(
+                "characters",
+                "target",
+                json!({ "data": { "name": "After", "description": "changed large prompt" } }),
+            )
+            .expect("patch should update character");
+
+        assert_eq!(
+            storage
+                .cache
+                .read()
+                .expect("cache lock should be readable")
+                .projected_lists
+                .len(),
+            0
+        );
+        let rows = storage
+            .list_projected("characters", &fields, &selections)
+            .expect("projected list should read updated dirty rows");
+        assert_eq!(rows, vec![json!({ "id": "target", "data": { "name": "After" } })]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_projected_cache_is_invalidated_by_replace_all_many() {
+        let root = temp_storage_root("list-projected-cache-invalidated-by-replace-many");
+        let storage = FileStorage::new(&root).unwrap();
+
+        storage
+            .replace_all(
+                "characters",
+                vec![json!({
+                    "id": "target",
+                    "data": { "name": "Before", "description": "large prompt" },
+                    "avatar": "large image payload"
+                })],
+            )
+            .unwrap();
+
+        let fields = vec!["id".to_string(), "data".to_string()];
+        let mut selections = Map::new();
+        selections.insert("data".to_string(), json!(["name"]));
+
+        storage
+            .list_projected("characters", &fields, &selections)
+            .expect("projected list should read");
+        assert_eq!(
+            storage
+                .cache
+                .read()
+                .expect("cache lock should be readable")
+                .projected_lists
+                .len(),
+            1
+        );
+
+        storage
+            .replace_all_many(vec![(
+                "characters",
+                vec![json!({
+                    "id": "target",
+                    "data": { "name": "After", "description": "changed prompt" },
+                    "avatar": "large image payload"
+                })],
+            )])
+            .expect("replace_all_many should update character");
+
+        assert_eq!(
+            storage
+                .cache
+                .read()
+                .expect("cache lock should be readable")
+                .projected_lists
+                .len(),
+            0
+        );
+        let rows = storage
+            .list_projected("characters", &fields, &selections)
+            .expect("projected list should read replaced rows");
+        assert_eq!(rows, vec![json!({ "id": "target", "data": { "name": "After" } })]);
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -27,11 +27,16 @@ export const presetKeys = {
   groups: (presetId: string) => [...presetKeys.all, "groups", presetId] as const,
   choiceBlocks: (presetId: string) => [...presetKeys.all, "choices", presetId] as const,
   default: () => [...presetKeys.all, "default"] as const,
+  defaultSummary: () => [...presetKeys.default(), "summary"] as const,
 };
 
 type PromptNestedKind = "groups" | "sections" | "variables";
 
 export type PromptPresetSummary = Pick<PromptPreset, "id" | "name" | "isDefault"> & {
+  description?: string;
+  wrapFormat?: string;
+  author?: string;
+  sectionOrder?: string | string[];
   default?: boolean | string;
 };
 
@@ -43,7 +48,7 @@ export interface PresetFullData {
 }
 
 const PRESET_SUMMARY_OPTIONS = {
-  fields: ["id", "name", "isDefault", "default"],
+  fields: ["id", "name", "description", "wrapFormat", "isDefault", "default", "author", "sectionOrder"],
 };
 
 const promptNestedEntity: Record<PromptNestedKind, StorageEntity> = {
@@ -176,7 +181,7 @@ async function reorderPromptNested<T>(presetId: string, kind: PromptNestedKind, 
 export function usePresets() {
   return useQuery({
     queryKey: presetKeys.list(),
-    queryFn: () => storageApi.list<PromptPreset>("prompts"),
+    queryFn: () => storageApi.list<PromptPresetSummary>("prompts", PRESET_SUMMARY_OPTIONS),
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
   });
@@ -216,20 +221,12 @@ export function usePresetFull(id: string | null) {
   });
 }
 
-export function useDefaultPreset() {
+export function useDefaultPresetSummary() {
   return useQuery({
-    queryKey: presetKeys.default(),
+    queryKey: presetKeys.defaultSummary(),
     queryFn: async () => {
-      const presets = await storageApi.list<PromptPreset>("prompts");
-      return (
-        presets.find((preset) =>
-          boolish(
-            (preset as PromptPreset & { default?: unknown }).isDefault ??
-              (preset as PromptPreset & { default?: unknown }).default,
-            false,
-          ),
-        ) ?? null
-      );
+      const presets = await storageApi.list<PromptPresetSummary>("prompts", PRESET_SUMMARY_OPTIONS);
+      return presets.find((preset) => boolish(preset.isDefault ?? preset.default, false)) ?? null;
     },
     staleTime: 5 * 60_000,
   });
@@ -271,12 +268,12 @@ export function useSetDefaultPreset() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const prompts = await storageApi.list<PromptPreset>("prompts");
-      let selected: PromptPreset | null = null;
+      const prompts = await storageApi.list<PromptPresetSummary>("prompts", PRESET_SUMMARY_OPTIONS);
+      let selected: PromptPresetSummary | null = null;
       await Promise.all(
         prompts.map(async (prompt) => {
           const isDefault = prompt.id === id;
-          const updated = await storageApi.update<PromptPreset>(
+          const updated = await storageApi.update<PromptPresetSummary>(
             "prompts",
             prompt.id,
             updatePromptPresetSchema.parse({
@@ -292,6 +289,7 @@ export function useSetDefaultPreset() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: presetKeys.list() });
       qc.invalidateQueries({ queryKey: presetKeys.default() });
+      qc.invalidateQueries({ queryKey: presetKeys.defaultSummary() });
     },
   });
 }
@@ -465,9 +463,7 @@ export function useReorderVariables() {
       const prev = qc.getQueryData<PresetFullData>(presetKeys.full(presetId));
       if (prev?.choiceBlocks) {
         const idOrder = new Map(variableIds.map((id, i) => [id, i]));
-        const sorted = [...prev.choiceBlocks].sort(
-          (a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0),
-        );
+        const sorted = [...prev.choiceBlocks].sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
         qc.setQueryData(presetKeys.full(presetId), { ...prev, choiceBlocks: sorted });
       }
       return { prev };
