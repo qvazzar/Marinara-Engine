@@ -8,6 +8,11 @@ import {
   buildNpcPortraitProviderPrompt,
 } from "../../game/game-asset-generation.js";
 
+function estimatePromptTokens(value: string): number {
+  const tokens = value.trim().match(/<[^>]+>|[\p{L}\p{N}_'-]+|[^\s\p{L}\p{N}]/gu) ?? [];
+  return tokens.reduce((count, token) => count + Math.max(1, Math.ceil(token.length / 8)), 0);
+}
+
 test("compileImagePrompt dedupes tags and moves simple negative fragments", () => {
   const settings = createDefaultImageStyleProfileSettings();
   const compiled = compileImagePrompt({
@@ -27,6 +32,39 @@ test("compileImagePrompt dedupes tags and moves simple negative fragments", () =
   assert.match(compiled.negativePrompt, /text/);
   assert.ok(compiled.diagnostics.removedPositiveDuplicates.length > 0);
   assert.ok(compiled.diagnostics.movedNegativeFragments.length > 0);
+});
+
+test("compileImagePrompt never leaves avoid artifact instructions in positive tags", () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const compiled = compileImagePrompt({
+    kind: "avatar",
+    prompt: "detailed armor and ruined landscapes, one face, avoid captions, avoid UI, avoid watermarks, avoid logos",
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+    imageDefaults: {
+      version: 1,
+      service: "automatic1111",
+      seed: -1,
+      automatic1111: {
+        promptPrefix: "<lora:dmd2_sdxl_4step_lora_fp16:1>",
+        negativePromptPrefix: "",
+        sampler: "Euler a",
+        scheduler: "",
+        steps: 20,
+        cfgScale: 7,
+        clipSkip: null,
+        restoreFaces: false,
+        denoisingStrength: 0.6,
+      },
+    },
+  });
+
+  assert.doesNotMatch(compiled.prompt, /\bavoid\b/i, compiled.prompt);
+  assert.doesNotMatch(compiled.prompt, /\b(?:captions?|ui|watermarks?|logos?)\b/i, compiled.prompt);
+  assert.match(compiled.negativePrompt, /captions/);
+  assert.match(compiled.negativePrompt, /UI/i);
+  assert.match(compiled.negativePrompt, /watermarks/);
+  assert.match(compiled.negativePrompt, /logos/);
 });
 
 test("compileImagePrompt preserves Z-Image Turbo narrative phrasing", () => {
@@ -93,7 +131,8 @@ test("compileImagePrompt distills verbose avatar source prompts when tag grammar
   assert.match(compiled.prompt, /grey eyes/);
   assert.match(compiled.prompt, /Leather armor/);
   assert.match(compiled.prompt, /young adult/);
-  assert.ok(compiled.prompt.length <= 140, compiled.prompt);
+  assert.ok(estimatePromptTokens(compiled.prompt) <= 75, compiled.prompt);
+  assert.ok(compiled.prompt.split(", ").length >= 14, compiled.prompt);
   assert.equal(compiled.prompt.split(", ")[0], "<lora:dmd:1>", compiled.prompt);
   assert.ok(compiled.prompt.indexOf("female") < compiled.prompt.indexOf("Short brown hair"), compiled.prompt);
   assert.doesNotMatch(compiled.prompt, /Cricket,/);
@@ -141,7 +180,8 @@ test("compileImagePrompt converts character-card appearance prose into compact a
     },
   });
 
-  assert.ok(compiled.prompt.length <= 140, compiled.prompt);
+  assert.ok(estimatePromptTokens(compiled.prompt) <= 75, compiled.prompt);
+  assert.ok(compiled.prompt.split(", ").length >= 16, compiled.prompt);
   assert.equal(compiled.prompt.split(", ")[0], "<lora:dmd2_sdxl_4step_lora_fp16:1>", compiled.prompt);
   assert.match(compiled.prompt, /centered face-and-shoulders portrait/);
   assert.match(compiled.prompt, /dark auburn hair/);

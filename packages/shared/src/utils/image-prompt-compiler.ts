@@ -84,6 +84,8 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
       if (negative) {
         negativeFragments.push(negative);
         movedNegativeFragments.push(fragment);
+      } else if (hasAvoidInstructionPrefix(fragment)) {
+        movedNegativeFragments.push(fragment);
       } else {
         const clean = cleanPromptFragment(fragment, promptMode);
         if (part.hardPrefix) {
@@ -203,6 +205,7 @@ function distillTaggedPromptSource(value: string): string {
       }
       continue;
     }
+    if (hasAvoidInstructionPrefix(sentence)) continue;
 
     const labeled = sentence.match(/^([A-Za-z][A-Za-z ]{1,32}):\s*(.+)$/);
     if (labeled?.[1] && labeled[2]) {
@@ -224,6 +227,10 @@ function distillTaggedPromptSource(value: string): string {
     }
     for (const item of clean.split(/[,;]/g)) {
       const cleanItem = item.trim();
+      if (hasAvoidInstructionPrefix(cleanItem)) {
+        fragments.push(cleanItem);
+        continue;
+      }
       if (looksLikeNameOnly(cleanItem)) continue;
       const distilledItem = distillVisualPhrases(cleanItem);
       if (distilledItem.length > 0) {
@@ -378,7 +385,7 @@ function compactPromptFragments(
   fragments: string[],
   compactPrompt: boolean,
   protectedCount = 0,
-  maxChars = 140,
+  maxTokens = 75,
 ): string[] {
   if (!compactPrompt) return fragments;
 
@@ -389,17 +396,33 @@ function compactPromptFragments(
     .map((fragment, index) => ({ fragment, index, priority: compactTagPriority(fragment) }))
     .sort((a, b) => a.priority - b.priority || a.index - b.index);
   const result: string[] = [...protectedFragments];
-  let length = result.join(separator).length;
+  let tokens = estimatedPromptTokens(result, separator);
 
   for (const { fragment } of ranked) {
-    if (isLowPriorityCompactTag(fragment) && length > 70) continue;
-    const nextLength = length + (result.length ? separator.length : 0) + fragment.length;
-    if (nextLength > maxChars) continue;
+    if (isLowPriorityCompactTag(fragment) && tokens > Math.floor(maxTokens * 0.8)) continue;
+    const nextTokens =
+      tokens + (result.length ? estimatedPromptTokenCount(separator) : 0) + estimatedPromptTokenCount(fragment);
+    if (nextTokens > maxTokens) continue;
     result.push(fragment);
-    length = nextLength;
+    tokens = nextTokens;
   }
 
   return result;
+}
+
+function estimatedPromptTokens(fragments: string[], separator: string): number {
+  if (fragments.length === 0) return 0;
+  return (
+    fragments.reduce((count, fragment) => count + estimatedPromptTokenCount(fragment), 0) +
+    (fragments.length - 1) * estimatedPromptTokenCount(separator)
+  );
+}
+
+function estimatedPromptTokenCount(value: string): number {
+  const clean = value.trim();
+  if (!clean) return 0;
+  const lexicalTokens = clean.match(/<[^>]+>|[\p{L}\p{N}_'-]+|[^\s\p{L}\p{N}]/gu) ?? [];
+  return lexicalTokens.reduce((count, token) => count + Math.max(1, Math.ceil(token.length / 8)), 0);
 }
 
 function compactTagPriority(value: string): number {
@@ -443,10 +466,14 @@ function extractNegativeFragment(fragment: string): string | null {
   return negative;
 }
 
+function hasAvoidInstructionPrefix(fragment: string): boolean {
+  return /^(?:avoid|exclude|do not include|don't include)\b/i.test(fragment.trim());
+}
+
 function looksLikeImageNegativeFragment(value: string): boolean {
   const clean = value.trim();
   if (/^(?:matter|actual talents?|talents?|skills?|known spells?)\b/i.test(clean)) return false;
-  return /\b(?:anime|cartoon|illustration|painting|plastic skin|uncanny|low quality|worst quality|bad quality|blurry|blur|out of focus|text|letters|caption|watermark|logo|signature|bad anatomy|bad hands|extra fingers|fingers|digits|malformed|distorted|lowres|extra limbs?|missing limbs?)\b/i.test(
+  return /\b(?:anime|cartoons?|illustrations?|paintings?|plastic skin|uncanny|low quality|worst quality|bad quality|blurry|blur|out of focus|text|letters|captions?|subtitles?|ui|user interface|watermarks?|logos?|signatures?|bad anatomy|bad hands|extra fingers|fingers|digits|malformed|distorted|lowres|extra limbs?|missing limbs?)\b/i.test(
     clean,
   );
 }
