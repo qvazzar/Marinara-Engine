@@ -2,8 +2,8 @@ use crate::state::AppState;
 use crate::storage_commands::{
     admin, agents, avatars, backgrounds, backup, bot_browser, characters, chats, custom_tools,
     entity_commands, exports, fonts, game_assets, game_state_snapshots, generation, http, images,
-    imports, integrations, knowledge, llm, lorebook_images, mari, personas, profile,
-    profile_commands, prompts, shared, sprites, translation, updates,
+    imports, integrations, knowledge, llm, lorebook_images, managed_thumbnails, mari, personas,
+    profile, profile_commands, prompts, shared, sprites, translation, updates,
 };
 use marinara_core::{AppError, AppResult};
 use serde::Deserialize;
@@ -57,6 +57,18 @@ fn optional_u32(args: &Map<String, Value>, key: &str) -> Option<u32> {
     args.get(key)
         .and_then(Value::as_u64)
         .and_then(|value| u32::try_from(value).ok())
+}
+
+fn optional_u32_strict(args: &Map<String, Value>, key: &str) -> AppResult<Option<u32>> {
+    let Some(value) = args.get(key) else {
+        return Ok(None);
+    };
+    let Some(value) = value.as_u64() else {
+        return Err(AppError::invalid_input(format!("{key} must be a positive integer")));
+    };
+    u32::try_from(value)
+        .map(Some)
+        .map_err(|_| AppError::invalid_input(format!("{key} is too large")))
 }
 
 fn required_string_vec(args: &Map<String, Value>, key: &str) -> AppResult<Vec<String>> {
@@ -272,6 +284,14 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
         ),
         "game_assets_upload" => {
             game_assets::game_assets_upload(state, optional_value(&args, "body"))
+        }
+        "managed_asset_thumbnail_file_path" => {
+            managed_thumbnails::managed_asset_thumbnail_file_path(
+                state,
+                required_string(&args, "kind")?,
+                required_string(&args, "path")?,
+                optional_u32_strict(&args, "size")?,
+            )
         }
         "gif_search" => gif_search(&args).await,
         "tts_config" => integrations::tts_call(state, "GET", &["config"], Value::Null).await,
@@ -1570,6 +1590,30 @@ mod tests {
         assert_eq!(
             result.get("originalName").and_then(Value::as_str),
             Some("background.png")
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_invalid_managed_thumbnail_size_arguments() {
+        let state = test_state("managed-thumbnail-size");
+        let error = dispatch(
+            &state,
+            InvokeRequest {
+                command: "managed_asset_thumbnail_file_path".to_string(),
+                args: Some(json!({
+                    "kind": "gallery",
+                    "path": "scene.png",
+                    "size": "256"
+                })),
+            },
+        )
+        .await
+        .expect_err("invalid size should be rejected before command defaults");
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(
+            error.message.contains("size"),
+            "size validation error should mention size"
         );
     }
 
