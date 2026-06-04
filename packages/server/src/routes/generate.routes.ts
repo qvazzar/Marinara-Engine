@@ -5427,6 +5427,22 @@ export async function generateRoutes(app: FastifyInstance) {
           if (backgroundAgent.settings?.autoGenerateBackgrounds === true) {
             agentContext.memory._backgroundGenerationEnabled = true;
           }
+          if (backgroundAgent.settings?.autoGenerateBackgrounds === true) {
+            const setupConfigForBackground =
+              chatMeta.gameSetupConfig &&
+              typeof chatMeta.gameSetupConfig === "object" &&
+              !Array.isArray(chatMeta.gameSetupConfig)
+                ? (chatMeta.gameSetupConfig as Record<string, unknown>)
+                : null;
+            agentContext.memory._backgroundWorldContext = {
+              genre: (setupConfigForBackground?.genre as string | undefined) ?? null,
+              setting: (setupConfigForBackground?.setting as string | undefined) ?? null,
+              location: gameState?.location ?? null,
+              weather: gameState?.weather ?? null,
+              timeOfDay: gameState?.time ?? null,
+              worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
+            };
+          }
           try {
             const { readdirSync, readFileSync, existsSync } = await import("fs");
             const { join, extname } = await import("path");
@@ -8619,16 +8635,27 @@ export async function generateRoutes(app: FastifyInstance) {
                       const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
                       const imageSettings = await loadImageGenerationUserSettings(app.db);
                       const promptOverridesStorage = createPromptOverridesStorage(app.db);
+                      const setupConfigForImage =
+                        chatMeta.gameSetupConfig &&
+                        typeof chatMeta.gameSetupConfig === "object" &&
+                        !Array.isArray(chatMeta.gameSetupConfig)
+                          ? (chatMeta.gameSetupConfig as Record<string, unknown>)
+                          : null;
                       const styleProfileId =
-                        ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.imageStyleProfileId as
-                          | string
-                          | undefined) ??
+                        (setupConfigForImage?.imageStyleProfileId as string | undefined) ??
                         (chatMeta.imageStyleProfileId as string | undefined) ??
                         null;
                       const generatedFilename = await generateChatBackground({
                         chatId: input.chatId,
                         locationSlug: locationText.slice(0, 120),
                         sceneDescription: promptText.slice(0, 1000),
+                        genre: (setupConfigForImage?.genre as string | undefined) ?? undefined,
+                        setting: (setupConfigForImage?.setting as string | undefined) ?? undefined,
+                        currentLocation: gameState?.location ?? null,
+                        currentWeather: gameState?.weather ?? null,
+                        currentTimeOfDay: gameState?.time ?? null,
+                        worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
+                        artStyle: (setupConfigForImage?.artStylePrompt as string | undefined) ?? undefined,
                         reason:
                           typeof generationRequest.reason === "string"
                             ? generationRequest.reason.trim().slice(0, 300)

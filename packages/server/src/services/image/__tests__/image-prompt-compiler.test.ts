@@ -340,6 +340,33 @@ test("game asset reviewed prompts are final provider prompts after confirmation"
   assert.equal(generated.negativePrompt, preview.negativePrompt);
 });
 
+test("background prompts keep world and location context for generic scene requests", async () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const compiled = await buildBackgroundProviderPrompt({
+    chatId: "chat-1",
+    locationSlug: "field",
+    sceneDescription: "A quiet field beside a dirt path.",
+    genre: "medieval fantasy",
+    setting: "low-magic frontier kingdom",
+    currentLocation: "Old Barley Road outside Willowmere",
+    currentWeather: "overcast",
+    currentTimeOfDay: "evening",
+    worldOverview: "A feudal borderland of old keeps, village shrines, and dangerous woods.",
+    artStyle: "cinematic",
+    imgModel: "sdxl",
+    imgBaseUrl: "http://127.0.0.1:7860",
+    imgApiKey: "",
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+  });
+
+  assert.match(compiled.prompt, /medieval fantasy/i, compiled.prompt);
+  assert.match(compiled.prompt, /frontier kingdom/i, compiled.prompt);
+  assert.match(compiled.prompt, /Old Barley Road|Willowmere/i, compiled.prompt);
+  assert.match(compiled.prompt, /field/i, compiled.prompt);
+  assert.doesNotMatch(compiled.prompt, /\bmodern\b/i, compiled.prompt);
+});
+
 test("game asset reviewed prompts are not silently truncated after confirmation", async () => {
   const settings = createDefaultImageStyleProfileSettings();
   const longPrompt = `foreground subject, ${"ornate detail, ".repeat(120)}final detail`;
@@ -377,4 +404,87 @@ test("legacy NPC portrait path compiles defaults without a review override", asy
   assert.match(compiled.prompt, /grey eyes/i);
   assert.match(compiled.negativePrompt, /text/);
   assert.doesNotMatch(compiled.prompt, /Cricket,/);
+});
+
+test("sparse NPC portrait prompts do not leak name-only instruction scaffolding", async () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const compiled = await buildNpcPortraitProviderPrompt({
+    chatId: "chat-1",
+    npcName: "M",
+    appearance: "",
+    artStyle: "realistic",
+    imgModel: "sdxl",
+    imgBaseUrl: "http://127.0.0.1:7860",
+    imgApiKey: "",
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+    imgDefaults: {
+      version: 1,
+      service: "automatic1111",
+      seed: -1,
+      automatic1111: {
+        promptPrefix: "<lora:dmd2_sdxl_4step_lora_fp16:1>",
+        negativePromptPrefix: "",
+        sampler: "Euler a",
+        scheduler: "",
+        steps: 20,
+        cfgScale: 7,
+        clipSkip: null,
+        restoreFaces: false,
+        denoisingStrength: 0.6,
+      },
+    },
+  });
+
+  assert.doesNotMatch(compiled.prompt, /\bportrait\s+(?:of|for)\s+M\b/i, compiled.prompt);
+  assert.doesNotMatch(compiled.prompt, /\bNPC portrait\b/i, compiled.prompt);
+  assert.match(compiled.prompt, /\badult\b/i, compiled.prompt);
+  assert.match(compiled.prompt, /\bandrogynous\b/i, compiled.prompt);
+  assert.match(compiled.prompt, /\bhuman\b/i, compiled.prompt);
+  assert.match(compiled.prompt, /single subject|one face/i, compiled.prompt);
+});
+
+test("sparse NPC portrait prompts preserve explicit gender and pronoun cues", async () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const compiled = await buildNpcPortraitProviderPrompt({
+    chatId: "chat-1",
+    npcName: "M",
+    appearance: "M appears in the current scene.",
+    gender: "female",
+    pronouns: "she/her",
+    artStyle: "realistic",
+    imgModel: "sdxl",
+    imgBaseUrl: "http://127.0.0.1:7860",
+    imgApiKey: "",
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+  });
+
+  assert.match(compiled.prompt, /\badult\b/i, compiled.prompt);
+  assert.match(compiled.prompt, /\bfemale\b/i, compiled.prompt);
+  assert.match(compiled.prompt, /\bhuman\b/i, compiled.prompt);
+  assert.doesNotMatch(compiled.prompt, /\bportrait\s+(?:of|for)\s+M\b/i, compiled.prompt);
+});
+
+test("NPC portrait prompts can infer age and visual attributes from biography text", async () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const compiled = await buildNpcPortraitProviderPrompt({
+    chatId: "chat-1",
+    npcName: "Cricket",
+    appearance:
+      "Short brown hair, grey eyes. Cricket joined the army after being expelled from the academy, survived as a refugee, opened an adventuring agency, and now needs to pay off debt.",
+    pronouns: "she/her",
+    artStyle: "realistic",
+    imgModel: "sdxl",
+    imgBaseUrl: "http://127.0.0.1:7860",
+    imgApiKey: "",
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+  });
+
+  assert.match(compiled.prompt, /\byoung adult\b/i, compiled.prompt);
+  assert.match(compiled.prompt, /\bfemale\b/i, compiled.prompt);
+  assert.match(compiled.prompt, /short brown hair/i, compiled.prompt);
+  assert.match(compiled.prompt, /grey eyes/i, compiled.prompt);
+  assert.doesNotMatch(compiled.prompt, /\bCricket,/i, compiled.prompt);
 });

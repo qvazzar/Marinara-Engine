@@ -2250,6 +2250,8 @@ function normalizeJournalMatch(value: string): string {
 type SceneAssetNpcCandidate = {
   name: string;
   description: string;
+  gender?: string | null;
+  pronouns?: string | null;
   avatarUrl?: string | null;
 };
 
@@ -2310,6 +2312,22 @@ function buildNpcAvatarUrl(chatId: string, name: string): string | null {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
   return slug ? `/api/avatars/npc/${chatId}/${slug}.png` : null;
+}
+
+function optionalTrimmedString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function findNpcRecordByName(npcs: GameNpc[], name: string): GameNpc | null {
+  const normalizedName = normalizeJournalMatch(name);
+  if (!normalizedName) return null;
+  return npcs.find((npc) => normalizeJournalMatch(npc.name) === normalizedName) ?? null;
+}
+
+function findRecordByName(records: Array<Record<string, unknown>>, name: string): Record<string, unknown> | null {
+  const normalizedName = normalizeJournalMatch(name);
+  if (!normalizedName) return null;
+  return records.find((record) => optionalTrimmedString(record.name) && normalizeJournalMatch(String(record.name)) === normalizedName) ?? null;
 }
 
 function hasReadableAvatar(avatarUrl: string | null | undefined): avatarUrl is string {
@@ -2413,7 +2431,13 @@ function buildSceneAssetNpcCandidates(
   const excluded = new Set(excludedNames.map(normalizeJournalMatch));
   const candidates = new Map<string, SceneAssetNpcCandidate>();
 
-  const upsertCandidate = (nameRaw: unknown, descriptionRaw: unknown, avatarUrlRaw: unknown) => {
+  const upsertCandidate = (
+    nameRaw: unknown,
+    descriptionRaw: unknown,
+    avatarUrlRaw: unknown,
+    genderRaw?: unknown,
+    pronounsRaw?: unknown,
+  ) => {
     if (typeof nameRaw !== "string") return;
 
     const name = nameRaw.trim();
@@ -2424,28 +2448,40 @@ function buildSceneAssetNpcCandidates(
 
     const description = typeof descriptionRaw === "string" ? descriptionRaw.trim() : "";
     const avatarUrl = typeof avatarUrlRaw === "string" && avatarUrlRaw.trim() ? avatarUrlRaw.trim() : null;
+    const gender = typeof genderRaw === "string" && genderRaw.trim() ? genderRaw.trim().slice(0, 80) : null;
+    const pronouns = typeof pronounsRaw === "string" && pronounsRaw.trim() ? pronounsRaw.trim().slice(0, 80) : null;
     const existing = candidates.get(normalizedName);
 
     if (existing) {
       if (!existing.description && description) existing.description = description;
       if (!existing.avatarUrl && avatarUrl) existing.avatarUrl = avatarUrl;
+      if (!existing.gender && gender) existing.gender = gender;
+      if (!existing.pronouns && pronouns) existing.pronouns = pronouns;
       return;
     }
 
     candidates.set(normalizedName, {
       name,
       description,
+      gender,
+      pronouns,
       avatarUrl,
     });
   };
 
   for (const npc of trackedNpcsRaw) {
-    upsertCandidate(npc.name, npc.description, npc.avatarUrl);
+    upsertCandidate(npc.name, npc.description, npc.avatarUrl, npc.gender, npc.pronouns);
   }
 
   const presentCharacters = parseStoredJson<Array<Record<string, unknown>>>(presentCharactersRaw) ?? [];
   for (const presentCharacter of presentCharacters) {
-    upsertCandidate(presentCharacter.name, presentCharacter.appearance, presentCharacter.avatarPath);
+    upsertCandidate(
+      presentCharacter.name,
+      presentCharacter.appearance,
+      presentCharacter.avatarPath,
+      presentCharacter.gender,
+      presentCharacter.pronouns,
+    );
   }
 
   for (const candidate of extractNarrationNpcCandidates(narration, excludedNames)) {
@@ -6095,8 +6131,12 @@ export async function gameRoutes(app: FastifyInstance) {
       currentSpotifyTrack: z.string().max(300).nullable().optional().default(null),
       recentSpotifyTracks: z.array(z.string().max(300)).max(20).optional().default([]),
       currentAmbient: z.string().nullable().optional().default(null),
+      currentLocation: z.string().nullable().optional().default(null),
       currentWeather: z.string().nullable(),
       currentTimeOfDay: z.string().nullable(),
+      genre: z.string().nullable().optional().default(null),
+      setting: z.string().nullable().optional().default(null),
+      worldOverview: z.string().nullable().optional().default(null),
       canGenerateBackgrounds: z.boolean().optional(),
       canGenerateIllustrations: z.boolean().optional(),
       artStylePrompt: z.string().nullable().optional(),
@@ -6133,6 +6173,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const imgConnId = (meta.gameImageConnectionId as string) || null;
     const setupCfgForScene = meta.gameSetupConfig as Record<string, unknown> | null;
     const artStyleForScene = (setupCfgForScene?.artStylePrompt as string) || "";
+    const latestSceneState = await createGameStateStorage(app.db).getLatest(input.chatId).catch(() => null);
     const imagePromptInstructions =
       typeof meta.gameImagePromptInstructions === "string"
         ? meta.gameImagePromptInstructions.trim().slice(0, 1200)
@@ -6150,6 +6191,10 @@ export async function gameRoutes(app: FastifyInstance) {
         enableGen && !!imgConnId && isIllustrationAllowed(meta, approxTurnNumber, sessionNumber),
       artStylePrompt: artStyleForScene || null,
       imagePromptInstructions: imagePromptInstructions || null,
+      currentLocation: input.context.currentLocation ?? latestSceneState?.location ?? null,
+      genre: input.context.genre ?? ((setupCfgForScene?.genre as string | undefined) || null),
+      setting: input.context.setting ?? ((setupCfgForScene?.setting as string | undefined) || null),
+      worldOverview: input.context.worldOverview ?? ((meta.gameWorldOverview as string | undefined) || null),
     };
 
     const systemPrompt = buildSceneAnalyzerSystemPrompt(sceneCtx);
@@ -6467,6 +6512,11 @@ export async function gameRoutes(app: FastifyInstance) {
                   sceneDescription: chosenBg.replace(/:/g, " ").replace(/-/g, " "),
                   genre,
                   setting,
+                  currentLocation: latestSceneState?.location ?? null,
+                  currentWeather: latestSceneState?.weather ?? parsed.weather ?? input.context.currentWeather ?? null,
+                  currentTimeOfDay:
+                    latestSceneState?.time ?? parsed.timeOfDay ?? input.context.currentTimeOfDay ?? null,
+                  worldOverview: (meta.gameWorldOverview as string | undefined) ?? null,
                   artStyle,
                   imgSource,
                   imgModel,
@@ -6519,6 +6569,11 @@ export async function gameRoutes(app: FastifyInstance) {
                   sceneDescription: segBg.replace(/:/g, " ").replace(/-/g, " "),
                   genre,
                   setting,
+                  currentLocation: latestSceneState?.location ?? null,
+                  currentWeather: latestSceneState?.weather ?? parsed.weather ?? input.context.currentWeather ?? null,
+                  currentTimeOfDay:
+                    latestSceneState?.time ?? parsed.timeOfDay ?? input.context.currentTimeOfDay ?? null,
+                  worldOverview: (meta.gameWorldOverview as string | undefined) ?? null,
                   artStyle,
                   imgSource,
                   imgModel,
@@ -6651,6 +6706,8 @@ export async function gameRoutes(app: FastifyInstance) {
         z.object({
           name: z.string().min(1).max(200),
           description: z.string().max(1000),
+          gender: z.string().max(80).nullable().optional(),
+          pronouns: z.string().max(80).nullable().optional(),
         }),
       )
       .max(10)
@@ -6712,6 +6769,7 @@ export async function gameRoutes(app: FastifyInstance) {
       typeof meta.gameImagePromptInstructions === "string"
         ? meta.gameImagePromptInstructions.trim().slice(0, 1200)
         : "";
+    const latestImageState = await createGameStateStorage(app.db).getLatest(input.chatId).catch(() => null);
 
     const items: Array<{
       id: string;
@@ -6731,6 +6789,10 @@ export async function gameRoutes(app: FastifyInstance) {
         sceneDescription: input.backgroundTag.replace(/:/g, " ").replace(/-/g, " "),
         genre,
         setting,
+        currentLocation: latestImageState?.location ?? null,
+        currentWeather: latestImageState?.weather ?? null,
+        currentTimeOfDay: latestImageState?.time ?? null,
+        worldOverview: (meta.gameWorldOverview as string | undefined) ?? null,
         artStyle,
         imgSource,
         imgModel,
@@ -6873,11 +6935,15 @@ export async function gameRoutes(app: FastifyInstance) {
         const forceNpcAvatar = forceNpcAvatarNames.has(normalizedNpcName);
         if (!forceNpcAvatar && existingNpcAvatarByName.get(normalizedNpcName)) continue;
         if (!forceNpcAvatar && findCharAvatarFuzzy(npc.name, charAvatarByName)) continue;
+        const metadataNpc = findNpcRecordByName(currentNpcs, npc.name);
+        const presentCharacter = findRecordByName(presentCharacters, npc.name);
 
         const compiledReviewPrompt = await buildNpcPortraitProviderPrompt({
           chatId: input.chatId,
           npcName: npc.name,
           appearance: npc.description,
+          gender: npc.gender ?? metadataNpc?.gender ?? optionalTrimmedString(presentCharacter?.gender),
+          pronouns: npc.pronouns ?? metadataNpc?.pronouns ?? optionalTrimmedString(presentCharacter?.pronouns),
           artStyle,
           imgSource,
           imgModel,
@@ -6992,6 +7058,7 @@ export async function gameRoutes(app: FastifyInstance) {
       typeof meta.gameImagePromptInstructions === "string"
         ? meta.gameImagePromptInstructions.trim().slice(0, 1200)
         : "";
+    const latestImageState = await createGameStateStorage(app.db).getLatest(input.chatId).catch(() => null);
     const imageSettings = await loadImageGenerationUserSettings(app.db);
     const backgroundSize: ImageGenerationSize = input.imageSizes?.background ?? imageSettings.background;
     const portraitSize: ImageGenerationSize = input.imageSizes?.portrait ?? imageSettings.portrait;
@@ -7019,6 +7086,10 @@ export async function gameRoutes(app: FastifyInstance) {
         sceneDescription: input.backgroundTag.replace(/:/g, " ").replace(/-/g, " "),
         genre,
         setting,
+        currentLocation: latestImageState?.location ?? null,
+        currentWeather: latestImageState?.weather ?? null,
+        currentTimeOfDay: latestImageState?.time ?? null,
+        worldOverview: (meta.gameWorldOverview as string | undefined) ?? null,
         artStyle,
         imgSource,
         imgModel,
@@ -7208,10 +7279,14 @@ export async function gameRoutes(app: FastifyInstance) {
           generatedNpcAvatars.push({ name: npc.name, avatarUrl: libAvatar });
           continue;
         }
+        const metadataNpc = findNpcRecordByName(currentNpcs, npc.name);
+        const presentCharacter = findRecordByName(presentCharacters, npc.name);
         const avatarUrl = await generateNpcPortrait({
           chatId: input.chatId,
           npcName: npc.name,
           appearance: npc.description,
+          gender: npc.gender ?? metadataNpc?.gender ?? optionalTrimmedString(presentCharacter?.gender),
+          pronouns: npc.pronouns ?? metadataNpc?.pronouns ?? optionalTrimmedString(presentCharacter?.pronouns),
           artStyle,
           imgSource,
           imgModel,

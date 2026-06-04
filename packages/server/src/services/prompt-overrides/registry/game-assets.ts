@@ -51,7 +51,6 @@ export const GAME_NPC_PORTRAIT: PromptOverrideKeyDef<GameNpcPortraitCtx> = {
   ],
   defaultBuilder: (ctx) =>
     [
-      `NPC portrait for ${ctx.npcName}.`,
       ctx.appearanceLine,
       ctx.nonHumanRule,
       ctx.artStyleLine,

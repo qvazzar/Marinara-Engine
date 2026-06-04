@@ -214,13 +214,16 @@ function distillTaggedPromptSource(value: string): string {
     }
 
     const clean = sentence
+      .replace(/^(?:npc|character)?\s*portrait\s+(?:of|for)\s+[A-Z][\p{L}\p{N}'_-]{0,40}\b\.?/iu, "")
+      .replace(/^(?:npc|character)\s+portrait\b\.?/i, "")
       .replace(
         /^(?:create|generate|make|draw|depict|render)\s+(?:an?\s+)?(?:polished\s+)?(?:character\s+)?(?:avatar\s+)?(?:portrait|image|picture|illustration|scene)\s+(?:of|for)?\s*/i,
         "",
       )
-      .replace(/\bfor\s+[A-Z][\p{L}\p{N}'_-]{1,40}\b/gu, "")
+      .replace(/\bfor\s+[A-Z][\p{L}\p{N}'_-]{0,40}\b/gu, "")
       .replace(/[.!?]+$/g, "")
       .trim();
+    if (!clean) continue;
     const distilled = distillVisualPhrases(clean);
     if (distilled.length > 0) {
       fragments.push(...distilled);
@@ -246,10 +249,15 @@ function distillTaggedPromptSource(value: string): string {
 function deriveTaggedSourceCues(value: string): string[] {
   const cues: string[] = [];
   const text = value.toLowerCase();
-  if (/\b(?:she|her|hers|woman|female|girl|lady)\b/.test(text)) {
+  if (/\b(?:non[-\s]?binary|enby|androgynous|genderless|agender|they\/them)\b/.test(text)) {
+    cues.push("androgynous");
+  } else if (/\b(?:she|her|hers|woman|female|girl|lady)\b/.test(text)) {
     cues.push("female");
   } else if (/\b(?:he|him|his|man|male|boy|gentleman)\b/.test(text)) {
     cues.push("male");
+  }
+  if (/\bhuman(?:oid)?\s+person\b|\bhuman or humanoid\b/.test(text)) {
+    cues.push("human");
   }
   const ageCue = deriveAgeCue(text);
   if (ageCue) cues.push(ageCue);
@@ -376,7 +384,7 @@ function shouldKeepTaggedSourceFragment(value: string, requireVisualCue = false)
 }
 
 function hasVisualCue(value: string): boolean {
-  return /\b(?:female|male|woman|man|girl|boy|adult|young adult|middle-aged|middle aged|elderly|senior|human|elf|dwarf|orc|android|robot|twenties|thirties|forties|fifties|sixties|statuesque|hair|eyes?|skin|face|body|petite|tall|short|slim|muscular|scar|freckles|beard|makeup|cheekbones|nails|ring|armor|armour|dress|shirt|blouse|trousers|coat|jacket|blazer|robe|uniform|sword|staff|hat|glasses|boots|portrait|close-up|upper body|face-and-shoulders|full body|centered|looking at viewer|expression|silhouette)\b/i.test(
+  return /\b(?:female|male|woman|man|girl|boy|non[-\s]?binary|androgynous|genderless|adult|young adult|middle-aged|middle aged|elderly|senior|human|elf|dwarf|orc|android|robot|twenties|thirties|forties|fifties|sixties|statuesque|hair|eyes?|skin|face|body|petite|tall|short|slim|muscular|scar|freckles|beard|makeup|cheekbones|nails|ring|armor|armour|dress|shirt|blouse|trousers|coat|jacket|blazer|robe|uniform|sword|staff|hat|glasses|boots|portrait|close-up|upper body|face-and-shoulders|full body|centered|looking at viewer|expression|silhouette|fantasy|medieval|kingdom|castle|village|tavern|dungeon|forest|field|farm|road|market|city|urban|street|alley|temple|church|ruins?|graveyard|cave|mountain|river|lake|desert|snow|rain|storm|fog|night|dawn|morning|noon|afternoon|evening|sci-fi|scifi|cyberpunk|space|futuristic|modern|contemporary|western|victorian|steampunk|environment|landscape|scenery|location|interior|exterior)\b/i.test(
     value,
   );
 }
@@ -427,7 +435,10 @@ function estimatedPromptTokenCount(value: string): number {
 
 function compactTagPriority(value: string): number {
   const tag = value.trim().toLowerCase();
-  if (/^(?:female|male|woman|man|girl|boy|human|elf|dwarf|orc|android|robot|person)$/.test(tag)) return 0;
+  if (/\b(?:fantasy|medieval|kingdom|castle|village|tavern|dungeon|forest|field|farm|road|market|city|urban|street|alley|temple|church|ruins?|graveyard|cave|mountain|river|lake|desert|snow|rain|storm|fog|night|dawn|morning|noon|afternoon|evening|sci-fi|scifi|cyberpunk|space|futuristic|modern|contemporary|western|victorian|steampunk|environment|landscape|scenery|location|interior|exterior)\b/.test(tag)) {
+    return 1;
+  }
+  if (/^(?:female|male|woman|man|girl|boy|non[-\s]?binary|androgynous|genderless|human|elf|dwarf|orc|android|robot|person)$/.test(tag)) return 0;
   if (/^(?:readable expression|clear silhouette|readable face|natural expression)$/.test(tag)) return 7;
   if (/\b(?:avatar|face-and-shoulders portrait|shoulders-up composition|centered portrait)\b/.test(tag)) {
     return 1;
