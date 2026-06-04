@@ -4,6 +4,7 @@ import type {
   CombatMechanic,
   EncounterSettings,
 } from "../../../../engine/contracts/types/combat-encounter";
+import type { AgentDebugEntry } from "../../../../engine/contracts/types/agent";
 import type {
   Combatant,
   CombatPlayerAction,
@@ -2754,6 +2755,8 @@ export const gameApi = {
     connectionId?: string | null;
     settings?: EncounterSettings | null;
     spellbookId?: string | null;
+    debugMode?: boolean;
+    debugSink?: (entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) => void;
   }): Promise<{ combatState: CombatInitState }> {
     return initGameCombatEncounter(
       { storage: storageApi, llm: llmApi },
@@ -2762,6 +2765,8 @@ export const gameApi = {
         connectionId: input.connectionId ?? null,
         settings: input.settings ?? DEFAULT_COMBAT_ENCOUNTER_SETTINGS,
         spellbookId: input.spellbookId ?? null,
+        debugMode: input.debugMode === true,
+        debugSink: input.debugSink,
       },
     );
   },
