@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { Camera, Download, Trash2, Upload, X } from "lucide-react";
 
 import { ImageUploadDropzone } from "../../../../shared/components/ui/ImageUploadDropzone";
+import { CustomEmojiTagButton } from "../../../../shared/components/ui/CustomEmojiTagButton";
+import { HelpTooltip } from "../../../../shared/components/ui/HelpTooltip";
 import { galleryThumbnailPath, resolveManagedAssetThumbnailFileUrl } from "../../../../shared/api/local-file-api";
 import { showConfirmDialog } from "../../../../shared/lib/app-dialogs";
 import { describeGalleryUploadFailures } from "../../../../shared/lib/gallery-upload";
@@ -10,14 +12,15 @@ import {
   type CharacterGalleryImage,
   useCharacterGalleryImages,
   useDeleteCharacterGalleryImage,
+  useTagCharacterGalleryImage,
   useUploadCharacterGalleryImage,
 } from "../hooks/use-characters";
-import { CharacterEditorSectionHeader as SectionHeader } from "./CharacterEditorSectionHeader";
 
 export function CharacterGalleryTab({ characterId, characterName }: { characterId: string; characterName?: string }) {
   const { data: images, isLoading } = useCharacterGalleryImages(characterId);
   const upload = useUploadCharacterGalleryImage(characterId);
   const remove = useDeleteCharacterGalleryImage(characterId);
+  const tag = useTagCharacterGalleryImage(characterId);
   const [lightbox, setLightbox] = useState<CharacterGalleryImage | null>(null);
   const lightboxDialogRef = useRef<HTMLDivElement>(null);
   const lightboxCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -101,10 +104,16 @@ export function CharacterGalleryTab({ characterId, characterName }: { characterI
 
   return (
     <div className="space-y-6">
-      <SectionHeader
-        title="Character Gallery"
-        subtitle="Keep reference art, alternate outfits, and other character images attached to this character even if chats get deleted."
-      />
+      <div className="mb-4">
+        <h2 className="flex items-center gap-1.5 text-lg font-bold">
+          Character Gallery
+          <HelpTooltip text="Tag an image as a custom emoji or sticker with the tag button on its corner. Emojis must be ≤256×256px, stickers ≤512×512px — larger images flash red." />
+        </h2>
+        <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
+          Keep reference art, alternate outfits, and other character images attached to this character even if chats get
+          deleted.
+        </p>
+      </div>
 
       <ImageUploadDropzone
         label="Upload Character Images"
@@ -136,6 +145,10 @@ export function CharacterGalleryTab({ characterId, characterName }: { characterI
               >
                 <CharacterGalleryThumbnail image={image} alt={image.prompt || characterName || "Character image"} />
               </button>
+              <CustomEmojiTagButton
+                image={image}
+                onApply={(patch) => tag.mutate({ imageId: image.id, patch })}
+              />
               <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/75 via-black/25 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
                 <span className="max-w-[8rem] truncate text-[0.6875rem] font-medium text-white/85">
                   {new Date(image.createdAt).toLocaleDateString()}

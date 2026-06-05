@@ -3,6 +3,7 @@ import { personaKeys } from "../query-keys";
 import { personaApi } from "../../../../shared/api/persona-api";
 import { galleryApi } from "../../../../shared/api/image-generation-api";
 import { resolveGalleryFileUrl } from "../../../../shared/api/local-file-api";
+import type { CustomKind, CustomTagPatch } from "../../../../shared/lib/custom-emoji";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { runGalleryUploadBatch } from "../../../../shared/lib/gallery-upload";
 import { storageCommandsApi } from "../../../../shared/api/storage-commands-api";
@@ -282,6 +283,9 @@ export interface PersonaGalleryImage {
   height: number | null;
   createdAt: string;
   url: string;
+  /** Set when this image is tagged as a custom emoji or sticker. */
+  customKind?: CustomKind | null;
+  customName?: string | null;
 }
 
 function readTrimmedValue(value: unknown): string {
@@ -325,6 +329,17 @@ export function useDeletePersonaGalleryImage(personaId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (imageId: string) => storageApi.delete("persona-gallery", imageId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: personaKeys.gallery(personaId) });
+    },
+  });
+}
+
+export function useTagPersonaGalleryImage(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ imageId, patch }: { imageId: string; patch: CustomTagPatch }) =>
+      storageApi.update("persona-gallery", imageId, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: personaKeys.gallery(personaId) });
     },

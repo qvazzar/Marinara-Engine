@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { Camera, Download, Trash2, Upload, X } from "lucide-react";
 
 import { ImageUploadDropzone } from "../../../../../shared/components/ui/ImageUploadDropzone";
+import { CustomEmojiTagButton } from "../../../../../shared/components/ui/CustomEmojiTagButton";
+import { HelpTooltip } from "../../../../../shared/components/ui/HelpTooltip";
 import { galleryThumbnailPath, resolveManagedAssetThumbnailFileUrl } from "../../../../../shared/api/local-file-api";
 import { showConfirmDialog } from "../../../../../shared/lib/app-dialogs";
 import { describeGalleryUploadFailures } from "../../../../../shared/lib/gallery-upload";
@@ -10,6 +12,7 @@ import {
   type PersonaGalleryImage,
   usePersonaGalleryImages,
   useDeletePersonaGalleryImage,
+  useTagPersonaGalleryImage,
   useUploadPersonaGalleryImage,
 } from "../../hooks/use-personas";
 
@@ -17,6 +20,7 @@ export function PersonaGalleryTab({ personaId, personaName }: { personaId: strin
   const { data: images, isLoading } = usePersonaGalleryImages(personaId);
   const upload = useUploadPersonaGalleryImage(personaId);
   const remove = useDeletePersonaGalleryImage(personaId);
+  const tag = useTagPersonaGalleryImage(personaId);
   const [lightbox, setLightbox] = useState<PersonaGalleryImage | null>(null);
   const lightboxDialogRef = useRef<HTMLDivElement>(null);
   const lightboxCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -101,7 +105,10 @@ export function PersonaGalleryTab({ personaId, personaName }: { personaId: strin
   return (
     <div className="space-y-6">
       <div className="mb-4">
-        <h2 className="text-lg font-bold">Persona Gallery</h2>
+        <h2 className="flex items-center gap-1.5 text-lg font-bold">
+          Persona Gallery
+          <HelpTooltip text="Tag an image as a custom emoji or sticker with the tag button on its corner. Emojis must be ≤256×256px, stickers ≤512×512px — larger images flash red." />
+        </h2>
         <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
           Keep reference art, alternate outfits, and other persona images attached to this persona even if chats get
           deleted.
@@ -138,6 +145,10 @@ export function PersonaGalleryTab({ personaId, personaName }: { personaId: strin
               >
                 <PersonaGalleryThumbnail image={image} alt={image.prompt || personaName || "Persona image"} />
               </button>
+              <CustomEmojiTagButton
+                image={image}
+                onApply={(patch) => tag.mutate({ imageId: image.id, patch })}
+              />
               <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/75 via-black/25 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
                 <span className="max-w-[8rem] truncate text-[0.6875rem] font-medium text-white/85">
                   {new Date(image.createdAt).toLocaleDateString()}

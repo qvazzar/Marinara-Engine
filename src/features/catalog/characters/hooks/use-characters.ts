@@ -16,6 +16,7 @@ import { storageCommandsApi } from "../../../../shared/api/storage-commands-api"
 import { galleryApi } from "../../../../shared/api/image-generation-api";
 import { runGalleryUploadBatch } from "../../../../shared/lib/gallery-upload";
 import { resolveGalleryFileUrl } from "../../../../shared/api/local-file-api";
+import type { CustomKind, CustomTagPatch } from "../../../../shared/lib/custom-emoji";
 import type { CharacterCardVersion } from "../../../../engine/contracts/types/character";
 import {
   invalidateCharacterCollectionQueries,
@@ -390,6 +391,9 @@ export interface CharacterGalleryImage {
   height: number | null;
   createdAt: string;
   url: string;
+  /** Set when this image is tagged as a custom emoji or sticker. */
+  customKind?: CustomKind | null;
+  customName?: string | null;
 }
 
 async function normalizeCharacterGalleryImage(image: CharacterGalleryImage): Promise<CharacterGalleryImage> {
@@ -429,6 +433,17 @@ export function useDeleteCharacterGalleryImage(characterId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (imageId: string) => storageApi.delete("character-gallery", imageId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.gallery(characterId) });
+    },
+  });
+}
+
+export function useTagCharacterGalleryImage(characterId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ imageId, patch }: { imageId: string; patch: CustomTagPatch }) =>
+      storageApi.update("character-gallery", imageId, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: characterKeys.gallery(characterId) });
     },

@@ -12,6 +12,7 @@ import { galleryApi } from "../../../../shared/api/image-generation-api";
 import { resolveGalleryFileUrl } from "../../../../shared/api/local-file-api";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { runGalleryUploadBatch } from "../../../../shared/lib/gallery-upload";
+import type { CustomKind, CustomTagPatch } from "../../../../shared/lib/custom-emoji";
 
 export interface GlobalGalleryImage {
   id: string;
@@ -25,6 +26,9 @@ export interface GlobalGalleryImage {
   height: number | null;
   createdAt: string;
   url: string;
+  /** Set when this image is tagged as a custom emoji or sticker. */
+  customKind?: CustomKind | null;
+  customName?: string | null;
 }
 
 export interface GalleryFolder {
@@ -89,6 +93,17 @@ export function useMoveGlobalGalleryImage() {
   return useMutation({
     mutationFn: ({ imageId, folderId }: { imageId: string; folderId: string | null }) =>
       storageApi.update("global-gallery", imageId, { folderId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: globalGalleryKeys.images });
+    },
+  });
+}
+
+export function useTagGlobalGalleryImage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ imageId, patch }: { imageId: string; patch: CustomTagPatch }) =>
+      storageApi.update("global-gallery", imageId, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: globalGalleryKeys.images });
     },

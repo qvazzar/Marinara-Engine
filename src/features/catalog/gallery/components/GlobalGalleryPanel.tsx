@@ -9,6 +9,8 @@ import { toast } from "sonner";
 import { Camera, Download, Folder, FolderPlus, Pencil, Trash2, Upload, X } from "lucide-react";
 
 import { ImageUploadDropzone } from "../../../../shared/components/ui/ImageUploadDropzone";
+import { CustomEmojiTagButton } from "../../../../shared/components/ui/CustomEmojiTagButton";
+import { HelpTooltip } from "../../../../shared/components/ui/HelpTooltip";
 import { galleryThumbnailPath, resolveManagedAssetThumbnailFileUrl } from "../../../../shared/api/local-file-api";
 import { showConfirmDialog, showPromptDialog } from "../../../../shared/lib/app-dialogs";
 import { cn } from "../../../../shared/lib/utils";
@@ -23,6 +25,7 @@ import {
   useGlobalGalleryImages,
   useMoveGlobalGalleryImage,
   useRenameGalleryFolder,
+  useTagGlobalGalleryImage,
   useUploadGlobalGalleryImages,
 } from "../hooks/use-global-gallery";
 
@@ -68,6 +71,7 @@ export function GlobalGalleryPanel() {
   const upload = useUploadGlobalGalleryImages();
   const remove = useDeleteGlobalGalleryImage();
   const move = useMoveGlobalGalleryImage();
+  const tag = useTagGlobalGalleryImage();
   const createFolder = useCreateGalleryFolder();
   const renameFolder = useRenameGalleryFolder();
   const deleteFolder = useDeleteGalleryFolder();
@@ -267,8 +271,9 @@ export function GlobalGalleryPanel() {
     <div className="space-y-4 p-3">
       {/* Sort + folder controls */}
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-[var(--muted-foreground)]">
+        <p className="flex items-center gap-1 text-xs text-[var(--muted-foreground)]">
           {allImages.length} image{allImages.length === 1 ? "" : "s"}
+          <HelpTooltip text="Tag an image as a custom emoji or sticker with the tag button on its corner. Emojis must be ≤256×256px, stickers ≤512×512px — larger images flash red." />
         </p>
         <select
           value={sortMode}
@@ -375,6 +380,10 @@ export function GlobalGalleryPanel() {
               >
                 <GlobalGalleryThumbnail image={image} alt={image.filename || image.prompt || "Gallery image"} />
               </button>
+              <CustomEmojiTagButton
+                image={image}
+                onApply={(patch) => tag.mutate({ imageId: image.id, patch })}
+              />
               <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/75 via-black/25 to-transparent p-1.5 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
                 <span className="max-w-[5rem] truncate text-[0.625rem] font-medium text-white/85">
                   {new Date(image.createdAt).toLocaleDateString()}
