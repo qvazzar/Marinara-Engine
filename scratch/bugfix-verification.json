@@ -1,102 +1,120 @@
 {
   "schemaVersion": 1,
   "issue": {
-    "number": 2170,
-    "title": "[Issue]: Bare-string context injections are silently dropped by the engine normalizer (legacy-format migration lost)",
-    "url": "https://github.com/Pasta-Devs/Marinara-Engine/issues/2170"
+    "number": 2185,
+    "title": "Lorebook recursive scan cannot activate entries across active lorebooks",
+    "url": "https://github.com/Pasta-Devs/Marinara-Engine/issues/2185"
   },
   "pr": {
-    "number": 2246,
-    "url": "https://github.com/Pasta-Devs/Marinara-Engine/pull/2246",
+    "number": "2250",
+    "url": "https://github.com/Pasta-Devs/Marinara-Engine/pull/2250",
     "base": "refactor",
     "draft": true
   },
-  "coreClaim": "Legacy bare-string context injections are preserved as prose-guardian injections in engine generation normalization.",
-  "preflight": {
-    "noAssociatedPr": true,
-    "issueAssigned": true,
-    "evidence": "gh PR search for issue 2170 returned no matches; keyword search found only older adjacent agent PRs; local branch/worktree search found no 2170 branch; issue assigned to @me."
-  },
-  "dependencies": {
-    "installedFromLockfile": true,
-    "evidence": "pnpm install --frozen-lockfile completed in the issue worktree and did not change dependency declarations."
-  },
+  "coreClaim": "Recursive lorebook scanning activates entries across the full active lorebook set from budget-selected frontier content while respecting depth and preventRecursion.",
   "reproduction": {
     "attempted": true,
     "reproducedBeforeFix": true,
-    "method": "Vitest regression test for regenerate merge over legacy string contextInjections.",
-    "evidence": [
-      "scratch/issue-2170-before.json: failing test shows only the new secret-plot row remains and the legacy prose-guardian row is missing."
-    ]
+    "command": "pnpm test src/engine/generation/active-lorebook-scanner.test.ts",
+    "observedFailure": "Before the production fix, the focused scanner suite failed because cross-book recursive activation omitted entry-b, and a budget-skipped frontier still activated entry-recursive-only.",
+    "duplicatePreflight": "No existing issue PR or local issue branch found before worktree creation.",
+    "assignedIssue": true
   },
   "verification": {
     "originalReproPassed": true,
+    "targetedProofCommand": "pnpm test src/engine/generation/active-lorebook-scanner.test.ts",
+    "targetedProofResult": "Passed after review fixes. Regression rows cover cross-lorebook recursion, non-recursive lorebook frontier blocking, preventRecursion, configured recursion depth, budget-selected frontier behavior, and sticky budget exhaustion.",
+    "laneValidationCommand": "pnpm typecheck",
+    "laneValidationResult": "Passed.",
     "baselinePassed": true,
     "baselineCommand": "pnpm check",
-    "baselineEvidence": "Passed after resolving upstream/refactor conflicts: line endings, architecture, frontend/typecheck, Rust cargo check, docs, discovery metadata, launcher safety, and unused-code checks.",
-    "focusedProof": [
-      "Before fix, the focused Vitest test failed because the regenerate patch dropped the legacy prose-guardian row.",
-      "After fix, the focused Vitest test passed and preserved legacy string plus current object rows while appending the new override.",
-      "After review follow-up, the focused Vitest suite passed with a direct target lookup fallback row.",
-      "After upstream/refactor conflict resolution, start-generation.test.ts passed with issue-2170 tests and upstream agent-injection-review tests combined."
-    ],
-    "edgeCases": [
-      "Existing object-shaped injection remains preserved while merging a new override.",
-      "Blank legacy string entries are skipped instead of becoming empty prose-guardian injections.",
-      "Regenerate merge falls back to direct target lookup when the loaded history list does not contain the target message extra."
-    ],
-    "visualProof": "Non-UI logic proof captured as raw Vitest JSON output in scratch/issue-2170-before.json, scratch/issue-2170-after.json, scratch/issue-2170-after-review.json, and scratch/issue-2170-after-conflict-resolution.json."
+    "baselineEvidence": "Passed pnpm check after resolving upstream/refactor conflicts and Bunny follow-up: line endings, architecture, frontend/typecheck, Rust cargo check, docs, discovery metadata, launcher safety, and unused-code checks.",
+    "visualProof": "Backend logic proof: targeted Vitest output captured in command log; no meaningful UI state.",
+    "focusedProof": "pnpm test src/engine/generation/active-lorebook-scanner.test.ts src/engine/generation/prompt-assembly.test.ts src/engine/generation/start-generation.test.ts src/engine/generation-core/lorebooks/prompt-injector.test.ts passed after the latest conflict resolution and Bunny follow-up with 26 tests."
   },
   "manualBlockers": [],
+  "notes": [
+    "Resolved upstream/refactor merge conflict by keeping issue-2185 verification in the singleton tracked ledger; upstream issue-2170 proof belongs to PR #2246.",
+    "Conflict-resolution focused checks passed: active-lorebook-scanner.test.ts, prompt-injector.test.ts, and start-generation.test.ts.",
+    "Bunny follow-up fixed regenerate metadata preservation so a direct target-message storage read failure aborts instead of silently dropping existing extra.",
+    "Resolved the later upstream/refactor conflict by preserving upstream lorebook included-position filtering inside the combined cross-lorebook scanner."
+  ],
   "riskClaimMatrix": {
-    "coreClaim": "Legacy bare-string context injections are preserved as prose-guardian injections in engine generation normalization.",
-    "riskType": "legacy-format compatibility regression",
+    "coreClaim": "Recursive lorebook scanning activates entries across the full active lorebook set from budget-selected frontier content while respecting depth and preventRecursion.",
+    "riskType": "prompt assembly compatibility regression",
     "entrypoints": [
-      "startGeneration regenerate path merging existing message extra.contextInjections"
+      "chat prompt assembly",
+      "roleplay prompt assembly",
+      "game prompt assembly"
     ],
     "currentPathsOrFormats": [
-      "object entries with agentType/text"
+      "src/engine/generation/active-lorebook-scanner.ts"
     ],
     "legacyPathsOrFormats": [
-      "bare string entries meaning prose-guardian text"
+      "upstream/main packages/server/src/services/lorebook/index.ts combined allEntries recursion"
     ],
     "positiveRowsTested": [
-      "legacy bare string plus new object override merge",
-      "existing object-shaped injection plus new object override merge",
-      "legacy bare string merge when the regenerated target extra is recovered by direct lookup fallback"
+      "Cross-lorebook A-to-B activation from selected frontier content.",
+      "Same-book recursive-only entry remains inactive when its frontier entry exceeds the chat lorebook budget.",
+      "Later lower-priority entries remain skipped after the chat lorebook budget is exhausted."
     ],
     "negativeRowsTested": [
-      "blank legacy string entry is skipped"
+      "Entry with preventRecursion did not activate a target keyed only by that prevented content.",
+      "Configured maxRecursionDepth=1 did not activate the second-hop target keyed by first recursive result content.",
+      "A selected entry from a non-recursive lorebook did not become recursive frontier content."
+    ],
+    "adjacentRowsTested": [
+      "Regenerated message metadata preservation aborts without patching when direct target lookup fails."
     ],
     "groundTruthFacts": [
       {
-        "fact": "Legacy bare string context injection entries map to prose-guardian injections.",
-        "sourceType": "derived",
-        "evidence": "Issue #2170 regression notes cite main packages/server/src/routes/generate/agent-normalizers.ts mapping string entries to prose-guardian objects."
+        "fact": "Legacy scanned all relevant entries together and recursed only from budget-selected candidates.",
+        "method": "derived from upstream/main packages/server/src/services/lorebook/index.ts"
       },
       {
-        "fact": "The refactor UI display normalizer still treats string entries as prose-guardian injections.",
-        "sourceType": "measured",
-        "evidence": "src/features/modes/roleplay/components/ContextInjectionPanel.tsx normalizes string entries to { agentType: 'prose-guardian', text }."
+        "fact": "The refactor prompt-time scanner is React-free src/engine logic used by shared prompt assembly.",
+        "method": "derived from source inspection of src/engine/generation/active-lorebook-scanner.ts and prompt-assembly call sites"
       }
     ],
     "userActionCopy": [],
     "manualBlockers": []
   },
-  "notes": [
-    "UI/browser proof is not applicable because the bug is pure engine normalization logic.",
-    "Resolved upstream/refactor merge conflict by keeping issue-2170 verification in the singleton tracked ledger; upstream issue-2184 proof belongs to PR #2247.",
-    "Conflict-resolution focused checks passed: start-generation.test.ts and active-lorebook-scanner.test.ts."
-  ],
+  "dependencies": {
+    "installedFromLockfile": true,
+    "evidence": "pnpm install --frozen-lockfile completed in the issue worktree and did not change package.json or pnpm-lock.yaml."
+  },
   "finalDoneGate": {
     "didFixBug": true,
+    "claimBoundariesProven": true,
     "hasProfessionalVisualProof": true,
     "prWouldBeAccepted": false,
-    "claimBoundariesProven": true,
-    "notes": "Focused repro passed after the fix, review follow-up, and upstream/refactor conflict resolution. Proof gate and pnpm check passed locally after conflict resolution. PR acceptance remains pending push, CI, Bunny, and CodeRabbit."
+    "notes": "Focused tests, proof gate, and pnpm check passed after upstream/refactor conflict resolutions and Bunny follow-up. PR acceptance is pending push, CI, Bunny, and CodeRabbit."
   },
+  "reviewThreads": [
+    {
+      "finding": "Bunny: non-recursive lorebooks can seed recursion.",
+      "classification": "in-scope",
+      "disposition": "fixed",
+      "commit": "review follow-up commit",
+      "reason": "Active lorebook metadata now carries recursiveScanning and recursive frontier content is filtered to selected entries whose own lorebook enabled recursion. Added a regression row proving a non-recursive lorebook entry does not seed the next recursive hop."
+    },
+    {
+      "finding": "Bunny: budget skip no longer exhausts lower-priority entries.",
+      "classification": "in-scope",
+      "disposition": "fixed",
+      "commit": "review follow-up commit",
+      "reason": "Budget selection state now keeps chat budget exhaustion and per-lorebook budget exhaustion sticky for later candidates. Added a regression row proving a later lower-priority entry remains skipped after the chat budget is exhausted."
+    },
+    {
+      "finding": "Bunny: storage failure is transmuted into metadata loss.",
+      "classification": "merge-conflict follow-up",
+      "disposition": "fixed",
+      "commit": "conflict follow-up commit",
+      "reason": "regenerationTargetExtra now lets the direct target-message load fail instead of treating it as absent metadata. Added a regression row proving no regenerated message extra patch is written after the storage read fails."
+    }
+  ],
   "bunny": {
     "status": "local-pass-after-conflict-resolution",
-    "evidence": "Conflict resolution kept issue-2170 engine/test proof plus upstream refactor changes, git diff --check passed, focused start-generation and active-lorebook scanner tests passed, proof gate passed, and pnpm check passed locally."
+    "evidence": "Issue match is direct; conflict resolution kept issue-2185 proof while merging upstream/refactor changes; combined active-entry recursion now scans across active lorebooks and only recurses from budget-selected entries whose lorebook enables recursion; upstream included-position filtering is preserved before combined scanning; focused generation tests passed after conflict resolution and Bunny follow-up; no dependencies, schema, storage persistence, API, UI, auth, or release files changed."
   }
 }
