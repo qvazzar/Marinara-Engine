@@ -588,18 +588,6 @@ fn model_contains(request: &LlmRequest, needle: &str) -> bool {
         .contains(needle)
 }
 
-fn is_openrouter_claude_reasoning_model(request: &LlmRequest) -> bool {
-    if request.connection.provider != "openrouter" {
-        return false;
-    }
-    let model = request.connection.model.to_ascii_lowercase();
-    model.contains("claude-3.7")
-        || model.contains("claude-3-7")
-        || model.contains("claude-opus-4")
-        || model.contains("claude-sonnet-4")
-        || model.contains("claude-haiku-4")
-}
-
 fn claude_version_parts(model: &str, family: &str) -> Option<(u32, u32)> {
     let normalized = model.to_ascii_lowercase();
     let marker = format!("claude-{family}-");
@@ -985,10 +973,81 @@ fn should_use_anthropic_adaptive_thinking(
 }
 
 fn should_send_top_k(request: &LlmRequest) -> bool {
+    if request.connection.provider == "openrouter" {
+        return !is_openrouter_openai_model(&request.connection.model);
+    }
     !matches!(
         request.connection.provider.as_str(),
-        "openai" | "openrouter" | "xai" | "mistral" | "cohere" | "nanogpt"
+        "openai" | "xai" | "mistral" | "cohere" | "nanogpt"
     )
+}
+
+fn is_openrouter_openai_model(model: &str) -> bool {
+    let normalized = model
+        .trim()
+        .trim_start_matches('~')
+        .to_ascii_lowercase();
+    if normalized.starts_with("openai/") {
+        return true;
+    }
+    if normalized.contains('/') {
+        return false;
+    }
+    normalized.starts_with("gpt-")
+        || normalized.starts_with("o1")
+        || normalized.starts_with("o3")
+        || normalized.starts_with("o4")
+        || normalized.starts_with("codex")
+}
+
+fn openrouter_reasoning_effort(parameters: &Value) -> Option<&'static str> {
+    let effort =
+        param_string(parameters, &["reasoningEffort", "reasoning_effort"])?.to_ascii_lowercase();
+    match effort.as_str() {
+        "none" => Some("none"),
+        "minimal" => Some("minimal"),
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" | "maximum" => Some("xhigh"),
+        _ => None,
+    }
+}
+
+fn openrouter_reasoning_config(parameters: &Value) -> Option<Value> {
+    if let Some(reasoning) = parameters
+        .get("reasoning")
+        .filter(|value| value.as_object().is_some())
+    {
+        return Some(reasoning.clone());
+    }
+    if parameters
+        .get("customParameters")
+        .or_else(|| parameters.get("custom_params"))
+        .and_then(|value| value.get("reasoning"))
+        .and_then(Value::as_object)
+        .is_some()
+    {
+        return None;
+    }
+    if let Some(budget) = param_i64(
+        parameters,
+        &[
+            "thinkingBudget",
+            "thinking_budget",
+            "reasoningMaxTokens",
+            "reasoning_max_tokens",
+        ],
+    )
+    .filter(|value| *value > 0)
+    {
+        return Some(json!({ "max_tokens": budget }));
+    }
+    openrouter_reasoning_effort(parameters).map(|effort| json!({ "effort": effort }))
+}
+
+fn is_openrouter_verbosity(value: &str) -> bool {
+    matches!(value, "low" | "medium" | "high" | "xhigh" | "max")
 }
 
 fn provider_error_text(details: &Value) -> Option<String> {
@@ -2191,6 +2250,26 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         {
             body["presence_penalty"] = json!(presence_penalty);
         }
+        if request.connection.provider == "openrouter" {
+            if let Some(min_p) =
+                param_f64(parameters, &["minP", "min_p"]).filter(|value| (0.0..=1.0).contains(value))
+            {
+                body["min_p"] = json!(min_p);
+            }
+            if let Some(top_a) =
+                param_f64(parameters, &["topA", "top_a"]).filter(|value| (0.0..=1.0).contains(value))
+            {
+                body["top_a"] = json!(top_a);
+            }
+            if let Some(repetition_penalty) = param_f64(
+                parameters,
+                &["repetitionPenalty", "repetition_penalty"],
+            )
+            .filter(|value| (0.0..=2.0).contains(value))
+            {
+                body["repetition_penalty"] = json!(repetition_penalty);
+            }
+        }
     }
     if let Some(seed) = param_i64(parameters, &["seed"]) {
         if request.connection.provider == "mistral" {
@@ -2209,10 +2288,8 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         body["response_format"] = json!({ "type": format });
     }
     if request.connection.provider == "openrouter" {
-        if is_openrouter_claude_reasoning_model(request) {
-            if let Some(effort) = openai_reasoning_effort(request) {
-                body["reasoning"] = json!({ "effort": effort });
-            }
+        if let Some(reasoning) = openrouter_reasoning_config(parameters) {
+            body["reasoning"] = reasoning;
         }
         if let Some(openrouter_provider) = request
             .connection
@@ -2230,6 +2307,20 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
             .filter(|value| is_openrouter_service_tier(value))
         {
             body["service_tier"] = json!(service_tier);
+        }
+        if let Some(verbosity) =
+            param_string(parameters, &["verbosity"]).filter(|value| is_openrouter_verbosity(value))
+        {
+            body["verbosity"] = json!(verbosity);
+        }
+        if !request.tools.is_empty() {
+            if let Some(parallel_tool_calls) = param_boolish(
+                parameters,
+                &["parallelToolCalls", "parallel_tool_calls"],
+                true,
+            ) {
+                body["parallel_tool_calls"] = json!(parallel_tool_calls);
+            }
         }
     } else if request.connection.provider == "openai" {
         if let Some(service_tier) = param_string(parameters, &["serviceTier", "service_tier"])
@@ -4135,7 +4226,7 @@ data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output
     }
 
     #[test]
-    fn openrouter_claude_reasoning_still_downgrades_xhigh_to_high() {
+    fn openrouter_reasoning_uses_unified_xhigh_effort() {
         let request = request_for(
             "openrouter",
             "anthropic/claude-3.7-sonnet",
@@ -4144,7 +4235,7 @@ data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output
         let mut body = json!({});
         apply_openai_parameters(&mut body, &request);
 
-        assert_eq!(body["reasoning"], json!({ "effort": "high" }));
+        assert_eq!(body["reasoning"], json!({ "effort": "xhigh" }));
     }
 
     #[test]

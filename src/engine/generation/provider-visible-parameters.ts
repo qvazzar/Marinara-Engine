@@ -180,8 +180,16 @@ function isCohereContextBlockedCustomParameterKey(key: string, hasTools: boolean
   return ["tool_choice", "strict_tools"].includes(key);
 }
 
-function shouldSendTopK(provider: string): boolean {
-  return !["openai", "openrouter", "xai", "mistral", "cohere", "nanogpt"].includes(provider);
+function isOpenRouterOpenAiModel(model: string): boolean {
+  const normalized = model.toLowerCase().trim().replace(/^~/, "");
+  if (normalized.startsWith("openai/")) return true;
+  if (normalized.includes("/")) return false;
+  return /^(gpt-|o1|o3|o4|o\d|codex)/.test(normalized);
+}
+
+function shouldSendTopK(provider: string, model: string): boolean {
+  if (provider === "openrouter") return !isOpenRouterOpenAiModel(model);
+  return !["openai", "xai", "mistral", "cohere", "nanogpt"].includes(provider);
 }
 
 function shouldUseOpenAiResponses(provider: string, model: string): boolean {
@@ -331,18 +339,6 @@ function shouldUseAnthropicAdaptiveThinking(model: string, parameters: JsonRecor
   const showThoughts = parameters.showThoughts ?? parameters.show_thoughts;
   if (showThoughts != null) return boolish(showThoughts, false);
   return false;
-}
-
-function isOpenrouterClaudeReasoningModel(provider: string, model: string): boolean {
-  if (provider !== "openrouter") return false;
-  const normalized = model.toLowerCase();
-  return (
-    normalized.includes("claude-3.7") ||
-    normalized.includes("claude-3-7") ||
-    normalized.includes("claude-opus-4") ||
-    normalized.includes("claude-sonnet-4") ||
-    normalized.includes("claude-haiku-4")
-  );
 }
 
 function isGemini3Model(model: string): boolean {
@@ -565,6 +561,34 @@ function isOpenRouterServiceTier(value: string): boolean {
   return ["flex", "priority"].includes(value);
 }
 
+function isOpenRouterVerbosity(value: string): boolean {
+  return ["low", "medium", "high", "xhigh", "max"].includes(value);
+}
+
+function openRouterReasoningEffort(parameters: JsonRecord): string | null {
+  const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"])?.toLowerCase();
+  if (!effort) return null;
+  if (effort === "maximum") return "xhigh";
+  if (["none", "minimal", "low", "medium", "high", "xhigh"].includes(effort)) return effort;
+  return null;
+}
+
+function openRouterReasoningConfig(parameters: JsonRecord): Record<string, unknown> | null {
+  const explicit = parameters.reasoning;
+  if (explicit && typeof explicit === "object" && !Array.isArray(explicit)) return explicit as Record<string, unknown>;
+  const custom = parseRecord(parameters.customParameters ?? parameters.custom_params);
+  if (custom.reasoning && typeof custom.reasoning === "object" && !Array.isArray(custom.reasoning)) return null;
+  const budget = parameterInteger(parameters, [
+    "thinkingBudget",
+    "thinking_budget",
+    "reasoningMaxTokens",
+    "reasoning_max_tokens",
+  ]);
+  if (budget !== null && budget > 0) return { max_tokens: budget };
+  const effort = openRouterReasoningEffort(parameters);
+  return effort ? { effort } : null;
+}
+
 function isAnthropicServiceTier(value: string): boolean {
   return ["auto", "standard_only"].includes(value);
 }
@@ -648,7 +672,7 @@ function visibleCohereParameters(
 function visibleOpenAiCompatibleParameters(
   connection: JsonRecord,
   parameters: JsonRecord,
-  options: { stream?: boolean },
+  options: { stream?: boolean; hasTools?: boolean },
 ): Record<string, unknown> {
   const provider = readString(connection.provider).trim();
   const model = readString(connection.model);
@@ -667,11 +691,20 @@ function visibleOpenAiCompatibleParameters(
     const topP = parameterNumber(parameters, ["topP", "top_p"]);
     if (topP !== null) body.top_p = topP;
     const topK = parameterInteger(parameters, ["topK", "top_k"]);
-    if (topK !== null && topK > 0 && shouldSendTopK(provider)) body.top_k = topK;
+    if (topK !== null && topK > 0 && shouldSendTopK(provider, model)) body.top_k = topK;
     const frequencyPenalty = parameterNumber(parameters, ["frequencyPenalty", "frequency_penalty"]);
     if (frequencyPenalty !== null) body.frequency_penalty = frequencyPenalty;
     const presencePenalty = parameterNumber(parameters, ["presencePenalty", "presence_penalty"]);
     if (presencePenalty !== null) body.presence_penalty = presencePenalty;
+    if (provider === "openrouter") {
+      const minP = parameterNumber(parameters, ["minP", "min_p"]);
+      if (minP !== null && minP >= 0 && minP <= 1) body.min_p = minP;
+      const topA = parameterNumber(parameters, ["topA", "top_a"]);
+      if (topA !== null && topA >= 0 && topA <= 1) body.top_a = topA;
+      const repetitionPenalty = parameterNumber(parameters, ["repetitionPenalty", "repetition_penalty"]);
+      if (repetitionPenalty !== null && repetitionPenalty >= 0 && repetitionPenalty <= 2)
+        body.repetition_penalty = repetitionPenalty;
+    }
   }
   const seed = parameterInteger(parameters, ["seed"]);
   if (seed !== null) {
@@ -689,10 +722,8 @@ function visibleOpenAiCompatibleParameters(
   if (responseFormat) body.response_format = { type: responseFormat };
 
   if (provider === "openrouter") {
-    if (isOpenrouterClaudeReasoningModel(provider, model)) {
-      const effort = openAiReasoningEffort(model, parameters);
-      if (effort) body.reasoning = { effort };
-    }
+    const reasoning = openRouterReasoningConfig(parameters);
+    if (reasoning) body.reasoning = reasoning;
     const openrouterProvider = readString(connection.openrouterProvider ?? connection.openrouter_provider).trim();
     if (openrouterProvider) body.provider = { order: [openrouterProvider] };
     if (
@@ -703,6 +734,11 @@ function visibleOpenAiCompatibleParameters(
     }
     const serviceTier = parameterString(parameters, ["serviceTier", "service_tier"]);
     if (serviceTier && isOpenRouterServiceTier(serviceTier)) body.service_tier = serviceTier;
+    const verbosity = parameterString(parameters, ["verbosity"]);
+    if (verbosity && isOpenRouterVerbosity(verbosity)) body.verbosity = verbosity;
+    const parallelToolCalls = parameters.parallelToolCalls ?? parameters.parallel_tool_calls;
+    if (options.hasTools === true && parallelToolCalls != null)
+      body.parallel_tool_calls = boolish(parallelToolCalls, true);
   } else if (provider === "openai") {
     const serviceTier = parameterString(parameters, ["serviceTier", "service_tier"]);
     if (serviceTier && isOpenAiServiceTier(serviceTier)) body.service_tier = serviceTier;
