@@ -6752,7 +6752,7 @@ function AdvancedParametersSection({
               <GenerationParametersFields
                 value={effectiveParams}
                 onChange={setParameters}
-                showOpenRouterServiceTier={conn?.provider === "openrouter"}
+                showServiceTier={conn?.provider === "openai" || conn?.provider === "openrouter"}
               />
               {/* Save as Default for Connection */}
               {connectionId && connectionId !== "random" && (

@@ -387,6 +387,45 @@ fn gpt5_minor_version(model: &str) -> Option<u32> {
     digits.parse::<u32>().ok()
 }
 
+fn is_openai_legacy_gpt5_pro_model(model: &str) -> bool {
+    let model = openai_model_id(model);
+    model == "gpt-5-pro" || model.starts_with("gpt-5-pro-")
+}
+
+fn is_openai_versioned_gpt5_pro_model(model: &str) -> bool {
+    let model = openai_model_id(model);
+    let Some(tail) = model.strip_prefix("gpt-5.") else {
+        return false;
+    };
+    let digit_count = tail.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digit_count == 0 {
+        return false;
+    }
+    let rest = &tail[digit_count..];
+    rest == "-pro" || rest.starts_with("-pro-")
+}
+
+fn supports_openai_none_reasoning_model(model: &str) -> bool {
+    let model_id = openai_model_id(model);
+    if model_id.contains("codex")
+        || is_openai_legacy_gpt5_pro_model(&model_id)
+        || is_openai_versioned_gpt5_pro_model(&model_id)
+    {
+        return false;
+    }
+    gpt5_minor_version(model)
+        .map(|minor| minor >= 1)
+        .unwrap_or(false)
+}
+
+fn supports_openai_minimal_reasoning_model(model: &str) -> bool {
+    let model = openai_model_id(model);
+    !model.contains("codex")
+        && !is_openai_legacy_gpt5_pro_model(&model)
+        && !is_openai_versioned_gpt5_pro_model(&model)
+        && (model == "gpt-5" || model.starts_with("gpt-5-"))
+}
+
 fn supports_openai_xhigh_reasoning_model(model: &str) -> bool {
     let model = openai_model_id(model);
     if model == "gpt-5-pro" || model.starts_with("gpt-5-pro-") {
@@ -404,8 +443,28 @@ fn openai_reasoning_effort(request: &LlmRequest) -> Option<String> {
     let effort = param_string(
         &request.parameters,
         &["reasoningEffort", "reasoning_effort"],
-    )?;
+    )?
+    .to_ascii_lowercase();
+    if is_openai_legacy_gpt5_pro_model(&request.connection.model) {
+        return Some("high".to_string());
+    }
+    if is_openai_versioned_gpt5_pro_model(&request.connection.model) {
+        return Some(
+            match effort.as_str() {
+                "maximum" | "xhigh" => "xhigh",
+                "high" => "high",
+                _ => "medium",
+            }
+            .to_string(),
+        );
+    }
     match effort.as_str() {
+        "none" if supports_openai_none_reasoning_model(&request.connection.model) => {
+            Some("none".to_string())
+        }
+        "minimal" if supports_openai_minimal_reasoning_model(&request.connection.model) => {
+            Some("minimal".to_string())
+        }
         "low" | "medium" | "high" => Some(effort),
         "maximum" | "xhigh" if supports_openai_xhigh_reasoning_model(&request.connection.model) => {
             Some("xhigh".to_string())
@@ -502,6 +561,26 @@ fn is_reserved_custom_parameter_key(key: &str) -> bool {
         key,
         "model" | "messages" | "input" | "contents" | "systemInstruction" | "stream" | "tools"
     )
+}
+
+const OPENAI_RESPONSES_UNSUPPORTED_CUSTOM_PARAMETER_KEYS: &[&str] = &[
+    "top_k",
+    "topK",
+    "frequency_penalty",
+    "frequencyPenalty",
+    "presence_penalty",
+    "presencePenalty",
+    "stop",
+    "stopSequences",
+    "stop_sequences",
+];
+
+fn is_openai_service_tier(value: &str) -> bool {
+    matches!(value, "auto" | "default" | "flex" | "scale" | "priority")
+}
+
+fn is_openrouter_service_tier(value: &str) -> bool {
+    matches!(value, "flex" | "priority")
 }
 
 fn should_apply_custom_parameter(
@@ -1063,6 +1142,17 @@ fn build_openai_responses_body(request: &LlmRequest, stream: bool) -> Value {
     if let Some(effort) = openai_reasoning_effort(request) {
         body["reasoning"] = json!({ "effort": effort, "summary": "auto" });
     }
+    if let Some(temperature) = param_f64(&request.parameters, &["temperature"]) {
+        body["temperature"] = json!(temperature);
+    }
+    if let Some(top_p) = param_f64(&request.parameters, &["topP", "top_p"]) {
+        body["top_p"] = json!(top_p);
+    }
+    if let Some(service_tier) = param_string(&request.parameters, &["serviceTier", "service_tier"])
+        .filter(|value| is_openai_service_tier(value))
+    {
+        body["service_tier"] = json!(service_tier);
+    }
     if let Some(format) = param_string(&request.parameters, &["responseFormat", "response_format"])
     {
         if format == "json_object" {
@@ -1088,7 +1178,13 @@ fn build_openai_responses_body(request: &LlmRequest, stream: bool) -> Value {
         );
         body["tool_choice"] = json!("auto");
     }
-    apply_custom_parameters_to_object(&mut body, &request.parameters, true, true, &[]);
+    apply_custom_parameters_to_object(
+        &mut body,
+        &request.parameters,
+        false,
+        false,
+        OPENAI_RESPONSES_UNSUPPORTED_CUSTOM_PARAMETER_KEYS,
+    );
     body
 }
 
@@ -1489,7 +1585,13 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
             body["cache_control"] = json!({ "type": "ephemeral" });
         }
         if let Some(service_tier) = param_string(parameters, &["serviceTier", "service_tier"])
-            .filter(|value| value == "flex" || value == "priority")
+            .filter(|value| is_openrouter_service_tier(value))
+        {
+            body["service_tier"] = json!(service_tier);
+        }
+    } else if request.connection.provider == "openai" {
+        if let Some(service_tier) = param_string(parameters, &["serviceTier", "service_tier"])
+            .filter(|value| is_openai_service_tier(value))
         {
             body["service_tier"] = json!(service_tier);
         }

@@ -50,7 +50,7 @@ fn st_prompt_name(raw: &Value, file_name: Option<&str>) -> String {
 fn st_reasoning_effort(value: Option<&Value>) -> Value {
     match value.and_then(Value::as_str) {
         Some("auto") => Value::Null,
-        Some("low" | "medium" | "high" | "xhigh" | "maximum") => {
+        Some("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "maximum") => {
             value.cloned().unwrap_or(Value::Null)
         }
         _ => Value::Null,

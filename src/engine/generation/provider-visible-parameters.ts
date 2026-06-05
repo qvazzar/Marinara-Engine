@@ -97,6 +97,20 @@ function isReservedCustomParameterKey(key: string): boolean {
   return ["model", "messages", "input", "contents", "systemInstruction", "stream", "tools"].includes(key);
 }
 
+function isOpenAiResponsesUnsupportedCustomParameterKey(key: string): boolean {
+  return [
+    "top_k",
+    "topK",
+    "frequency_penalty",
+    "frequencyPenalty",
+    "presence_penalty",
+    "presencePenalty",
+    "stop",
+    "stopSequences",
+    "stop_sequences",
+  ].includes(key);
+}
+
 function shouldSendTopK(provider: string): boolean {
   return !["openai", "openrouter", "xai", "mistral", "cohere", "nanogpt"].includes(provider);
 }
@@ -125,6 +139,32 @@ function gpt5MinorVersion(model: string): number | null {
   return Number(match[1]);
 }
 
+function isOpenAiLegacyGpt5ProModel(model: string): boolean {
+  const id = openAiModelId(model);
+  return id === "gpt-5-pro" || id.startsWith("gpt-5-pro-");
+}
+
+function isOpenAiVersionedGpt5ProModel(model: string): boolean {
+  return /^gpt-5\.\d+-pro(?:-|$)/.test(openAiModelId(model));
+}
+
+function supportsOpenAiNoneReasoningModel(model: string): boolean {
+  const id = openAiModelId(model);
+  if (id.includes("codex") || isOpenAiLegacyGpt5ProModel(id) || isOpenAiVersionedGpt5ProModel(id)) return false;
+  const minor = gpt5MinorVersion(model);
+  return minor !== null && minor >= 1;
+}
+
+function supportsOpenAiMinimalReasoningModel(model: string): boolean {
+  const id = openAiModelId(model);
+  return (
+    !id.includes("codex") &&
+    !isOpenAiLegacyGpt5ProModel(id) &&
+    !isOpenAiVersionedGpt5ProModel(id) &&
+    /^gpt-5(?:-|$)/.test(id)
+  );
+}
+
 function supportsOpenAiXhighReasoningModel(model: string): boolean {
   const id = openAiModelId(model);
   if (id === "gpt-5-pro" || id.startsWith("gpt-5-pro-")) return false;
@@ -134,8 +174,16 @@ function supportsOpenAiXhighReasoningModel(model: string): boolean {
 }
 
 function openAiReasoningEffort(model: string, parameters: JsonRecord): string | null {
-  const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"]);
+  const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"])?.toLowerCase();
   if (!effort) return null;
+  if (isOpenAiLegacyGpt5ProModel(model)) return "high";
+  if (isOpenAiVersionedGpt5ProModel(model)) {
+    if (effort === "xhigh" || effort === "maximum") return "xhigh";
+    if (effort === "high") return "high";
+    return "medium";
+  }
+  if (effort === "none") return supportsOpenAiNoneReasoningModel(model) ? "none" : null;
+  if (effort === "minimal") return supportsOpenAiMinimalReasoningModel(model) ? "minimal" : null;
   if (["low", "medium", "high"].includes(effort)) return effort;
   if (effort === "maximum" || effort === "xhigh") return supportsOpenAiXhighReasoningModel(model) ? "xhigh" : "high";
   return null;
@@ -227,12 +275,17 @@ function googleThinkingConfig(model: string, parameters: JsonRecord): Record<str
 function applyCustomParameters(
   body: Record<string, unknown>,
   parameters: JsonRecord,
-  options: { stripSampling: boolean; stripStop?: boolean; skipKeys?: readonly string[] },
+  options: {
+    stripSampling: boolean;
+    stripStop?: boolean;
+    skipKeys?: readonly string[];
+    skipKey?: (key: string) => boolean;
+  },
 ): void {
   const custom = parseRecord(parameters.customParameters ?? parameters.custom_params);
   const skipKeys = new Set(options.skipKeys ?? []);
   for (const [key, value] of Object.entries(custom)) {
-    if (skipKeys.has(key) || isReservedCustomParameterKey(key)) continue;
+    if (skipKeys.has(key) || options.skipKey?.(key) || isReservedCustomParameterKey(key)) continue;
     if (options.stripSampling && isSamplingParameterKey(key)) continue;
     if (options.stripStop === true && isStopParameterKey(key)) continue;
     if (body[key] == null) body[key] = value;
@@ -287,6 +340,12 @@ function visibleOpenAiResponsesParameters(
   };
   const effort = openAiReasoningEffort(readString(connection.model), parameters);
   if (effort) body.reasoning = { effort, summary: "auto" };
+  const temperature = parameterNumber(parameters, ["temperature"]);
+  if (temperature !== null) body.temperature = temperature;
+  const topP = parameterNumber(parameters, ["topP", "top_p"]);
+  if (topP !== null) body.top_p = topP;
+  const serviceTier = parameterString(parameters, ["serviceTier", "service_tier"]);
+  if (serviceTier && isOpenAiServiceTier(serviceTier)) body.service_tier = serviceTier;
   const responseFormat = parameterString(parameters, ["responseFormat", "response_format"]);
   const verbosity = parameterString(parameters, ["verbosity"]);
   if (responseFormat === "json_object" || verbosity) {
@@ -295,8 +354,20 @@ function visibleOpenAiResponsesParameters(
     if (verbosity) text.verbosity = verbosity;
     body.text = text;
   }
-  applyCustomParameters(body, parameters, { stripSampling: true, stripStop: true });
+  applyCustomParameters(body, parameters, {
+    stripSampling: false,
+    stripStop: false,
+    skipKey: isOpenAiResponsesUnsupportedCustomParameterKey,
+  });
   return body;
+}
+
+function isOpenAiServiceTier(value: string): boolean {
+  return ["auto", "default", "flex", "scale", "priority"].includes(value);
+}
+
+function isOpenRouterServiceTier(value: string): boolean {
+  return ["flex", "priority"].includes(value);
 }
 
 function visibleOpenAiCompatibleParameters(
@@ -350,7 +421,10 @@ function visibleOpenAiCompatibleParameters(
       body.cache_control = { type: "ephemeral" };
     }
     const serviceTier = parameterString(parameters, ["serviceTier", "service_tier"]);
-    if (serviceTier === "flex" || serviceTier === "priority") body.service_tier = serviceTier;
+    if (serviceTier && isOpenRouterServiceTier(serviceTier)) body.service_tier = serviceTier;
+  } else if (provider === "openai") {
+    const serviceTier = parameterString(parameters, ["serviceTier", "service_tier"]);
+    if (serviceTier && isOpenAiServiceTier(serviceTier)) body.service_tier = serviceTier;
   }
 
   applyCustomParameters(body, parameters, { stripSampling: !sendSampling, stripStop: !sendSampling });

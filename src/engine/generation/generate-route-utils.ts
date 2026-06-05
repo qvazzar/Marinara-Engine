@@ -248,14 +248,17 @@ function parseStoredGenerationParameters(raw: unknown): StoredGenerationParamete
   }
   if (
     source.reasoningEffort === null ||
-    ["low", "medium", "high", "xhigh", "maximum"].includes(String(source.reasoningEffort))
+    ["none", "minimal", "low", "medium", "high", "xhigh", "maximum"].includes(String(source.reasoningEffort))
   ) {
     out.reasoningEffort = source.reasoningEffort as StoredGenerationParameters["reasoningEffort"];
   }
   if (source.verbosity === null || ["low", "medium", "high"].includes(String(source.verbosity))) {
     out.verbosity = source.verbosity as StoredGenerationParameters["verbosity"];
   }
-  if (source.serviceTier === null || ["flex", "priority"].includes(String(source.serviceTier))) {
+  if (
+    source.serviceTier === null ||
+    ["auto", "default", "flex", "scale", "priority"].includes(String(source.serviceTier))
+  ) {
     out.serviceTier = source.serviceTier as StoredGenerationParameters["serviceTier"];
   }
   if (typeof source.assistantPrefill === "string") out.assistantPrefill = source.assistantPrefill;

@@ -19,28 +19,37 @@ const OPENAI_MODELS: KnownModel[] = [
   // GPT-5.5
   { id: "gpt-5.5", name: "gpt-5.5", context: 1050000, maxOutput: 128000 },
   { id: "gpt-5.5-2026-04-23", name: "gpt-5.5-2026-04-23", context: 1050000, maxOutput: 128000 },
+  { id: "gpt-5.5-pro", name: "gpt-5.5-pro", context: 1050000, maxOutput: 128000 },
+  { id: "gpt-5.5-pro-2026-04-23", name: "gpt-5.5-pro-2026-04-23", context: 1050000, maxOutput: 128000 },
   // GPT-5.4
   { id: "gpt-5.4", name: "gpt-5.4", context: 1050000, maxOutput: 128000 },
   { id: "gpt-5.4-2026-03-05", name: "gpt-5.4-2026-03-05", context: 1050000, maxOutput: 128000 },
   // GPT-5.4 Pro (Responses API only)
   { id: "gpt-5.4-pro", name: "gpt-5.4-pro", context: 1050000, maxOutput: 128000 },
   { id: "gpt-5.4-pro-2026-03-05", name: "gpt-5.4-pro-2026-03-05", context: 1050000, maxOutput: 128000 },
+  { id: "gpt-5.4-mini", name: "gpt-5.4-mini", context: 400000, maxOutput: 128000 },
+  { id: "gpt-5.4-mini-2026-03-17", name: "gpt-5.4-mini-2026-03-17", context: 400000, maxOutput: 128000 },
+  { id: "gpt-5.4-nano", name: "gpt-5.4-nano", context: 400000, maxOutput: 128000 },
+  { id: "gpt-5.4-nano-2026-03-17", name: "gpt-5.4-nano-2026-03-17", context: 400000, maxOutput: 128000 },
   // GPT-5.2
   { id: "gpt-5.2", name: "gpt-5.2", context: 1000000, maxOutput: 32768 },
   { id: "gpt-5.2-2025-12-11", name: "gpt-5.2-2025-12-11", context: 1000000, maxOutput: 32768 },
+  { id: "gpt-5.2-pro", name: "gpt-5.2-pro", context: 400000, maxOutput: 128000 },
+  { id: "gpt-5.2-pro-2025-12-11", name: "gpt-5.2-pro-2025-12-11", context: 400000, maxOutput: 128000 },
   { id: "gpt-5.2-chat-latest", name: "gpt-5.2-chat-latest", context: 1000000, maxOutput: 32768 },
   // GPT-5.1
   { id: "gpt-5.1", name: "gpt-5.1", context: 1000000, maxOutput: 32768 },
   { id: "gpt-5.1-2025-11-13", name: "gpt-5.1-2025-11-13", context: 1000000, maxOutput: 32768 },
   { id: "gpt-5.1-chat-latest", name: "gpt-5.1-chat-latest", context: 1000000, maxOutput: 32768 },
   // GPT-5
-  { id: "gpt-5", name: "gpt-5", context: 1000000, maxOutput: 32768 },
-  { id: "gpt-5-2025-08-07", name: "gpt-5-2025-08-07", context: 1000000, maxOutput: 32768 },
-  { id: "gpt-5-chat-latest", name: "gpt-5-chat-latest", context: 1000000, maxOutput: 32768 },
-  { id: "gpt-5-mini", name: "gpt-5-mini", context: 1000000, maxOutput: 32768 },
-  { id: "gpt-5-mini-2025-08-07", name: "gpt-5-mini-2025-08-07", context: 1000000, maxOutput: 32768 },
-  { id: "gpt-5-nano", name: "gpt-5-nano", context: 1000000, maxOutput: 16384 },
-  { id: "gpt-5-nano-2025-08-07", name: "gpt-5-nano-2025-08-07", context: 1000000, maxOutput: 16384 },
+  { id: "gpt-5", name: "gpt-5", context: 400000, maxOutput: 128000 },
+  { id: "gpt-5-2025-08-07", name: "gpt-5-2025-08-07", context: 400000, maxOutput: 128000 },
+  { id: "gpt-5-chat-latest", name: "gpt-5-chat-latest", context: 128000, maxOutput: 16384 },
+  { id: "gpt-5-mini", name: "gpt-5-mini", context: 400000, maxOutput: 128000 },
+  { id: "gpt-5-mini-2025-08-07", name: "gpt-5-mini-2025-08-07", context: 400000, maxOutput: 128000 },
+  { id: "gpt-5-nano", name: "gpt-5-nano", context: 400000, maxOutput: 128000 },
+  { id: "gpt-5-nano-2025-08-07", name: "gpt-5-nano-2025-08-07", context: 400000, maxOutput: 128000 },
+  { id: "chat-latest", name: "chat-latest", context: 400000, maxOutput: 128000 },
   // GPT-4o
   { id: "gpt-4o", name: "gpt-4o", context: 128000, maxOutput: 16384 },
   { id: "gpt-4o-2024-11-20", name: "gpt-4o-2024-11-20", context: 128000, maxOutput: 16384 },
@@ -148,9 +157,12 @@ const CLAUDE_SUBSCRIPTION_MODELS: KnownModel[] = [
 
 // ── OpenAI (ChatGPT login via local Codex auth) ──
 const OPENAI_CHATGPT_MODELS: KnownModel[] = [
-  { id: "gpt-5.2", name: "GPT-5.2", context: 1000000, maxOutput: 32768 },
-  { id: "gpt-5.1", name: "GPT-5.1", context: 1000000, maxOutput: 32768 },
-  { id: "gpt-5", name: "GPT-5", context: 1000000, maxOutput: 32768 },
+  { id: "chat-latest", name: "Chat Latest", context: 400000, maxOutput: 128000 },
+  { id: "gpt-5.3", name: "GPT-5.3", context: 128000, maxOutput: 16384 },
+  { id: "gpt-5.3-chat-latest", name: "GPT-5.3 Chat Latest", context: 128000, maxOutput: 16384 },
+  { id: "gpt-5.2", name: "GPT-5.2", context: 128000, maxOutput: 16384 },
+  { id: "gpt-5.1", name: "GPT-5.1", context: 128000, maxOutput: 16384 },
+  { id: "gpt-5", name: "GPT-5", context: 128000, maxOutput: 16384 },
   { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", context: 400000, maxOutput: 128000 },
   { id: "gpt-5.2-codex", name: "GPT-5.2 Codex", context: 400000, maxOutput: 128000 },
   { id: "gpt-5.1-codex", name: "GPT-5.1 Codex", context: 400000, maxOutput: 128000 },

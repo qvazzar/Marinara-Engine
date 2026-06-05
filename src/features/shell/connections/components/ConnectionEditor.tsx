@@ -1653,7 +1653,7 @@ export function ConnectionEditor() {
                       setLocalDefaultParameters(next);
                       markDirty();
                     }}
-                    showOpenRouterServiceTier={localProvider === "openrouter"}
+                    showServiceTier={localProvider === "openai" || localProvider === "openrouter"}
                   />
                 </div>
               ) : (

@@ -749,6 +749,9 @@ fn build_horde_url(base: &str, target_path: &str) -> String {
 fn provider_model_catalog(provider: &str) -> Vec<Value> {
     let ids: &[&str] = match provider {
         "openai_chatgpt" => &[
+            "chat-latest",
+            "gpt-5.3",
+            "gpt-5.3-chat-latest",
             "gpt-5.2",
             "gpt-5.1",
             "gpt-5",

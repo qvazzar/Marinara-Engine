@@ -20,9 +20,9 @@ export type EditableGenerationParameters = Pick<
 
 export type EditableGenerationParameterOverrides = Partial<EditableGenerationParameters>;
 
-const REASONING_LEVELS = [null, "low", "medium", "high", "xhigh", "maximum"] as const;
+const REASONING_LEVELS = [null, "none", "minimal", "low", "medium", "high", "xhigh", "maximum"] as const;
 const VERBOSITY_LEVELS = [null, "low", "medium", "high"] as const;
-const OPENROUTER_SERVICE_TIERS = [null, "flex", "priority"] as const;
+const SERVICE_TIERS = [null, "auto", "default", "flex", "scale", "priority"] as const;
 const MAX_GENERATION_OUTPUT_TOKENS = 128000;
 export const EDITABLE_GENERATION_PARAMETER_KEYS = [
   "temperature",
@@ -93,6 +93,8 @@ export function parseEditableGenerationParameters(raw: unknown): EditableGenerat
   if (typeof source.presencePenalty === "number") next.presencePenalty = source.presencePenalty;
   if (
     source.reasoningEffort === null ||
+    source.reasoningEffort === "none" ||
+    source.reasoningEffort === "minimal" ||
     source.reasoningEffort === "low" ||
     source.reasoningEffort === "medium" ||
     source.reasoningEffort === "high" ||
@@ -109,7 +111,14 @@ export function parseEditableGenerationParameters(raw: unknown): EditableGenerat
   ) {
     next.verbosity = source.verbosity;
   }
-  if (source.serviceTier === null || source.serviceTier === "flex" || source.serviceTier === "priority") {
+  if (
+    source.serviceTier === null ||
+    source.serviceTier === "auto" ||
+    source.serviceTier === "default" ||
+    source.serviceTier === "flex" ||
+    source.serviceTier === "scale" ||
+    source.serviceTier === "priority"
+  ) {
     next.serviceTier = source.serviceTier;
   }
   if (typeof source.assistantPrefill === "string") {
@@ -150,9 +159,15 @@ function mergeCustomParameterRecords(
 }
 
 function reasoningEffortLabel(level: (typeof REASONING_LEVELS)[number]): string {
-  if (!level) return "None";
+  if (!level) return "Unset";
+  if (level === "none") return "None";
   if (level === "xhigh") return "X High";
   return level.charAt(0).toUpperCase() + level.slice(1);
+}
+
+function serviceTierLabel(tier: (typeof SERVICE_TIERS)[number]): string {
+  if (!tier) return "Unset";
+  return tier.charAt(0).toUpperCase() + tier.slice(1);
 }
 
 export function getEditableGenerationParameters(
@@ -212,11 +227,11 @@ export function getEditableGenerationParameterOverrides(
 export function GenerationParametersFields({
   value,
   onChange,
-  showOpenRouterServiceTier = false,
+  showServiceTier = false,
 }: {
   value: EditableGenerationParameters;
   onChange: (next: EditableGenerationParameters) => void;
-  showOpenRouterServiceTier?: boolean;
+  showServiceTier?: boolean;
 }) {
   const set = <K extends keyof EditableGenerationParameters>(key: K, nextValue: EditableGenerationParameters[K]) => {
     onChange({ ...value, [key]: nextValue });
@@ -303,19 +318,19 @@ export function GenerationParametersFields({
           value={value.customParameters}
           onChange={(nextValue) => set("customParameters", nextValue)}
         />
-        {showOpenRouterServiceTier && (
+        {showServiceTier && (
           <div>
             <span className="inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-              OpenRouter Service Tier
+              Service Tier
               <HelpTooltip
-                text="Optional OpenRouter routing tier. Default sends no service_tier; Flex can be cheaper and slower, Priority can be faster and more expensive."
+                text="Optional provider processing tier. Unset sends no service_tier; provider defaults still apply."
                 size="0.625rem"
               />
             </span>
             <div className="mt-1 flex flex-wrap gap-1.5">
-              {OPENROUTER_SERVICE_TIERS.map((tier) => (
+              {SERVICE_TIERS.map((tier) => (
                 <button
-                  key={tier ?? "default"}
+                  key={tier ?? "unset"}
                   type="button"
                   onClick={() => set("serviceTier", tier)}
                   className={cn(
@@ -325,7 +340,7 @@ export function GenerationParametersFields({
                       : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
                   )}
                 >
-                  {tier ? tier.charAt(0).toUpperCase() + tier.slice(1) : "Default"}
+                  {serviceTierLabel(tier)}
                 </button>
               ))}
             </div>
@@ -342,7 +357,7 @@ export function GenerationParametersFields({
           <div className="mt-1 flex flex-wrap gap-1.5">
             {REASONING_LEVELS.map((level) => (
               <button
-                key={level ?? "none"}
+                key={level ?? "unset"}
                 onClick={() => set("reasoningEffort", level)}
                 className={cn(
                   "rounded-lg px-2 py-1 text-[0.625rem] font-medium transition-all",

@@ -1313,7 +1313,9 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading }: Game
                     <GenerationParametersFields
                       value={generationParameters}
                       onChange={setGenerationParameters}
-                      showOpenRouterServiceTier={selectedGmConnection?.provider === "openrouter"}
+                      showServiceTier={
+                        selectedGmConnection?.provider === "openai" || selectedGmConnection?.provider === "openrouter"
+                      }
                     />
                   </div>
                 )}
