@@ -193,6 +193,7 @@ const CHARACTER_CLEANUP: &[DeleteCleanup] = &[
     DeleteCleanup::RemoveOwnedMedia,
     DeleteCleanup::DeleteCharacterGallery,
 ];
+const CHARACTER_VERSION_CLEANUP: &[DeleteCleanup] = &[DeleteCleanup::RemoveOwnedMedia];
 const MEDIA_CLEANUP: &[DeleteCleanup] = &[DeleteCleanup::RemoveOwnedMedia];
 const MESSAGE_CLEANUP: &[DeleteCleanup] = &[DeleteCleanup::DeleteMessageTrackerSnapshots];
 
@@ -219,7 +220,7 @@ pub(crate) const COLLECTIONS: &[StorageCollectionContract] = &[
         false,
         EMPTY_DEFAULTS,
         EMPTY_FIELDS,
-        EMPTY_CLEANUP,
+        CHARACTER_VERSION_CLEANUP,
     ),
     contract(
         "personas",
