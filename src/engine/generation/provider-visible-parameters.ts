@@ -180,6 +180,98 @@ function isCohereContextBlockedCustomParameterKey(key: string, hasTools: boolean
   return ["tool_choice", "strict_tools"].includes(key);
 }
 
+function xAiModelId(model: string): string {
+  return model
+    .toLowerCase()
+    .trim()
+    .replace(/^xai\//, "");
+}
+
+function isXAiGrok43Model(model: string): boolean {
+  const id = xAiModelId(model);
+  return id === "latest" || id === "grok-4.3" || id.startsWith("grok-4.3-");
+}
+
+function isXAiMultiAgentModel(model: string): boolean {
+  return xAiModelId(model).startsWith("grok-4.20-multi-agent");
+}
+
+function isXAiAutomaticReasoningModel(model: string): boolean {
+  const id = xAiModelId(model);
+  if (isXAiGrok43Model(model) || isXAiMultiAgentModel(model)) return true;
+  if (id.startsWith("grok-build")) return false;
+  return id.startsWith("grok-4") && !id.includes("image");
+}
+
+function xAiReasoningEffort(model: string, parameters: JsonRecord): string | null {
+  if (!isXAiGrok43Model(model)) return null;
+  const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"])?.toLowerCase();
+  if (!effort) return null;
+  if (effort === "minimal") return "low";
+  if (effort === "maximum" || effort === "xhigh") return "high";
+  if (["none", "low", "medium", "high"].includes(effort)) return effort;
+  return null;
+}
+
+function xAiReasoningConfig(model: string, parameters: JsonRecord): Record<string, unknown> | null {
+  if (!isXAiMultiAgentModel(model)) return null;
+  const explicit = parameters.reasoning;
+  if (explicit && typeof explicit === "object" && !Array.isArray(explicit)) return explicit as Record<string, unknown>;
+  const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"])?.toLowerCase();
+  if (effort === "high" || effort === "xhigh" || effort === "maximum") {
+    return { effort: effort === "maximum" ? "xhigh" : effort };
+  }
+  if (effort === "low" || effort === "medium" || effort === "minimal") {
+    return { effort: effort === "minimal" ? "low" : effort };
+  }
+  return null;
+}
+
+function xAiReasoningActive(model: string, parameters: JsonRecord): boolean {
+  const effort = xAiReasoningEffort(model, parameters);
+  if (effort === "none") return false;
+  if (effort) return true;
+  return isXAiAutomaticReasoningModel(model);
+}
+
+function isXAiGrok420OrNewerModel(model: string): boolean {
+  const id = xAiModelId(model);
+  return id.startsWith("grok-4.20") || id.startsWith("grok-4.3");
+}
+
+function isXAiUnsupportedCustomParameterKey(key: string, model: string, reasoningActive: boolean): boolean {
+  if (
+    [
+      "top_k",
+      "topK",
+      "reasoningEffort",
+      "reasoning_effort",
+      "serviceTier",
+      "service_tier",
+      "parallelToolCalls",
+      "parallel_tool_calls",
+    ].includes(key)
+  ) {
+    return true;
+  }
+  if (
+    reasoningActive &&
+    [
+      "frequencyPenalty",
+      "frequency_penalty",
+      "presencePenalty",
+      "presence_penalty",
+      "stop",
+      "stopSequences",
+      "stop_sequences",
+    ].includes(key)
+  ) {
+    return true;
+  }
+  if (isXAiGrok420OrNewerModel(model) && ["logprobs", "topLogprobs", "top_logprobs"].includes(key)) return true;
+  return false;
+}
+
 function isOpenRouterOpenAiModel(model: string): boolean {
   const normalized = model.toLowerCase().trim().replace(/^~/, "");
   if (normalized.startsWith("openai/")) return true;
@@ -561,6 +653,10 @@ function isOpenRouterServiceTier(value: string): boolean {
   return ["flex", "priority"].includes(value);
 }
 
+function isXAiServiceTier(value: string): boolean {
+  return ["default", "priority"].includes(value);
+}
+
 function isOpenRouterVerbosity(value: string): boolean {
   return ["low", "medium", "high", "xhigh", "max"].includes(value);
 }
@@ -708,6 +804,7 @@ function visibleOpenAiCompatibleParameters(
   }
 
   const sendSampling = shouldSendOpenAiSamplingParameters(model);
+  const xaiReasoningActive = provider === "xai" && xAiReasoningActive(model, parameters);
   const body: Record<string, unknown> = {
     stream: options.stream === true,
     max_tokens: requestMaxTokens(connection, parameters),
@@ -720,9 +817,9 @@ function visibleOpenAiCompatibleParameters(
     const topK = parameterInteger(parameters, ["topK", "top_k"]);
     if (topK !== null && topK > 0 && shouldSendTopK(provider, model)) body.top_k = topK;
     const frequencyPenalty = parameterNumber(parameters, ["frequencyPenalty", "frequency_penalty"]);
-    if (frequencyPenalty !== null) body.frequency_penalty = frequencyPenalty;
+    if (frequencyPenalty !== null && !xaiReasoningActive) body.frequency_penalty = frequencyPenalty;
     const presencePenalty = parameterNumber(parameters, ["presencePenalty", "presence_penalty"]);
-    if (presencePenalty !== null) body.presence_penalty = presencePenalty;
+    if (presencePenalty !== null && !xaiReasoningActive) body.presence_penalty = presencePenalty;
     if (provider === "openrouter" || provider === "nanogpt") {
       const minP = parameterNumber(parameters, ["minP", "min_p"]);
       if (minP !== null && minP >= 0 && minP <= 1) body.min_p = minP;
@@ -759,7 +856,7 @@ function visibleOpenAiCompatibleParameters(
   }
   if (sendSampling) {
     const stop = stopSequences(parameters);
-    if (stop) body.stop = stop;
+    if (stop && !xaiReasoningActive) body.stop = stop;
   }
   const responseFormat = parameterString(parameters, ["responseFormat", "response_format"]);
   if (responseFormat) body.response_format = { type: responseFormat };
@@ -779,6 +876,16 @@ function visibleOpenAiCompatibleParameters(
     if (serviceTier && isOpenRouterServiceTier(serviceTier)) body.service_tier = serviceTier;
     const verbosity = parameterString(parameters, ["verbosity"]);
     if (verbosity && isOpenRouterVerbosity(verbosity)) body.verbosity = verbosity;
+    const parallelToolCalls = parameters.parallelToolCalls ?? parameters.parallel_tool_calls;
+    if (options.hasTools === true && parallelToolCalls != null)
+      body.parallel_tool_calls = boolish(parallelToolCalls, true);
+  } else if (provider === "xai") {
+    const effort = xAiReasoningEffort(model, parameters);
+    if (effort) body.reasoning_effort = effort;
+    const reasoning = xAiReasoningConfig(model, parameters);
+    if (reasoning) body.reasoning = reasoning;
+    const serviceTier = parameterString(parameters, ["serviceTier", "service_tier"]);
+    if (serviceTier && isXAiServiceTier(serviceTier)) body.service_tier = serviceTier;
     const parallelToolCalls = parameters.parallelToolCalls ?? parameters.parallel_tool_calls;
     if (options.hasTools === true && parallelToolCalls != null)
       body.parallel_tool_calls = boolish(parallelToolCalls, true);
@@ -843,7 +950,12 @@ function visibleOpenAiCompatibleParameters(
   applyCustomParameters(body, parameters, {
     stripSampling: !sendSampling,
     stripStop: !sendSampling,
-    skipKey: provider === "mistral" ? isMistralUnsupportedCustomParameterKey : undefined,
+    skipKey:
+      provider === "mistral"
+        ? isMistralUnsupportedCustomParameterKey
+        : provider === "xai"
+          ? (key) => isXAiUnsupportedCustomParameterKey(key, model, xaiReasoningActive)
+          : undefined,
   });
   const openrouter = parameters.openrouter ?? parameters.openRouter;
   if (openrouter != null) body.provider = openrouter;

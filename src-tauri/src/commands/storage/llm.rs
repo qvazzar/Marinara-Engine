@@ -835,7 +835,12 @@ fn provider_model_catalog(provider: &str) -> Vec<Value> {
             "c4ai-aya-vision-32b",
         ],
         "ollama" => &["llama3.1", "mistral", "nomic-embed-text"],
-        "xai" => &["grok-2-latest", "grok-2-mini-latest"],
+        "xai" => &[
+            "grok-4.3",
+            "grok-build-0.1",
+            "grok-4-1-fast",
+            "grok-4.20-multi-agent",
+        ],
         _ => &[
             "gpt-4o",
             "gpt-4o-mini",

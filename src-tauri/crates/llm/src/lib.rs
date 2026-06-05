@@ -754,12 +754,160 @@ fn scrub_cohere_parameter_body(body: &mut Value, has_tools: bool) {
     }
 }
 
+fn xai_model_id(model: &str) -> String {
+    model
+        .trim()
+        .trim_start_matches("xai/")
+        .to_ascii_lowercase()
+}
+
+fn is_xai_grok_43_model(model: &str) -> bool {
+    let id = xai_model_id(model);
+    id == "latest" || id == "grok-4.3" || id.starts_with("grok-4.3-")
+}
+
+fn is_xai_multi_agent_model(model: &str) -> bool {
+    xai_model_id(model).starts_with("grok-4.20-multi-agent")
+}
+
+fn is_xai_automatic_reasoning_model(model: &str) -> bool {
+    let id = xai_model_id(model);
+    if is_xai_grok_43_model(model) || is_xai_multi_agent_model(model) {
+        return true;
+    }
+    if id.starts_with("grok-build") {
+        return false;
+    }
+    id.starts_with("grok-4") && !id.contains("image")
+}
+
+fn xai_reasoning_effort(request: &LlmRequest) -> Option<&'static str> {
+    if !is_xai_grok_43_model(&request.connection.model) {
+        return None;
+    }
+    let effort = param_string(&request.parameters, &["reasoningEffort", "reasoning_effort"])?
+        .to_ascii_lowercase();
+    match effort.as_str() {
+        "none" => Some("none"),
+        "minimal" => Some("low"),
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" | "maximum" | "xhigh" => Some("high"),
+        _ => None,
+    }
+}
+
+fn xai_reasoning_config(request: &LlmRequest) -> Option<Value> {
+    if !is_xai_multi_agent_model(&request.connection.model) {
+        return None;
+    }
+    if let Some(reasoning) = request
+        .parameters
+        .get("reasoning")
+        .filter(|value| value.as_object().is_some())
+    {
+        return Some(reasoning.clone());
+    }
+    let effort = param_string(&request.parameters, &["reasoningEffort", "reasoning_effort"])?
+        .to_ascii_lowercase();
+    match effort.as_str() {
+        "low" | "minimal" => Some(json!({ "effort": "low" })),
+        "medium" => Some(json!({ "effort": "medium" })),
+        "high" => Some(json!({ "effort": "high" })),
+        "xhigh" | "maximum" => Some(json!({ "effort": "xhigh" })),
+        _ => None,
+    }
+}
+
+fn xai_reasoning_active(request: &LlmRequest) -> bool {
+    match xai_reasoning_effort(request) {
+        Some("none") => false,
+        Some(_) => true,
+        None => is_xai_automatic_reasoning_model(&request.connection.model),
+    }
+}
+
+fn is_xai_grok_420_or_newer_model(model: &str) -> bool {
+    let id = xai_model_id(model);
+    id.starts_with("grok-4.20") || id.starts_with("grok-4.3")
+}
+
+fn is_xai_unsupported_custom_parameter_key(
+    key: &str,
+    model: &str,
+    reasoning_active: bool,
+) -> bool {
+    if matches!(
+        key,
+        "top_k"
+            | "topK"
+            | "reasoningEffort"
+            | "reasoning_effort"
+            | "serviceTier"
+            | "service_tier"
+            | "parallelToolCalls"
+            | "parallel_tool_calls"
+    ) {
+        return true;
+    }
+    if reasoning_active
+        && matches!(
+            key,
+            "frequencyPenalty"
+                | "frequency_penalty"
+                | "presencePenalty"
+                | "presence_penalty"
+                | "stop"
+                | "stopSequences"
+                | "stop_sequences"
+        )
+    {
+        return true;
+    }
+    is_xai_grok_420_or_newer_model(model)
+        && matches!(key, "logprobs" | "topLogprobs" | "top_logprobs")
+}
+
+fn apply_xai_custom_parameters_to_object(
+    body: &mut Value,
+    parameters: &Value,
+    strip_sampling: bool,
+    strip_stop: bool,
+    model: &str,
+    reasoning_active: bool,
+) {
+    let Some(entries) = parameters
+        .get("customParameters")
+        .or_else(|| parameters.get("custom_params"))
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    let Some(body) = body.as_object_mut() else {
+        return;
+    };
+    for (key, value) in entries {
+        if !should_apply_custom_parameter(key, strip_sampling, strip_stop, &[])
+            || is_xai_unsupported_custom_parameter_key(key, model, reasoning_active)
+        {
+            continue;
+        }
+        if !body.contains_key(key) {
+            body.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 fn is_openai_service_tier(value: &str) -> bool {
     matches!(value, "auto" | "default" | "flex" | "scale" | "priority")
 }
 
 fn is_openrouter_service_tier(value: &str) -> bool {
     matches!(value, "flex" | "priority")
+}
+
+fn is_xai_service_tier(value: &str) -> bool {
+    matches!(value, "default" | "priority")
 }
 
 fn is_anthropic_service_tier(value: &str) -> bool {
@@ -2287,6 +2435,7 @@ fn openai_message(message: &LlmMessage) -> Value {
 
 fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
     let parameters = &request.parameters;
+    let xai_reasoning_active = request.connection.provider == "xai" && xai_reasoning_active(request);
     if should_send_openai_sampling_parameters(request) {
         if let Some(top_p) = param_f64(parameters, &["topP", "top_p"]) {
             body["top_p"] = json!(top_p);
@@ -2300,11 +2449,13 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         }
         if let Some(frequency_penalty) =
             param_f64(parameters, &["frequencyPenalty", "frequency_penalty"])
+                .filter(|_| !xai_reasoning_active)
         {
             body["frequency_penalty"] = json!(frequency_penalty);
         }
         if let Some(presence_penalty) =
             param_f64(parameters, &["presencePenalty", "presence_penalty"])
+                .filter(|_| !xai_reasoning_active)
         {
             body["presence_penalty"] = json!(presence_penalty);
         }
@@ -2371,7 +2522,7 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
     }
     let send_sampling = should_send_openai_sampling_parameters(request);
     if send_sampling {
-        if let Some(stop) = stop_sequences(parameters) {
+        if let Some(stop) = stop_sequences(parameters).filter(|_| !xai_reasoning_active) {
             body["stop"] = json!(stop);
         }
     }
@@ -2403,6 +2554,27 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
             param_string(parameters, &["verbosity"]).filter(|value| is_openrouter_verbosity(value))
         {
             body["verbosity"] = json!(verbosity);
+        }
+        if !request.tools.is_empty() {
+            if let Some(parallel_tool_calls) = param_boolish(
+                parameters,
+                &["parallelToolCalls", "parallel_tool_calls"],
+                true,
+            ) {
+                body["parallel_tool_calls"] = json!(parallel_tool_calls);
+            }
+        }
+    } else if request.connection.provider == "xai" {
+        if let Some(effort) = xai_reasoning_effort(request) {
+            body["reasoning_effort"] = json!(effort);
+        }
+        if let Some(reasoning) = xai_reasoning_config(request) {
+            body["reasoning"] = reasoning;
+        }
+        if let Some(service_tier) = param_string(parameters, &["serviceTier", "service_tier"])
+            .filter(|value| is_xai_service_tier(value))
+        {
+            body["service_tier"] = json!(service_tier);
         }
         if !request.tools.is_empty() {
             if let Some(parallel_tool_calls) = param_boolish(
@@ -2539,7 +2711,18 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
             body["prediction"] = prediction.clone();
         }
     }
-    apply_custom_parameters_to_object(body, parameters, !send_sampling, !send_sampling, &[]);
+    if request.connection.provider == "xai" {
+        apply_xai_custom_parameters_to_object(
+            body,
+            parameters,
+            !send_sampling,
+            !send_sampling,
+            &request.connection.model,
+            xai_reasoning_active,
+        );
+    } else {
+        apply_custom_parameters_to_object(body, parameters, !send_sampling, !send_sampling, &[]);
+    }
     if request.connection.provider == "mistral" {
         if let Some(body) = body.as_object_mut() {
             body.retain(|key, _| !is_mistral_unsupported_custom_parameter_key(key));

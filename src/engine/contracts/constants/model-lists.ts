@@ -332,6 +332,8 @@ const OPENROUTER_MODELS: KnownModel[] = [];
 const XAI_MODELS: KnownModel[] = [
   // Official xAI docs recommend Grok 4.3 for standard chat API usage.
   { id: "grok-4.3", name: "Grok 4.3", context: 1000000, maxOutput: 0 },
+  // Fast coding model for agentic coding workflows.
+  { id: "grok-build-0.1", name: "Grok Build 0.1", context: 256000, maxOutput: 0 },
   // Reasoning docs mention this model as auto-reasoning without configurable effort.
   { id: "grok-4-1-fast", name: "Grok 4.1 Fast", context: 2000000, maxOutput: 0 },
   // Multi-agent research model; uses Responses API and reasoning.effort for 4 vs 16 agents.
