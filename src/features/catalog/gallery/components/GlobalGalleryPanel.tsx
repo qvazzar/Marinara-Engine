@@ -428,7 +428,11 @@ export function GlobalGalleryPanel() {
                 onError: () => {
                   toast.error("Couldn't move this image. Putting it back.");
                   setLightbox((current) =>
-                    current && current.id === lightbox.id ? { ...current, folderId: previousFolderId } : current,
+                    // Only roll back if this failed move is still the one on screen — a
+                    // newer move (A→B→C) must not be clobbered by an older failure.
+                    current && current.id === lightbox.id && current.folderId === folderId
+                      ? { ...current, folderId: previousFolderId }
+                      : current,
                   );
                 },
               },
