@@ -142,6 +142,7 @@ const DEFAULT_LOREBOOK_KEEPER_RUN_INTERVAL = BUILT_IN_AGENT_RUN_INTERVAL_DEFAULT
 
 const CONTINUE_ASSISTANT_RESPONSE_INSTRUCTION =
   "[Generation instruction: continue from the latest assistant message. Do not repeat or summarize the previous response; pick up naturally from where it stopped.]";
+const MAX_RANDOM_LLM_SEED_EXCLUSIVE = 4_294_967_295;
 
 type InternalStartGenerationOptions = {
   groupTurnChild?: boolean;
@@ -3260,9 +3261,10 @@ function runtimeLlmParameters(
   chat: JsonRecord,
   parameters: Record<string, unknown>,
 ): Record<string, unknown> {
-  if (readString(connection.provider).trim() !== "claude_subscription") return parameters;
+  const generationParameters = rerollSeedParameters(input, parameters);
+  if (readString(connection.provider).trim() !== "claude_subscription") return generationParameters;
   return {
-    ...parameters,
+    ...generationParameters,
     _marinara: {
       chatId: readString(chat.id).trim() || readString(input.chatId).trim(),
       mode: readString(chat.mode || chat.chatMode).trim(),
@@ -3270,6 +3272,56 @@ function runtimeLlmParameters(
       impersonate: input.impersonate === true,
     },
   };
+}
+
+function isIntegerSeed(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && Number.isFinite(value);
+}
+
+function nextRandomLlmSeed(): number {
+  return Math.floor(Math.random() * MAX_RANDOM_LLM_SEED_EXCLUSIVE);
+}
+
+function rerollSeedParameters(input: StartGenerationInput, parameters: Record<string, unknown>): Record<string, unknown> {
+  if (!readString(input.regenerateMessageId).trim()) return parameters;
+
+  let nextParameters = parameters;
+  let nextSeed: number | null = null;
+  const freshSeed = () => {
+    nextSeed ??= nextRandomLlmSeed();
+    return nextSeed;
+  };
+
+  if (isIntegerSeed(parameters.seed)) {
+    nextParameters = {
+      ...nextParameters,
+      seed: freshSeed(),
+    };
+  }
+
+  const custom = parseRecord(parameters.customParameters);
+  if (isIntegerSeed(custom.seed)) {
+    nextParameters = {
+      ...nextParameters,
+      customParameters: {
+        ...custom,
+        seed: freshSeed(),
+      },
+    };
+  }
+
+  const customParams = parseRecord(parameters.custom_params);
+  if (isIntegerSeed(customParams.seed)) {
+    nextParameters = {
+      ...nextParameters,
+      custom_params: {
+        ...customParams,
+        seed: freshSeed(),
+      },
+    };
+  }
+
+  return nextParameters;
 }
 
 /**
