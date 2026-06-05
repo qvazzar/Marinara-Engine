@@ -306,6 +306,13 @@ fn param_boolish(parameters: &Value, keys: &[&str], fallback: bool) -> Option<bo
     })
 }
 
+fn param_i64_array(parameters: &Value, keys: &[&str]) -> Option<Vec<i64>> {
+    keys.iter().find_map(|key| {
+        let values = parameters.get(*key)?.as_array()?;
+        values.iter().map(Value::as_i64).collect()
+    })
+}
+
 fn stop_sequences(parameters: &Value) -> Option<Vec<String>> {
     let value = parameters
         .get("stop")
@@ -976,10 +983,7 @@ fn should_send_top_k(request: &LlmRequest) -> bool {
     if request.connection.provider == "openrouter" {
         return !is_openrouter_openai_model(&request.connection.model);
     }
-    !matches!(
-        request.connection.provider.as_str(),
-        "openai" | "xai" | "mistral" | "cohere" | "nanogpt"
-    )
+    !matches!(request.connection.provider.as_str(), "openai" | "xai" | "mistral" | "cohere")
 }
 
 fn is_openrouter_openai_model(model: &str) -> bool {
@@ -1048,6 +1052,60 @@ fn openrouter_reasoning_config(parameters: &Value) -> Option<Value> {
 
 fn is_openrouter_verbosity(value: &str) -> bool {
     matches!(value, "low" | "medium" | "high" | "xhigh" | "max")
+}
+
+fn nanogpt_reasoning_effort(parameters: &Value) -> Option<&'static str> {
+    let effort =
+        param_string(parameters, &["reasoningEffort", "reasoning_effort"])?.to_ascii_lowercase();
+    match effort.as_str() {
+        "none" => Some("none"),
+        "minimal" => Some("minimal"),
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" | "maximum" => Some("xhigh"),
+        _ => None,
+    }
+}
+
+fn nanogpt_prompt_caching_config(parameters: &Value) -> Option<Value> {
+    let prompt_caching = parameters
+        .get("promptCaching")
+        .or_else(|| parameters.get("prompt_caching"))?;
+    if prompt_caching.as_object().is_some() {
+        return Some(prompt_caching.clone());
+    }
+    param_boolish(parameters, &["promptCaching", "prompt_caching"], false)
+        .map(|enabled| json!({ "enabled": enabled }))
+}
+
+fn nanogpt_reasoning_config(parameters: &Value) -> Option<Value> {
+    if let Some(reasoning) = parameters
+        .get("reasoning")
+        .filter(|value| value.as_object().is_some())
+    {
+        return Some(reasoning.clone());
+    }
+    if parameters
+        .get("customParameters")
+        .or_else(|| parameters.get("custom_params"))
+        .and_then(|value| value.get("reasoning"))
+        .and_then(Value::as_object)
+        .is_some()
+    {
+        return None;
+    }
+
+    let mut reasoning = serde_json::Map::new();
+    if let Some(show_thoughts) = param_boolish(parameters, &["showThoughts", "show_thoughts"], false)
+    {
+        reasoning.insert("exclude".to_string(), json!(!show_thoughts));
+    }
+    if reasoning.is_empty() {
+        None
+    } else {
+        Some(Value::Object(reasoning))
+    }
 }
 
 fn provider_error_text(details: &Value) -> Option<String> {
@@ -2250,7 +2308,7 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         {
             body["presence_penalty"] = json!(presence_penalty);
         }
-        if request.connection.provider == "openrouter" {
+        if request.connection.provider == "openrouter" || request.connection.provider == "nanogpt" {
             if let Some(min_p) =
                 param_f64(parameters, &["minP", "min_p"]).filter(|value| (0.0..=1.0).contains(value))
             {
@@ -2268,6 +2326,39 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
             .filter(|value| (0.0..=2.0).contains(value))
             {
                 body["repetition_penalty"] = json!(repetition_penalty);
+            }
+            if request.connection.provider == "nanogpt" {
+                if let Some(tfs) =
+                    param_f64(parameters, &["tfs"]).filter(|value| (0.0..=1.0).contains(value))
+                {
+                    body["tfs"] = json!(tfs);
+                }
+                if let Some(eta_cutoff) = param_f64(parameters, &["etaCutoff", "eta_cutoff"]) {
+                    body["eta_cutoff"] = json!(eta_cutoff);
+                }
+                if let Some(epsilon_cutoff) =
+                    param_f64(parameters, &["epsilonCutoff", "epsilon_cutoff"])
+                {
+                    body["epsilon_cutoff"] = json!(epsilon_cutoff);
+                }
+                if let Some(typical_p) = param_f64(parameters, &["typicalP", "typical_p"])
+                    .filter(|value| (0.0..=1.0).contains(value))
+                {
+                    body["typical_p"] = json!(typical_p);
+                }
+                if let Some(mirostat_mode) = param_i64(parameters, &["mirostatMode", "mirostat_mode"])
+                    .filter(|value| (0..=2).contains(value))
+                {
+                    body["mirostat_mode"] = json!(mirostat_mode);
+                }
+                if let Some(mirostat_tau) = param_f64(parameters, &["mirostatTau", "mirostat_tau"])
+                {
+                    body["mirostat_tau"] = json!(mirostat_tau);
+                }
+                if let Some(mirostat_eta) = param_f64(parameters, &["mirostatEta", "mirostat_eta"])
+                {
+                    body["mirostat_eta"] = json!(mirostat_eta);
+                }
             }
         }
     }
@@ -2321,6 +2412,97 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
             ) {
                 body["parallel_tool_calls"] = json!(parallel_tool_calls);
             }
+        }
+    } else if request.connection.provider == "nanogpt" {
+        if let Some(effort) = nanogpt_reasoning_effort(parameters) {
+            body["reasoning_effort"] = json!(effort);
+        }
+        if let Some(reasoning) = nanogpt_reasoning_config(parameters) {
+            body["reasoning"] = reasoning;
+        }
+        if let Some(prompt_caching) = nanogpt_prompt_caching_config(parameters) {
+            body["prompt_caching"] = prompt_caching;
+        }
+        if let Some(caching) =
+            param_boolish(parameters, &["caching"], false).or(request.connection.enable_caching.then_some(true))
+        {
+            body["caching"] = json!(caching);
+        }
+        if let Some(sticky_provider) =
+            param_boolish(parameters, &["stickyProvider", "stickyprovider"], true)
+        {
+            body["stickyProvider"] = json!(sticky_provider);
+        }
+        if let Some(provider) = parameters
+            .get("nanoGptProvider")
+            .or_else(|| parameters.get("nano_gpt_provider"))
+            .or_else(|| parameters.get("provider"))
+            .filter(|value| !value.is_null())
+        {
+            body["provider"] = provider.clone();
+        }
+        if let Some(billing_mode) = param_string(parameters, &["billingMode", "billing_mode"]) {
+            body["billing_mode"] = json!(billing_mode);
+        }
+        if let Some(min_tokens) =
+            param_i64(parameters, &["minTokens", "min_tokens"]).filter(|value| *value >= 0)
+        {
+            body["min_tokens"] = json!(min_tokens);
+        }
+        if let Some(include_stop) = param_boolish(
+            parameters,
+            &["includeStopStrInOutput", "include_stop_str_in_output"],
+            false,
+        ) {
+            body["include_stop_str_in_output"] = json!(include_stop);
+        }
+        if let Some(ignore_eos) = param_boolish(parameters, &["ignoreEos", "ignore_eos"], false) {
+            body["ignore_eos"] = json!(ignore_eos);
+        }
+        if let Some(no_repeat_ngram_size) = param_i64(
+            parameters,
+            &["noRepeatNgramSize", "no_repeat_ngram_size"],
+        )
+        .filter(|value| *value >= 0)
+        {
+            body["no_repeat_ngram_size"] = json!(no_repeat_ngram_size);
+        }
+        if let Some(stop_token_ids) = param_i64_array(parameters, &["stopTokenIds", "stop_token_ids"])
+        {
+            body["stop_token_ids"] = json!(stop_token_ids);
+        }
+        if let Some(custom_token_bans) =
+            param_i64_array(parameters, &["customTokenBans", "custom_token_bans"])
+        {
+            body["custom_token_bans"] = json!(custom_token_bans);
+        }
+        if let Some(logit_bias) = parameters
+            .get("logitBias")
+            .or_else(|| parameters.get("logit_bias"))
+            .filter(|value| value.as_object().is_some())
+        {
+            body["logit_bias"] = logit_bias.clone();
+        }
+        if let Some(logprobs) = parameters.get("logprobs").filter(|value| !value.is_null()) {
+            body["logprobs"] = logprobs.clone();
+        }
+        if let Some(prompt_logprobs) =
+            param_boolish(parameters, &["promptLogprobs", "prompt_logprobs"], false)
+        {
+            body["prompt_logprobs"] = json!(prompt_logprobs);
+        }
+        if let Some(reasoning_delta_field) =
+            param_string(parameters, &["reasoningDeltaField", "reasoning_delta_field"])
+                .filter(|value| value == "reasoning_content")
+        {
+            body["reasoning_delta_field"] = json!(reasoning_delta_field);
+        }
+        if let Some(reasoning_content_compat) = param_boolish(
+            parameters,
+            &["reasoningContentCompat", "reasoning_content_compat"],
+            false,
+        ) {
+            body["reasoning_content_compat"] = json!(reasoning_content_compat);
         }
     } else if request.connection.provider == "openai" {
         if let Some(service_tier) = param_string(parameters, &["serviceTier", "service_tier"])

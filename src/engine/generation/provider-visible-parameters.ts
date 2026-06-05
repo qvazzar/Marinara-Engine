@@ -189,7 +189,7 @@ function isOpenRouterOpenAiModel(model: string): boolean {
 
 function shouldSendTopK(provider: string, model: string): boolean {
   if (provider === "openrouter") return !isOpenRouterOpenAiModel(model);
-  return !["openai", "xai", "mistral", "cohere", "nanogpt"].includes(provider);
+  return !["openai", "xai", "mistral", "cohere"].includes(provider);
 }
 
 function shouldUseOpenAiResponses(provider: string, model: string): boolean {
@@ -589,6 +589,33 @@ function openRouterReasoningConfig(parameters: JsonRecord): Record<string, unkno
   return effort ? { effort } : null;
 }
 
+function nanoGptReasoningEffort(parameters: JsonRecord): string | null {
+  const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"])?.toLowerCase();
+  if (!effort) return null;
+  if (effort === "maximum") return "xhigh";
+  if (["none", "minimal", "low", "medium", "high", "xhigh"].includes(effort)) return effort;
+  return null;
+}
+
+function nanoGptPromptCachingConfig(parameters: JsonRecord): unknown {
+  const promptCaching = parameters.promptCaching ?? parameters.prompt_caching;
+  if (promptCaching && typeof promptCaching === "object" && !Array.isArray(promptCaching)) return promptCaching;
+  if (promptCaching != null) return { enabled: boolish(promptCaching, false) };
+  return null;
+}
+
+function nanoGptReasoningConfig(parameters: JsonRecord): Record<string, unknown> | null {
+  const explicit = parameters.reasoning;
+  if (explicit && typeof explicit === "object" && !Array.isArray(explicit)) return explicit as Record<string, unknown>;
+  const custom = parseRecord(parameters.customParameters ?? parameters.custom_params);
+  if (custom.reasoning && typeof custom.reasoning === "object" && !Array.isArray(custom.reasoning)) return null;
+
+  const reasoning: Record<string, unknown> = {};
+  const showThoughts = parameters.showThoughts ?? parameters.show_thoughts;
+  if (showThoughts != null) reasoning.exclude = !boolish(showThoughts, false);
+  return Object.keys(reasoning).length > 0 ? reasoning : null;
+}
+
 function isAnthropicServiceTier(value: string): boolean {
   return ["auto", "standard_only"].includes(value);
 }
@@ -696,7 +723,7 @@ function visibleOpenAiCompatibleParameters(
     if (frequencyPenalty !== null) body.frequency_penalty = frequencyPenalty;
     const presencePenalty = parameterNumber(parameters, ["presencePenalty", "presence_penalty"]);
     if (presencePenalty !== null) body.presence_penalty = presencePenalty;
-    if (provider === "openrouter") {
+    if (provider === "openrouter" || provider === "nanogpt") {
       const minP = parameterNumber(parameters, ["minP", "min_p"]);
       if (minP !== null && minP >= 0 && minP <= 1) body.min_p = minP;
       const topA = parameterNumber(parameters, ["topA", "top_a"]);
@@ -704,6 +731,22 @@ function visibleOpenAiCompatibleParameters(
       const repetitionPenalty = parameterNumber(parameters, ["repetitionPenalty", "repetition_penalty"]);
       if (repetitionPenalty !== null && repetitionPenalty >= 0 && repetitionPenalty <= 2)
         body.repetition_penalty = repetitionPenalty;
+      if (provider === "nanogpt") {
+        const tfs = parameterNumber(parameters, ["tfs"]);
+        if (tfs !== null && tfs >= 0 && tfs <= 1) body.tfs = tfs;
+        const etaCutoff = parameterNumber(parameters, ["etaCutoff", "eta_cutoff"]);
+        if (etaCutoff !== null) body.eta_cutoff = etaCutoff;
+        const epsilonCutoff = parameterNumber(parameters, ["epsilonCutoff", "epsilon_cutoff"]);
+        if (epsilonCutoff !== null) body.epsilon_cutoff = epsilonCutoff;
+        const typicalP = parameterNumber(parameters, ["typicalP", "typical_p"]);
+        if (typicalP !== null && typicalP >= 0 && typicalP <= 1) body.typical_p = typicalP;
+        const mirostatMode = parameterInteger(parameters, ["mirostatMode", "mirostat_mode"]);
+        if (mirostatMode !== null && mirostatMode >= 0 && mirostatMode <= 2) body.mirostat_mode = mirostatMode;
+        const mirostatTau = parameterNumber(parameters, ["mirostatTau", "mirostat_tau"]);
+        if (mirostatTau !== null) body.mirostat_tau = mirostatTau;
+        const mirostatEta = parameterNumber(parameters, ["mirostatEta", "mirostat_eta"]);
+        if (mirostatEta !== null) body.mirostat_eta = mirostatEta;
+      }
     }
   }
   const seed = parameterInteger(parameters, ["seed"]);
@@ -739,6 +782,46 @@ function visibleOpenAiCompatibleParameters(
     const parallelToolCalls = parameters.parallelToolCalls ?? parameters.parallel_tool_calls;
     if (options.hasTools === true && parallelToolCalls != null)
       body.parallel_tool_calls = boolish(parallelToolCalls, true);
+  } else if (provider === "nanogpt") {
+    const effort = nanoGptReasoningEffort(parameters);
+    if (effort) body.reasoning_effort = effort;
+    const reasoning = nanoGptReasoningConfig(parameters);
+    if (reasoning) body.reasoning = reasoning;
+    const promptCaching = nanoGptPromptCachingConfig(parameters);
+    if (promptCaching) body.prompt_caching = promptCaching;
+    const caching =
+      parameters.caching ?? (boolish(connection.enableCaching ?? connection.enable_caching, false) ? true : null);
+    if (caching != null) body.caching = boolish(caching, false);
+    const stickyProvider = parameters.stickyProvider ?? parameters.stickyprovider;
+    if (stickyProvider != null) body.stickyProvider = boolish(stickyProvider, true);
+    const providerOverride = parameters.nanoGptProvider ?? parameters.nano_gpt_provider ?? parameters.provider;
+    if (providerOverride != null) body.provider = providerOverride;
+    const billingMode = parameterString(parameters, ["billingMode", "billing_mode"]);
+    if (billingMode) body.billing_mode = billingMode;
+    const minTokens = parameterInteger(parameters, ["minTokens", "min_tokens"]);
+    if (minTokens !== null && minTokens >= 0) body.min_tokens = minTokens;
+    const includeStop = parameters.includeStopStrInOutput ?? parameters.include_stop_str_in_output;
+    if (includeStop != null) body.include_stop_str_in_output = boolish(includeStop, false);
+    const ignoreEos = parameters.ignoreEos ?? parameters.ignore_eos;
+    if (ignoreEos != null) body.ignore_eos = boolish(ignoreEos, false);
+    const noRepeatNgramSize = parameterInteger(parameters, ["noRepeatNgramSize", "no_repeat_ngram_size"]);
+    if (noRepeatNgramSize !== null && noRepeatNgramSize >= 0) body.no_repeat_ngram_size = noRepeatNgramSize;
+    const stopTokenIds = parameters.stopTokenIds ?? parameters.stop_token_ids;
+    if (Array.isArray(stopTokenIds) && stopTokenIds.every((value) => Number.isInteger(value)))
+      body.stop_token_ids = stopTokenIds;
+    const customTokenBans = parameters.customTokenBans ?? parameters.custom_token_bans;
+    if (Array.isArray(customTokenBans) && customTokenBans.every((value) => Number.isInteger(value)))
+      body.custom_token_bans = customTokenBans;
+    const logitBias = parameters.logitBias ?? parameters.logit_bias;
+    if (logitBias && typeof logitBias === "object" && !Array.isArray(logitBias)) body.logit_bias = logitBias;
+    const logprobs = parameters.logprobs;
+    if (logprobs != null) body.logprobs = logprobs;
+    const promptLogprobs = parameters.promptLogprobs ?? parameters.prompt_logprobs;
+    if (promptLogprobs != null) body.prompt_logprobs = boolish(promptLogprobs, false);
+    const reasoningDeltaField = parameterString(parameters, ["reasoningDeltaField", "reasoning_delta_field"]);
+    if (reasoningDeltaField === "reasoning_content") body.reasoning_delta_field = reasoningDeltaField;
+    const reasoningContentCompat = parameters.reasoningContentCompat ?? parameters.reasoning_content_compat;
+    if (reasoningContentCompat != null) body.reasoning_content_compat = boolish(reasoningContentCompat, false);
   } else if (provider === "openai") {
     const serviceTier = parameterString(parameters, ["serviceTier", "service_tier"]);
     if (serviceTier && isOpenAiServiceTier(serviceTier)) body.service_tier = serviceTier;
