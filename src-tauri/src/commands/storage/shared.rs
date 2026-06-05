@@ -2934,6 +2934,48 @@ pub(crate) fn upload_gallery_image(
     }
 }
 
+/// Persist a global-gallery image. Unlike `upload_gallery_image`, the global
+/// gallery has no owner entity — images are optionally filed into a flat
+/// `gallery-folders` folder via a nullable `folderId` (null = root level).
+pub(crate) fn upload_global_gallery_image(
+    state: &AppState,
+    folder_id: Option<&str>,
+    body: Value,
+) -> AppResult<Value> {
+    let uploaded = decode_uploaded_image_file(&body)?;
+    let stored = media_uploads::persist_image_bytes(
+        state,
+        "gallery",
+        &uploaded.name,
+        &uploaded.bytes,
+        &uploaded.content_type,
+    )?;
+    let mut record = Map::new();
+    let folder_value = match folder_id.map(str::trim) {
+        Some(id) if !id.is_empty() => Value::String(id.to_string()),
+        _ => Value::Null,
+    };
+    record.insert("folderId".to_string(), folder_value);
+    record.insert("filePath".to_string(), Value::String(stored.absolute_path));
+    record.insert("filename".to_string(), Value::String(stored.filename));
+    record.insert("url".to_string(), Value::String(stored.asset_url));
+    record.insert("prompt".to_string(), Value::Null);
+    record.insert("provider".to_string(), Value::Null);
+    record.insert("model".to_string(), Value::Null);
+    record.insert("width".to_string(), Value::Null);
+    record.insert("height".to_string(), Value::Null);
+    let record = Value::Object(record);
+    match state.storage.create_immediate("global-gallery", record.clone()) {
+        Ok(created) => Ok(created),
+        Err(error) => {
+            media_uploads::remove_managed_record_file(
+                state, "gallery", &record, "filePath", "filename",
+            );
+            Err(error)
+        }
+    }
+}
+
 pub(crate) fn project_list_rows(rows: Vec<Value>, options: Option<&Value>) -> Vec<Value> {
     let Some(fields) = option_string_array(options, "fields") else {
         return rows;

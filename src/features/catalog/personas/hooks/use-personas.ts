@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { personaKeys } from "../query-keys";
 import { personaApi } from "../../../../shared/api/persona-api";
+import { galleryApi } from "../../../../shared/api/image-generation-api";
+import { resolveGalleryFileUrl } from "../../../../shared/api/local-file-api";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { storageCommandsApi } from "../../../../shared/api/storage-commands-api";
 import { personaAvatarUrl, type PersonaAvatarSource } from "../lib/persona-avatar-url";
@@ -258,6 +260,90 @@ export function useUploadPersonaAvatar() {
       qc.invalidateQueries({ queryKey: personaKeys.detail(variables.id) });
       qc.invalidateQueries({ queryKey: personaKeys.summaryDetail(variables.id) });
       qc.invalidateQueries({ queryKey: personaKeys.activeSummary });
+    },
+  });
+}
+
+// ── Persona Gallery ──
+// Mirrors the character gallery: images live in their own `persona-gallery`
+// collection keyed by personaId, so they persist independently of any chat and
+// are cleaned up when the persona is deleted (DeletePersonaGallery cleanup).
+
+export interface PersonaGalleryImage {
+  id: string;
+  personaId: string;
+  filePath: string;
+  filename?: string | null;
+  prompt: string;
+  provider: string;
+  model: string;
+  width: number | null;
+  height: number | null;
+  createdAt: string;
+  url: string;
+}
+
+function readTrimmedValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+async function normalizePersonaGalleryImage(image: PersonaGalleryImage): Promise<PersonaGalleryImage> {
+  const managedUrl = await resolveGalleryFileUrl(image.filename, image.filePath).catch(() => null);
+  return {
+    ...image,
+    url: managedUrl || readTrimmedValue(image.url) || readTrimmedValue(image.filePath),
+  };
+}
+
+export function usePersonaGalleryImages(personaId: string | null) {
+  return useQuery({
+    queryKey: personaKeys.gallery(personaId ?? ""),
+    queryFn: async () =>
+      Promise.all(
+        (await storageApi.list<PersonaGalleryImage>("persona-gallery", { filters: { personaId } })).map(
+          normalizePersonaGalleryImage,
+        ),
+      ),
+    enabled: !!personaId,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useUploadPersonaGalleryImage(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (files: File[]) => {
+      const uploads = await Promise.allSettled(
+        files.map((file) => galleryApi.uploadPersona<PersonaGalleryImage>(personaId, file)),
+      );
+
+      const successfulUploads = uploads.filter(
+        (result): result is PromiseFulfilledResult<PersonaGalleryImage> => result.status === "fulfilled",
+      );
+
+      if (successfulUploads.length !== uploads.length) {
+        const failedCount = uploads.length - successfulUploads.length;
+        throw new Error(
+          failedCount === 1
+            ? "One persona gallery image failed to upload."
+            : `${failedCount} persona gallery images failed to upload.`,
+        );
+      }
+
+      return successfulUploads.map((result) => result.value);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: personaKeys.gallery(personaId) });
+    },
+  });
+}
+
+export function useDeletePersonaGalleryImage(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (imageId: string) => storageApi.delete("persona-gallery", imageId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: personaKeys.gallery(personaId) });
     },
   });
 }

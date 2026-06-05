@@ -51,7 +51,7 @@ pub(crate) fn admin_expunge(state: &AppState, body: Value) -> AppResult<Value> {
             }
             "personas" => clear_collections(
                 state,
-                &["personas", "persona-groups"],
+                &["personas", "persona-groups", "persona-gallery"],
                 &mut cleared_collections,
             )?,
             "lorebooks" => clear_collections(
@@ -92,6 +92,9 @@ pub(crate) fn admin_expunge(state: &AppState, body: Value) -> AppResult<Value> {
                     &[
                         "gallery",
                         "character-gallery",
+                        "persona-gallery",
+                        "global-gallery",
+                        "gallery-folders",
                         "background-metadata",
                         "sprites",
                         "knowledge-sources",
