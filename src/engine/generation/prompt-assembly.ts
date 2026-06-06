@@ -150,7 +150,7 @@ export interface PromptAssemblyInput {
   reusableContext?: PromptAssemblyReusableContext;
 }
 
-export interface PromptAssemblyReusableContext {
+interface PromptAssemblyReusableContext {
   chatMeta: JsonRecord;
   chatMode: string;
   storedMessages: JsonRecord[];

@@ -625,7 +625,7 @@ async function fullBodySpriteReference(
   return preferred ? resolveIllustrationReferenceImage(visuals, preferred) : "";
 }
 
-async function defaultIllustratorImageConnectionId(storage: StorageGateway): Promise<string> {
+async function defaultAgentImageConnectionId(storage: StorageGateway): Promise<string> {
   const connections = await storage.list<JsonRecord>("connections").catch(() => []);
   const connection = connections.find(
     (item) => readString(item.provider).trim() === "image_generation" && boolish(item.defaultForAgents, false),
@@ -654,7 +654,7 @@ async function illustrationImageSettings(args: {
     readString(settings.imageConnectionId).trim() ||
     readString(meta.illustrationImageConnectionId).trim() ||
     readString(meta.imageGenConnectionId).trim() ||
-    (await defaultIllustratorImageConnectionId(args.storage));
+    (await defaultAgentImageConnectionId(args.storage));
   return {
     connectionId,
     positivePrompt:
@@ -877,6 +877,251 @@ async function generateIllustrationAttachments(args: {
   }
 
   return { attachments, events };
+}
+
+interface TrackerAvatarImageSettings {
+  connectionId: string;
+  positivePrompt: string;
+  negativePrompt: string;
+}
+
+function isCharacterTrackerResult(result: AgentResult): boolean {
+  return result.agentType === "character-tracker" || result.type === "character_tracker_update";
+}
+
+async function agentSettingsByType(
+  storage: StorageGateway,
+  agentId: string,
+  agentType: string,
+): Promise<JsonRecord> {
+  const direct = agentId ? await storage.get<JsonRecord>("agents", agentId).catch(() => null) : null;
+  if (isRecord(direct)) return parseRecord(direct.settings);
+  const fallback = await storage.get<JsonRecord>("agents", agentType).catch(() => null);
+  if (isRecord(fallback)) return parseRecord(fallback.settings);
+  const agents = await storage.list<JsonRecord>("agents").catch(() => []);
+  const agent = agents.find(
+    (item) => readString(item.id).trim() === agentType || readString(item.type).trim() === agentType,
+  );
+  return isRecord(agent) ? parseRecord(agent.settings) : {};
+}
+
+async function trackerAvatarImageSettings(args: {
+  storage: StorageGateway;
+  chat: JsonRecord;
+  result: AgentResult;
+}): Promise<TrackerAvatarImageSettings | null> {
+  const settings = await agentSettingsByType(args.storage, args.result.agentId, "character-tracker");
+  if (!boolish(settings.autoGenerateAvatars, false)) return null;
+  const meta = parseRecord(args.chat.metadata);
+  const connectionId =
+    readString(settings.imageConnectionId).trim() ||
+    readString(meta.characterTrackerImageConnectionId).trim() ||
+    readString(meta.imageGenConnectionId).trim() ||
+    (await defaultAgentImageConnectionId(args.storage));
+  return {
+    connectionId,
+    positivePrompt: readString(settings.imagePositivePrompt).trim(),
+    negativePrompt: combinedPromptParts([
+      readString(settings.imageNegativePrompt).trim(),
+      readString(meta.selfieNegativePrompt).trim(),
+    ]),
+  };
+}
+
+function trackerAvatarLookupKey(kind: "id" | "name", value: unknown): string {
+  const text = readString(value).trim().toLowerCase();
+  return text ? `${kind}:${text}` : "";
+}
+
+function addTrackerAvatarLookupEntry(
+  lookup: Map<string, string>,
+  character: JsonRecord,
+  avatarPath: string,
+): void {
+  const avatar = avatarPath.trim();
+  if (!avatar) return;
+  const idKey = trackerAvatarLookupKey("id", character.characterId ?? character.id);
+  const nameKey = trackerAvatarLookupKey("name", character.name);
+  if (idKey) lookup.set(idKey, avatar);
+  if (nameKey) lookup.set(nameKey, avatar);
+}
+
+function trackerAvatarLookup(snapshot?: GameState | null): Map<string, string> {
+  const lookup = new Map<string, string>();
+  for (const character of snapshot?.presentCharacters ?? []) {
+    const record = character as unknown as JsonRecord;
+    const avatarPath = readString(record.avatarPath).trim();
+    addTrackerAvatarLookupEntry(lookup, record, avatarPath);
+  }
+  return lookup;
+}
+
+function existingTrackerAvatarPath(lookup: Map<string, string>, character: JsonRecord): string {
+  const idKey = trackerAvatarLookupKey("id", character.characterId ?? character.id);
+  if (idKey && lookup.has(idKey)) return lookup.get(idKey) ?? "";
+  const nameKey = trackerAvatarLookupKey("name", character.name);
+  return nameKey ? lookup.get(nameKey) ?? "" : "";
+}
+
+function trackerAvatarPrompt(character: JsonRecord, positivePrompt: string): string {
+  const name = readString(character.name).trim();
+  const appearance = readString(character.appearance).trim();
+  const outfit = readString(character.outfit).trim();
+  const mood = readString(character.mood ?? character.expression).trim();
+  return [
+    `Portrait avatar of ${name}.`,
+    `Appearance: ${appearance}.`,
+    outfit ? `Outfit: ${outfit}.` : "",
+    mood ? `Expression or mood: ${mood}.` : "",
+    "Centered bust portrait, expressive face, clean background, high detail, polished character art.",
+    positivePrompt,
+  ]
+    .filter((part) => part.trim().length > 0)
+    .join(" ");
+}
+
+function imageDataUrlFromGeneratedImage(image: { base64?: unknown; mimeType?: unknown; image?: unknown }): string {
+  const direct = readString(image.image).trim();
+  if (direct) return direct;
+  const base64 = readString(image.base64).trim();
+  if (!base64) return "";
+  const mimeType = readString(image.mimeType).trim() || "image/png";
+  return `data:${mimeType};base64,${base64}`;
+}
+
+function shouldGenerateTrackerAvatar(character: JsonRecord): boolean {
+  if (readString(character.avatarPath).trim()) return false;
+  if (!readString(character.name).trim()) return false;
+  if (!readString(character.appearance).trim()) return false;
+  const characterId = readString(character.characterId ?? character.id).trim();
+  return !characterId.startsWith("manual-");
+}
+
+async function generatedTrackerAvatarPath(args: {
+  deps: GenerationEngineDeps;
+  chatId: string;
+  character: JsonRecord;
+  settings: TrackerAvatarImageSettings;
+  index: number;
+  signal?: AbortSignal;
+}): Promise<string> {
+  if (!args.deps.visuals?.uploadNpcAvatar) return "";
+  const name = readString(args.character.name).trim();
+  const prompt = trackerAvatarPrompt(args.character, args.settings.positivePrompt);
+  const image = await args.deps.integrations.image.generate<{
+    base64?: string;
+    mimeType?: string;
+    image?: string;
+  }>({
+    connectionId: args.settings.connectionId,
+    kind: "avatar",
+    reviewId: `tracker-avatar:${args.chatId}:${args.index}:${name}`,
+    reviewTitle: `NPC avatar: ${name}`,
+    prompt,
+    negativePrompt: args.settings.negativePrompt || undefined,
+    width: 768,
+    height: 1024,
+  });
+  throwIfAborted(args.signal);
+  const imageUrl = imageDataUrlFromGeneratedImage(image);
+  if (!imageUrl) throw new Error("Image provider returned no avatar image data.");
+  const upload = await args.deps.visuals.uploadNpcAvatar(args.chatId, name, imageUrl);
+  return readString(upload.avatarPath).trim();
+}
+
+async function generateTrackerAvatarsForResults(args: {
+  deps: GenerationEngineDeps;
+  chat: JsonRecord;
+  results: AgentResult[];
+  baseline?: GameState | null;
+  signal?: AbortSignal;
+}): Promise<AgentResult[]> {
+  if (!args.deps.integrations?.image || !args.deps.visuals?.uploadNpcAvatar) return args.results;
+  if (!args.results.some(isCharacterTrackerResult)) return args.results;
+  const chatId = readString(args.chat.id).trim();
+  if (!chatId) return args.results;
+  const lookup = trackerAvatarLookup(args.baseline);
+  const settingsCache = new Map<string, TrackerAvatarImageSettings | null>();
+  let changedAny = false;
+
+  const nextResults: AgentResult[] = [];
+  for (const result of args.results) {
+    if (!result.success || !isCharacterTrackerResult(result)) {
+      nextResults.push(result);
+      continue;
+    }
+    const data = parseRecord(result.data);
+    if (!Array.isArray(data.presentCharacters)) {
+      nextResults.push(result);
+      continue;
+    }
+
+    const settingsKey = readString(result.agentId).trim() || result.agentType;
+    if (!settingsCache.has(settingsKey)) {
+      settingsCache.set(
+        settingsKey,
+        await trackerAvatarImageSettings({ storage: args.deps.storage, chat: args.chat, result }),
+      );
+    }
+    const settings = settingsCache.get(settingsKey) ?? null;
+    if (!settings?.connectionId) {
+      nextResults.push(result);
+      continue;
+    }
+
+    let changedResult = false;
+    const presentCharacters = data.presentCharacters.map((value) => {
+      const character = parseRecord(value);
+      const preservedAvatar = existingTrackerAvatarPath(lookup, character);
+      if (preservedAvatar && !readString(character.avatarPath).trim()) {
+        changedResult = true;
+        return { ...character, avatarPath: preservedAvatar };
+      }
+      if (readString(character.avatarPath).trim()) {
+        addTrackerAvatarLookupEntry(lookup, character, readString(character.avatarPath).trim());
+      }
+      return value;
+    });
+
+    for (let index = 0; index < presentCharacters.length; index += 1) {
+      throwIfAborted(args.signal);
+      const character = parseRecord(presentCharacters[index]);
+      if (!shouldGenerateTrackerAvatar(character)) continue;
+      const existingAvatar = existingTrackerAvatarPath(lookup, character);
+      if (existingAvatar) {
+        presentCharacters[index] = { ...character, avatarPath: existingAvatar };
+        changedResult = true;
+        continue;
+      }
+      try {
+        const avatarPath = await generatedTrackerAvatarPath({
+          deps: args.deps,
+          chatId,
+          character,
+          settings,
+          index,
+          signal: args.signal,
+        });
+        if (!avatarPath) continue;
+        const nextCharacter = { ...character, avatarPath };
+        presentCharacters[index] = nextCharacter;
+        addTrackerAvatarLookupEntry(lookup, nextCharacter, avatarPath);
+        changedResult = true;
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") throw error;
+        console.warn("[generation] tracker avatar generation failed", error);
+      }
+    }
+
+    if (changedResult) {
+      changedAny = true;
+      nextResults.push({ ...result, data: { ...data, presentCharacters } });
+    } else {
+      nextResults.push(result);
+    }
+  }
+
+  return changedAny ? nextResults : args.results;
 }
 
 async function mirrorSavedAssistantMessageToDiscord(args: {
@@ -2612,7 +2857,14 @@ async function runGenerationAgentsForTarget(args: {
   for (const result of [...runtime.preResults, ...results]) {
     unique.set(resultKey(result), result);
   }
-  const finalResults = [...unique.values()];
+  let finalResults = [...unique.values()];
+  finalResults = await generateTrackerAvatarsForResults({
+    deps,
+    chat: chatForAgents,
+    results: finalResults,
+    baseline: targetSnapshot ?? retryBaseline,
+    signal,
+  });
   await persistAgentMessageExtraForTarget(
     deps.storage,
     target,
@@ -3135,7 +3387,14 @@ export async function* startGeneration(
     throwIfAborted(signal);
     const postResults = runtime ? await runtime.runPost(content) : [];
     throwIfAborted(signal);
-    const emittedAgentResults = uniqueAgentResults([...parallelResults, ...postResults, ...agentEvents]);
+    let emittedAgentResults = uniqueAgentResults([...parallelResults, ...postResults, ...agentEvents]);
+    emittedAgentResults = await generateTrackerAvatarsForResults({
+      deps,
+      chat: chatForGeneration,
+      results: emittedAgentResults,
+      baseline: generationTrackerBaseline,
+      signal,
+    });
     for (const result of emittedAgentResults) {
       yield { type: "agent_result", data: result };
     }

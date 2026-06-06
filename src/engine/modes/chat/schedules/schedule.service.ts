@@ -660,7 +660,7 @@ function hasSchedules(value: unknown): value is CharacterSchedules {
   return !!value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0;
 }
 
-export function areConversationSchedulesEnabled(meta: JsonRecord): boolean {
+function areConversationSchedulesEnabled(meta: JsonRecord): boolean {
   return typeof meta.conversationSchedulesEnabled === "boolean"
     ? meta.conversationSchedulesEnabled
     : hasSchedules(meta.characterSchedules);
