@@ -623,6 +623,37 @@ impl FileStorage {
         self.append_many_uncached_locked(appends)
     }
 
+    pub fn append_many_and_update_collections_uncached<F, T>(
+        &self,
+        appends: Vec<(&str, Vec<Value>)>,
+        update_collections: Vec<&str>,
+        update: F,
+    ) -> AppResult<Option<T>>
+    where
+        F: FnOnce(&mut [AtomicCollectionRows]) -> AppResult<Option<T>>,
+    {
+        self.ensure_writes_available()?;
+        let appends = appends
+            .into_iter()
+            .filter(|(_, rows)| !rows.is_empty())
+            .collect::<Vec<_>>();
+        let _guard = self
+            .lock
+            .write()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        self.ensure_writes_available()?;
+        if self.any_collection_dirty_cached(
+            update_collections
+                .iter()
+                .copied()
+                .chain(appends.iter().map(|(collection, _)| *collection)),
+        )? {
+            return Ok(None);
+        }
+
+        self.append_many_and_update_collections_uncached_locked(appends, update_collections, update)
+    }
+
     pub fn update_collections_atomically<F, T>(
         &self,
         collections: Vec<&str>,
@@ -1942,6 +1973,171 @@ impl FileStorage {
         }
         self.append_cached_collection_rows(&appends)?;
         Ok(true)
+    }
+
+    fn append_many_and_update_collections_uncached_locked<F, T>(
+        &self,
+        appends: Vec<(&str, Vec<Value>)>,
+        update_collections: Vec<&str>,
+        update: F,
+    ) -> AppResult<Option<T>>
+    where
+        F: FnOnce(&mut [AtomicCollectionRows]) -> AppResult<Option<T>>,
+    {
+        let mut loaded = Vec::with_capacity(update_collections.len());
+        let mut seen_update_paths = HashSet::new();
+        for collection in update_collections {
+            let path = self.collection_path(collection)?;
+            if !seen_update_paths.insert(path) {
+                return Err(AppError::invalid_input(format!(
+                    "Duplicate collection update: {collection}"
+                )));
+            }
+            loaded.push(AtomicCollectionRows {
+                collection: collection.to_string(),
+                rows: self.read_collection_no_recovery(collection)?,
+            });
+        }
+
+        let Some(output) = update(&mut loaded)? else {
+            return Ok(None);
+        };
+
+        let transaction_id = storage_transaction_id();
+        let mut pending = Vec::with_capacity(loaded.len() + appends.len());
+        let mut seen_paths = HashSet::new();
+        let prepare_result = (|| -> AppResult<bool> {
+            for (index, entry) in loaded.iter().enumerate() {
+                let item = self.stage_replaced_collection(
+                    entry.collection(),
+                    entry.rows(),
+                    &transaction_id,
+                    index,
+                    &mut seen_paths,
+                )?;
+                pending.push(item);
+            }
+            let append_offset = loaded.len();
+            for (index, (collection, rows)) in appends.iter().enumerate() {
+                let Some(item) = self.stage_appended_collection(
+                    collection,
+                    rows,
+                    &transaction_id,
+                    append_offset + index,
+                    &mut seen_paths,
+                )?
+                else {
+                    return Ok(false);
+                };
+                pending.push(item);
+            }
+            Ok(true)
+        })();
+        match prepare_result {
+            Ok(true) => {}
+            Ok(false) => {
+                cleanup_pending_collection_temps(&pending);
+                return Ok(None);
+            }
+            Err(error) => {
+                cleanup_pending_collection_temps(&pending);
+                return Err(error);
+            }
+        }
+
+        let mut backed_up = Vec::new();
+        let mut installed = Vec::new();
+        let result = (|| -> AppResult<()> {
+            for (index, item) in pending.iter().enumerate() {
+                if !item.existed {
+                    continue;
+                }
+                refresh_collection_backup(&item.path)?;
+                fs::rename(&item.path, &item.backup)?;
+                backed_up.push(index);
+            }
+            for (index, item) in pending.iter().enumerate() {
+                fs::rename(&item.tmp, &item.path)?;
+                installed.push(index);
+            }
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            if let Err(rollback_error) =
+                rollback_collection_replacements(&pending, &backed_up, &installed)
+            {
+                cleanup_pending_collection_temps(&pending);
+                return Err(AppError::new(
+                    "storage_rollback_failed",
+                    format!(
+                        "{error}; additionally failed to roll back collection update append: {rollback_error}"
+                    ),
+                ));
+            }
+            cleanup_pending_collection_transaction_files(&pending);
+            return Err(error);
+        }
+
+        cleanup_pending_collection_transaction_files(&pending);
+        for entry in &loaded {
+            self.invalidate_projected_cache_for_collection(entry.collection())?;
+            self.cache_collection(entry.collection(), entry.rows(), false)?;
+        }
+        self.append_cached_collection_rows(&appends)?;
+        Ok(Some(output))
+    }
+
+    fn stage_replaced_collection(
+        &self,
+        collection: &str,
+        rows: &[Value],
+        transaction_id: &str,
+        index: usize,
+        seen_paths: &mut HashSet<PathBuf>,
+    ) -> AppResult<PendingCollectionReplacement> {
+        let path = self.collection_path(collection)?;
+        if !seen_paths.insert(path.clone()) {
+            return Err(AppError::invalid_input(format!(
+                "Duplicate collection update: {collection}"
+            )));
+        }
+        let existed = match fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                if !metadata.file_type().is_file() {
+                    return Err(AppError::io(std::io::Error::other(format!(
+                        "Collection path is not a regular file: {}",
+                        path.display()
+                    ))));
+                }
+                true
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => false,
+            Err(error) => return Err(error.into()),
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let tmp = collection_transaction_path(&path, transaction_id, index, "tmp")?;
+        let backup = collection_transaction_path(&path, transaction_id, index, "backup")?;
+        let item = PendingCollectionReplacement {
+            path,
+            tmp,
+            backup,
+            existed,
+        };
+        let staged = (|| -> AppResult<()> {
+            fs::write(&item.tmp, serde_json::to_vec_pretty(rows)?)?;
+            sync_file(&item.tmp)?;
+            Ok(())
+        })();
+        match staged {
+            Ok(()) => Ok(item),
+            Err(error) => {
+                let _ = remove_path_if_exists(&item.tmp);
+                Err(error)
+            }
+        }
     }
 
     fn stage_appended_collection(
@@ -4424,6 +4620,134 @@ mod tests {
 
         assert!(!appended);
         assert_eq!(storage.list("messages").unwrap().len(), 1);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn append_many_and_update_collections_uncached_updates_and_appends_clean_cache() {
+        let root = temp_storage_root("append-update-clean-cache");
+        let storage = FileStorage::new(&root).unwrap();
+        storage
+            .replace_all(
+                "messages",
+                vec![
+                    json!({ "id": "message-1", "content": "first" }),
+                    json!({ "id": "message-2", "content": "untouched" }),
+                ],
+            )
+            .unwrap();
+        storage
+            .replace_all(
+                "message-swipes",
+                vec![json!({ "id": "message-1::swipe::0", "messageId": "message-1" })],
+            )
+            .unwrap();
+        assert_eq!(storage.list("messages").unwrap().len(), 2);
+        assert_eq!(storage.list("message-swipes").unwrap().len(), 1);
+
+        let output = storage
+            .append_many_and_update_collections_uncached(
+                vec![(
+                    "message-swipes",
+                    vec![json!({ "id": "message-1::swipe::1", "messageId": "message-1" })],
+                )],
+                vec!["messages"],
+                |collections| {
+                    let message = collections[0]
+                        .rows_mut()
+                        .iter_mut()
+                        .find(|row| row.get("id").and_then(Value::as_str) == Some("message-1"))
+                        .expect("message row should exist");
+                    message["content"] = json!("second");
+                    Ok(Some(message.clone()))
+                },
+            )
+            .unwrap()
+            .expect("clean collections should use fast path");
+
+        assert_eq!(output["content"], json!("second"));
+        assert_eq!(
+            storage.list("messages").unwrap()[0]["content"],
+            json!("second")
+        );
+        assert_eq!(storage.list("message-swipes").unwrap().len(), 2);
+        assert_eq!(
+            parse_collection_file("messages", &root.join("collections").join("messages.json"))
+                .unwrap()[0]["content"],
+            json!("second")
+        );
+        assert_eq!(
+            parse_collection_file(
+                "message-swipes",
+                &root.join("collections").join("message-swipes.json")
+            )
+            .unwrap()
+            .len(),
+            2
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn append_many_and_update_collections_uncached_refuses_dirty_cached_collections() {
+        let root = temp_storage_root("append-update-dirty-cache");
+        let storage = FileStorage::new(&root).unwrap();
+        storage
+            .cache_collection("messages", &[json!({ "id": "message-1" })], true)
+            .unwrap();
+
+        let updated = storage
+            .append_many_and_update_collections_uncached(
+                vec![("message-swipes", vec![json!({ "id": "swipe-1" })])],
+                vec!["messages"],
+                |_| -> AppResult<Option<Value>> {
+                    panic!("dirty-cache fallback should skip update closure")
+                },
+            )
+            .unwrap();
+
+        assert!(updated.is_none());
+        assert_eq!(storage.list("messages").unwrap().len(), 1);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn append_many_and_update_collections_uncached_cleans_prepared_temps_on_stage_error() {
+        let root = temp_storage_root("append-update-stage-error-cleanup");
+        let storage = FileStorage::new(&root).unwrap();
+        let collections = root.join("collections");
+        fs::write(
+            collections.join("messages.json"),
+            serde_json::to_vec_pretty(&json!([{ "id": "message-1" }])).unwrap(),
+        )
+        .unwrap();
+
+        let error = storage
+            .append_many_and_update_collections_uncached(
+                vec![("messages", vec![json!({ "id": "message-2" })])],
+                vec!["messages"],
+                |collections| Ok(Some(collections[0].rows()[0].clone())),
+            )
+            .expect_err("duplicate touched collection should fail staging");
+
+        assert!(error.message.contains("Duplicate collection append"));
+        let leftover_transaction_files = fs::read_dir(&collections)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".profile-import-")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftover_transaction_files.is_empty(),
+            "stage error should remove pending transaction files"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -717,7 +717,17 @@ pub(crate) fn message_swipes(
     body: Value,
 ) -> AppResult<Value> {
     let mut message = get_required(state, "messages", message_id)?;
+    let stored_has_embedded_swipes = message.get("swipes").and_then(Value::as_array).is_some();
     message_swipe_storage::materialize_message(state, &mut message, true)?;
+    let existing_sidecar_swipe_count = if stored_has_embedded_swipes {
+        0
+    } else {
+        message
+            .get("swipes")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0)
+    };
     let owner_chat_id = owned_message_chat_id(&message, chat_id)?;
     if body.is_null() {
         return Ok(message.get("swipes").cloned().unwrap_or_else(|| json!([])));
@@ -756,7 +766,14 @@ pub(crate) fn message_swipes(
         .map(|value| value as usize)
         .unwrap_or(0);
     let activate_new_swipe = should_activate_new_swipe(&body);
-    let (active_index, swipe_count, active_content, active_extra, active_character_id) = {
+    let (
+        active_index,
+        swipe_count,
+        active_content,
+        active_extra,
+        active_character_id,
+        previous_swipe_count,
+    ) = {
         let swipes = object
             .entry("swipes".to_string())
             .or_insert_with(|| json!([]))
@@ -803,6 +820,7 @@ pub(crate) fn message_swipes(
             swipes[active_index]["content"].clone(),
             swipes[active_index]["extra"].clone(),
             swipes[active_index].get("characterId").cloned(),
+            previous_swipe_count,
         )
     };
     let visible_content_changed =
@@ -818,6 +836,33 @@ pub(crate) fn message_swipes(
         object.insert("characterId".to_string(), character_id);
     }
     let swipes = message_swipe_storage::take_swipes_for_storage(&mut message)?.unwrap_or_default();
+    if !stored_has_embedded_swipes {
+        let mut extra_collections = Vec::new();
+        if visible_content_changed {
+            extra_collections.push("chats");
+        }
+        if let Some(updated) =
+            message_swipe_storage::append_message_swipes_and_update_collections_if_uncached(
+                state,
+                message.clone(),
+                swipes.clone(),
+                existing_sidecar_swipe_count.min(previous_swipe_count),
+                extra_collections,
+                |collections, written_message| {
+                    if visible_content_changed {
+                        apply_message_memory_invalidation_in_collections(
+                            collections,
+                            &owner_chat_id,
+                            written_message,
+                        )?;
+                    }
+                    Ok(())
+                },
+            )?
+        {
+            return Ok(updated);
+        }
+    }
     let updated = replace_message_with_swipes_and_chat_cleanup(
         state,
         &owner_chat_id,
@@ -1580,12 +1625,17 @@ fn apply_message_memory_invalidation_in_collections(
     chat_id: &str,
     message: &Value,
 ) -> AppResult<()> {
-    let Some(chat) = collections.get_mut(2).and_then(|collection| {
-        collection
-            .rows_mut()
-            .iter_mut()
-            .find(|row| row.get("id").and_then(Value::as_str) == Some(chat_id))
-    }) else {
+    let Some(chat_collection) = collections
+        .iter_mut()
+        .find(|collection| collection.collection() == "chats")
+    else {
+        return Ok(());
+    };
+    let Some(chat) = chat_collection
+        .rows_mut()
+        .iter_mut()
+        .find(|row| row.get("id").and_then(Value::as_str) == Some(chat_id))
+    else {
         return Ok(());
     };
     apply_chat_memory_invalidation_from_message(chat, message)
@@ -4245,6 +4295,153 @@ mod tests {
             materialized["extra"]["reasoning_content"],
             json!("first reasoning")
         );
+    }
+
+    #[test]
+    fn message_swipes_active_append_updates_sidecar_backed_message_and_prunes_memories() {
+        let state = test_state("swipe-active-sidecar-backed-memory-prune");
+        state
+            .storage
+            .create(
+                "chats",
+                json!({
+                    "id": "chat-1",
+                    "name": "Memory chat",
+                    "memories": [
+                        {
+                            "id": "keep-before",
+                            "messageIds": ["message-before"],
+                            "lastMessageAt": "2026-06-01T09:00:00.000Z"
+                        },
+                        {
+                            "id": "drop-edited",
+                            "messageIds": ["message-1"],
+                            "lastMessageAt": "2026-06-01T10:00:00.000Z"
+                        },
+                        {
+                            "id": "drop-newer",
+                            "lastMessageAt": "2026-06-01T10:01:00.000Z"
+                        }
+                    ]
+                }),
+            )
+            .expect("chat should seed");
+        message_swipe_storage::create_message(
+            &state,
+            json!({
+                "id": "message-1",
+                "chatId": "chat-1",
+                "role": "assistant",
+                "content": "first",
+                "createdAt": "2026-06-01T10:00:00.000Z",
+                "activeSwipeIndex": 0,
+                "swipes": [{
+                    "content": "first",
+                    "extra": { "generationInfo": { "model": "first-model" } }
+                }]
+            }),
+        )
+        .expect("message should seed");
+
+        let updated = message_swipes(
+            &state,
+            "POST",
+            "chat-1",
+            "message-1",
+            json!({
+                "content": "second",
+                "extra": { "generationInfo": { "model": "second-model" } }
+            }),
+        )
+        .expect("swipe should be added");
+
+        assert_eq!(updated["activeSwipeIndex"], json!(1));
+        assert_eq!(updated["swipeCount"], json!(2));
+        assert_eq!(updated["content"], json!("second"));
+        assert_eq!(
+            updated["extra"]["generationInfo"]["model"],
+            json!("second-model")
+        );
+
+        let persisted = stored_message(&state);
+        assert!(persisted.get("swipes").is_none());
+        assert_eq!(persisted["content"], json!("second"));
+        assert_eq!(persisted["activeSwipeIndex"], json!(1));
+        assert!(persisted.get("swipeCount").is_none());
+
+        let persisted_swipes = message_swipe_storage::swipes_for_message(&state, "message-1")
+            .expect("message sidecar swipes should read");
+        assert_eq!(persisted_swipes.len(), 2);
+        assert_eq!(persisted_swipes[0]["content"], json!("first"));
+        assert_eq!(persisted_swipes[1]["content"], json!("second"));
+        assert_eq!(
+            persisted_swipes[1]["extra"]["generationInfo"]["model"],
+            json!("second-model")
+        );
+        assert_eq!(
+            memory_ids(&stored_chat(&state)["memories"]),
+            vec!["keep-before"]
+        );
+    }
+
+    #[test]
+    fn message_swipes_append_cleans_trimmed_legacy_sidecar_rows() {
+        let state = test_state("swipe-append-clean-trimmed-sidecar");
+        state
+            .storage
+            .replace_all(
+                "messages",
+                vec![json!({
+                    "id": "message-1",
+                    "chatId": "chat-1",
+                    "role": "assistant",
+                    "content": "old parent",
+                    "createdAt": "2026-06-01T10:00:00.000Z",
+                    "activeSwipeIndex": 0
+                })],
+            )
+            .expect("message should seed");
+        state
+            .storage
+            .replace_all(
+                message_swipe_storage::COLLECTION,
+                vec![json!({
+                    "id": "message-1::swipe::0",
+                    "chatId": "chat-1",
+                    "messageId": " message-1 ",
+                    "index": 0,
+                    "content": "legacy first"
+                })],
+            )
+            .expect("legacy sidecar should seed");
+
+        let updated = message_swipes(
+            &state,
+            "POST",
+            "chat-1",
+            "message-1",
+            json!({ "content": "second" }),
+        )
+        .expect("swipe should append");
+
+        assert_eq!(updated["activeSwipeIndex"], json!(1));
+        assert_eq!(updated["swipeCount"], json!(2));
+        assert_eq!(updated["swipes"][0]["content"], json!("legacy first"));
+        assert_eq!(updated["swipes"][1]["content"], json!("second"));
+
+        let sidecars = state
+            .storage
+            .list(message_swipe_storage::COLLECTION)
+            .expect("sidecars should list");
+        assert_eq!(sidecars.len(), 2);
+        assert_eq!(sidecars[0]["id"], json!("message-1::swipe::0"));
+        assert_eq!(sidecars[0]["messageId"], json!("message-1"));
+        assert_eq!(sidecars[0]["index"], json!(0));
+        assert_eq!(sidecars[0]["content"], json!("legacy first"));
+        assert_eq!(sidecars[1]["id"], json!("message-1::swipe::1"));
+        assert_eq!(sidecars[1]["messageId"], json!("message-1"));
+        assert_eq!(sidecars[1]["index"], json!(1));
+        assert_eq!(sidecars[1]["content"], json!("second"));
     }
 
     #[test]

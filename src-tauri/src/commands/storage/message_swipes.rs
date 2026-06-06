@@ -216,6 +216,39 @@ fn sort_sidecar_rows(rows: &mut [Value]) {
     });
 }
 
+fn sidecars_are_canonical_for_append(
+    rows: &mut [Value],
+    message_id: &str,
+    expected_count: usize,
+) -> bool {
+    if rows.len() != expected_count {
+        return false;
+    }
+    sort_swipes(rows);
+    rows.iter().enumerate().all(|(index, row)| {
+        let expected_id = sidecar_row_id(message_id, index);
+        row.get("messageId").and_then(Value::as_str) == Some(message_id)
+            && row.get("id").and_then(Value::as_str) == Some(expected_id.as_str())
+            && row.get("index").and_then(Value::as_u64) == Some(index as u64)
+    })
+}
+
+fn stored_sidecars_are_canonical_for_append(
+    state: &AppState,
+    message_id: &str,
+    expected_count: usize,
+) -> AppResult<bool> {
+    let filter_values = HashSet::from([message_id.to_string()]);
+    let mut rows = state
+        .storage
+        .list_where_in(COLLECTION, "messageId", &filter_values)?;
+    Ok(sidecars_are_canonical_for_append(
+        &mut rows,
+        message_id,
+        expected_count,
+    ))
+}
+
 pub(crate) fn normalize_message_rows_and_sidecars(
     messages: Vec<Value>,
     sidecars: Vec<Value>,
@@ -453,6 +486,60 @@ fn append_created_message_and_swipes_if_uncached(
     apply_sidecar_swipes(
         &mut materialized,
         &sidecars,
+        MessageSwipeMaterialization::full(),
+    );
+    Ok(Some(materialized))
+}
+
+pub(crate) fn append_message_swipes_and_update_collections_if_uncached<F>(
+    state: &AppState,
+    message: Value,
+    swipes: Vec<Value>,
+    append_start_index: usize,
+    extra_collections: Vec<&str>,
+    update_collections: F,
+) -> AppResult<Option<Value>>
+where
+    F: FnOnce(&mut [AtomicCollectionRows], &Value) -> AppResult<()>,
+{
+    let (message_id, stored_message) = message_row_for_write(message, true)?;
+    let replacement = swipe_rows_for_message(&stored_message, &swipes)?;
+    if append_start_index > replacement.len() {
+        return Ok(None);
+    }
+    if !stored_sidecars_are_canonical_for_append(state, &message_id, append_start_index)? {
+        return Ok(None);
+    }
+    let appended = replacement[append_start_index..].to_vec();
+    if appended.is_empty() {
+        return Ok(None);
+    }
+
+    let mut collections = vec!["messages"];
+    collections.extend(extra_collections);
+    let stored_message = state.storage.append_many_and_update_collections_uncached(
+        vec![(COLLECTION, appended)],
+        collections,
+        move |collections| {
+            let messages = collections[0].rows_mut();
+            let Some(row) = messages
+                .iter_mut()
+                .find(|row| row.get("id").and_then(Value::as_str) == Some(message_id.as_str()))
+            else {
+                return Ok(None);
+            };
+            *row = stored_message.clone();
+            update_collections(collections, &stored_message)?;
+            Ok(Some(stored_message))
+        },
+    )?;
+
+    let Some(mut materialized) = stored_message else {
+        return Ok(None);
+    };
+    apply_sidecar_swipes(
+        &mut materialized,
+        &replacement,
         MessageSwipeMaterialization::full(),
     );
     Ok(Some(materialized))
@@ -1141,6 +1228,62 @@ mod tests {
             "message": message,
             "sidecars": sidecars
         })
+    }
+
+    #[test]
+    fn append_fast_path_requires_canonical_contiguous_sidecars() {
+        let mut canonical = vec![
+            json!({
+                "id": "message-1::swipe::1",
+                "messageId": "message-1",
+                "index": 1,
+                "content": "second",
+                "customField": "preserved"
+            }),
+            json!({
+                "id": "message-1::swipe::0",
+                "messageId": "message-1",
+                "index": 0,
+                "content": "first"
+            }),
+        ];
+        assert!(sidecars_are_canonical_for_append(
+            &mut canonical,
+            "message-1",
+            2
+        ));
+
+        let mut trimmed_message_id = vec![json!({
+            "id": "message-1::swipe::0",
+            "messageId": " message-1 ",
+            "index": 0,
+            "content": "first"
+        })];
+        assert!(!sidecars_are_canonical_for_append(
+            &mut trimmed_message_id,
+            "message-1",
+            1
+        ));
+
+        let mut wrong_id = vec![json!({
+            "id": "legacy-random",
+            "messageId": "message-1",
+            "index": 0,
+            "content": "first"
+        })];
+        assert!(!sidecars_are_canonical_for_append(
+            &mut wrong_id,
+            "message-1",
+            1
+        ));
+
+        let mut gap = vec![json!({
+            "id": "message-1::swipe::1",
+            "messageId": "message-1",
+            "index": 1,
+            "content": "second"
+        })];
+        assert!(!sidecars_are_canonical_for_append(&mut gap, "message-1", 1));
     }
 
     #[test]
