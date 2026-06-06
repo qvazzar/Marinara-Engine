@@ -13,6 +13,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
     process::{Command, Stdio},
+    time::Duration,
 };
 use uuid::Uuid;
 
@@ -24,6 +25,7 @@ const CLAUDE_SUBSCRIPTION_1M_SUFFIX: &str = "[1m]";
 const CLAUDE_SUBSCRIPTION_1M_BETA: &str = "context-1m-2025-08-07";
 const PROVIDER_LOCAL_URLS_ENABLED_FLAG: &str = "PROVIDER_LOCAL_URLS_ENABLED";
 const PROVIDER_RESPONSE_MAX_BYTES: usize = 5 * 1024 * 1024;
+const PROVIDER_RESPONSE_HEADERS_TIMEOUT_SECS: u64 = 5 * 60;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SseBlockStatus {
@@ -268,7 +270,9 @@ fn openai_compatible_chat_endpoint(request: &LlmRequest) -> String {
 }
 
 fn cohere_chat_endpoint(configured: &str) -> String {
-    let base = cohere_base_url(configured).trim_end_matches('/').to_string();
+    let base = cohere_base_url(configured)
+        .trim_end_matches('/')
+        .to_string();
     if base.ends_with("/v2/chat") {
         base
     } else if base.ends_with("/v2") {
@@ -479,13 +483,52 @@ fn provider_http_client(
     host: Option<&str>,
     resolved_addresses: Option<&[SocketAddr]>,
 ) -> AppResult<reqwest::Client> {
-    let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(provider_response_headers_timeout())
+        .redirect(reqwest::redirect::Policy::none());
     if let (Some(host), Some(addresses)) = (host, resolved_addresses) {
         builder = builder.resolve_to_addrs(host, addresses);
     }
     builder
         .build()
         .map_err(|error| AppError::new("llm_client_error", error.to_string()))
+}
+
+fn provider_response_headers_timeout() -> Duration {
+    Duration::from_secs(PROVIDER_RESPONSE_HEADERS_TIMEOUT_SECS)
+}
+
+async fn send_provider_request(request: reqwest::RequestBuilder) -> AppResult<reqwest::Response> {
+    send_provider_request_with_error_code(request, "llm_network_error").await
+}
+
+async fn send_provider_request_with_error_code(
+    request: reqwest::RequestBuilder,
+    error_code: &str,
+) -> AppResult<reqwest::Response> {
+    send_provider_request_with_timeout(request, error_code, provider_response_headers_timeout())
+        .await
+}
+
+async fn send_provider_request_with_timeout(
+    request: reqwest::RequestBuilder,
+    error_code: &str,
+    timeout: Duration,
+) -> AppResult<reqwest::Response> {
+    match tokio::time::timeout(timeout, request.send()).await {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(error)) => Err(AppError::new(
+            error_code,
+            provider_transport_error_message(error),
+        )),
+        Err(_) => Err(AppError::new(
+            error_code,
+            format!(
+                "LLM provider request timed out while waiting for response headers after {} ms",
+                timeout.as_millis()
+            ),
+        )),
+    }
 }
 
 fn provider_transport_error_message(error: impl std::fmt::Display) -> String {
@@ -641,8 +684,12 @@ fn mistral_reasoning_effort(request: &LlmRequest) -> Option<&'static str> {
             _ => None,
         };
     }
-    param_boolish(&request.parameters, &["showThoughts", "show_thoughts"], false)
-        .map(|show| if show { "high" } else { "none" })
+    param_boolish(
+        &request.parameters,
+        &["showThoughts", "show_thoughts"],
+        false,
+    )
+    .map(|show| if show { "high" } else { "none" })
 }
 
 fn supports_cohere_thinking(model: &str) -> bool {
@@ -673,7 +720,11 @@ fn cohere_thinking_config(request: &LlmRequest) -> Option<Value> {
 
     let budget = param_i64(&request.parameters, &["thinkingBudget", "thinking_budget"])
         .filter(|value| *value > 0);
-    let show_thoughts = param_boolish(&request.parameters, &["showThoughts", "show_thoughts"], true);
+    let show_thoughts = param_boolish(
+        &request.parameters,
+        &["showThoughts", "show_thoughts"],
+        true,
+    );
     if let Some(budget) = budget {
         let mut thinking = json!({ "token_budget": budget });
         if show_thoughts.unwrap_or(true)
@@ -866,10 +917,7 @@ fn scrub_cohere_parameter_body(body: &mut Value, has_tools: bool) {
 }
 
 fn xai_model_id(model: &str) -> String {
-    model
-        .trim()
-        .trim_start_matches("xai/")
-        .to_ascii_lowercase()
+    model.trim().trim_start_matches("xai/").to_ascii_lowercase()
 }
 
 fn is_xai_grok_43_model(model: &str) -> bool {
@@ -896,8 +944,11 @@ fn xai_reasoning_effort(request: &LlmRequest) -> Option<&'static str> {
     if !is_xai_grok_43_model(&request.connection.model) {
         return None;
     }
-    let effort = param_string(&request.parameters, &["reasoningEffort", "reasoning_effort"])?
-        .to_ascii_lowercase();
+    let effort = param_string(
+        &request.parameters,
+        &["reasoningEffort", "reasoning_effort"],
+    )?
+    .to_ascii_lowercase();
     match effort.as_str() {
         "none" => Some("none"),
         "minimal" => Some("low"),
@@ -919,8 +970,11 @@ fn xai_reasoning_config(request: &LlmRequest) -> Option<Value> {
     {
         return Some(reasoning.clone());
     }
-    let effort = param_string(&request.parameters, &["reasoningEffort", "reasoning_effort"])?
-        .to_ascii_lowercase();
+    let effort = param_string(
+        &request.parameters,
+        &["reasoningEffort", "reasoning_effort"],
+    )?
+    .to_ascii_lowercase();
     match effort.as_str() {
         "low" | "minimal" => Some(json!({ "effort": "low" })),
         "medium" => Some(json!({ "effort": "medium" })),
@@ -943,11 +997,7 @@ fn is_xai_grok_420_or_newer_model(model: &str) -> bool {
     id.starts_with("grok-4.20") || id.starts_with("grok-4.3")
 }
 
-fn is_xai_unsupported_custom_parameter_key(
-    key: &str,
-    model: &str,
-    reasoning_active: bool,
-) -> bool {
+fn is_xai_unsupported_custom_parameter_key(key: &str, model: &str, reasoning_active: bool) -> bool {
     if matches!(
         key,
         "top_k"
@@ -1099,8 +1149,8 @@ fn is_gemini_25_pro_model(model: &str) -> bool {
 }
 
 fn google_thinking_level(model: &str, parameters: &Value) -> Option<&'static str> {
-    let effort = param_string(parameters, &["reasoningEffort", "reasoning_effort"])?
-        .to_ascii_lowercase();
+    let effort =
+        param_string(parameters, &["reasoningEffort", "reasoning_effort"])?.to_ascii_lowercase();
     match effort.as_str() {
         "none" | "minimal" if is_gemini_3_pro_model(model) => Some("low"),
         "none" | "minimal" => Some("minimal"),
@@ -1112,8 +1162,8 @@ fn google_thinking_level(model: &str, parameters: &Value) -> Option<&'static str
 }
 
 fn google_thinking_budget(model: &str, parameters: &Value) -> Option<i64> {
-    let effort = param_string(parameters, &["reasoningEffort", "reasoning_effort"])?
-        .to_ascii_lowercase();
+    let effort =
+        param_string(parameters, &["reasoningEffort", "reasoning_effort"])?.to_ascii_lowercase();
     let pro = is_gemini_25_pro_model(model);
     match effort.as_str() {
         "none" | "minimal" if pro => Some(128),
@@ -1242,14 +1292,14 @@ fn should_send_top_k(request: &LlmRequest) -> bool {
     if request.connection.provider == "openrouter" {
         return !is_openrouter_openai_model(&request.connection.model);
     }
-    !matches!(request.connection.provider.as_str(), "openai" | "xai" | "mistral" | "cohere")
+    !matches!(
+        request.connection.provider.as_str(),
+        "openai" | "xai" | "mistral" | "cohere"
+    )
 }
 
 fn is_openrouter_openai_model(model: &str) -> bool {
-    let normalized = model
-        .trim()
-        .trim_start_matches('~')
-        .to_ascii_lowercase();
+    let normalized = model.trim().trim_start_matches('~').to_ascii_lowercase();
     if normalized.starts_with("openai/") {
         return true;
     }
@@ -1356,7 +1406,8 @@ fn nanogpt_reasoning_config(parameters: &Value) -> Option<Value> {
     }
 
     let mut reasoning = serde_json::Map::new();
-    if let Some(show_thoughts) = param_boolish(parameters, &["showThoughts", "show_thoughts"], false)
+    if let Some(show_thoughts) =
+        param_boolish(parameters, &["showThoughts", "show_thoughts"], false)
     {
         reasoning.insert("exclude".to_string(), json!(!show_thoughts));
     }
@@ -1549,17 +1600,18 @@ fn openai_chatgpt_auth_is_stale(auth_json: &Value) -> bool {
 }
 
 async fn refresh_openai_chatgpt_auth(refresh_token: &str) -> AppResult<Value> {
-    let response = provider_http_client_for_url(OPENAI_CHATGPT_REFRESH_URL)
-        .await?
-        .post(OPENAI_CHATGPT_REFRESH_URL)
-        .json(&json!({
-            "client_id": OPENAI_CHATGPT_CLIENT_ID,
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-        }))
-        .send()
-        .await
-        .map_err(|error| AppError::new("openai_chatgpt_auth_refresh_error", error.to_string()))?;
+    let response = send_provider_request_with_error_code(
+        provider_http_client_for_url(OPENAI_CHATGPT_REFRESH_URL)
+            .await?
+            .post(OPENAI_CHATGPT_REFRESH_URL)
+            .json(&json!({
+                "client_id": OPENAI_CHATGPT_CLIENT_ID,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            })),
+        "openai_chatgpt_auth_refresh_error",
+    )
+    .await?;
     parse_json_response(response, |json| Some(json.to_string()))
         .await
         .and_then(|raw| {
@@ -1666,8 +1718,7 @@ fn apply_cohere_parameters(body: &mut Value, request: &LlmRequest) {
     {
         body["frequency_penalty"] = json!(frequency_penalty);
     }
-    if let Some(presence_penalty) =
-        param_f64(parameters, &["presencePenalty", "presence_penalty"])
+    if let Some(presence_penalty) = param_f64(parameters, &["presencePenalty", "presence_penalty"])
     {
         body["presence_penalty"] = json!(presence_penalty);
     }
@@ -1706,7 +1757,9 @@ fn apply_cohere_parameters(body: &mut Value, request: &LlmRequest) {
         body["priority"] = json!(priority);
     }
     if !request.tools.is_empty() {
-        if let Some(strict_tools) = param_boolish(parameters, &["strictTools", "strict_tools"], false) {
+        if let Some(strict_tools) =
+            param_boolish(parameters, &["strictTools", "strict_tools"], false)
+        {
             body["strict_tools"] = json!(strict_tools);
         }
     }
@@ -1750,9 +1803,7 @@ async fn complete_cohere_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
     if !request.connection.api_key.trim().is_empty() {
         req = req.bearer_auth(request.connection.api_key.trim());
     }
-    let response = req.send().await.map_err(|error| {
-        AppError::new("llm_network_error", provider_transport_error_message(error))
-    })?;
+    let response = send_provider_request(req).await?;
     parse_cohere_response_rich(response).await
 }
 
@@ -1768,9 +1819,7 @@ async fn stream_cohere(
     if !request.connection.api_key.trim().is_empty() {
         req = req.bearer_auth(request.connection.api_key.trim());
     }
-    let response = req.send().await.map_err(|error| {
-        AppError::new("llm_network_error", provider_transport_error_message(error))
-    })?;
+    let response = send_provider_request(req).await?;
     let status = response.status();
     if !status.is_success() {
         let error_body = read_error_response_details(response).await?;
@@ -1787,8 +1836,7 @@ async fn stream_cohere(
         })?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(block) = take_sse_block(&mut buffer) {
-            if process_cohere_sse_block(&block, emit, &mut tool_calls)?
-                == SseBlockStatus::Complete
+            if process_cohere_sse_block(&block, emit, &mut tool_calls)? == SseBlockStatus::Complete
             {
                 completed = true;
                 break;
@@ -1849,9 +1897,7 @@ async fn complete_openai_compatible_rich(request: LlmRequest) -> AppResult<LlmCo
             .header("HTTP-Referer", "https://marinara.local")
             .header("X-Title", "Marinara Engine");
     }
-    let response = req.send().await.map_err(|error| {
-        AppError::new("llm_network_error", provider_transport_error_message(error))
-    })?;
+    let response = send_provider_request(req).await?;
     parse_json_response_rich(response).await
 }
 
@@ -1897,9 +1943,7 @@ async fn stream_openai_compatible(
             .header("HTTP-Referer", "https://marinara.local")
             .header("X-Title", "Marinara Engine");
     }
-    let response = req.send().await.map_err(|error| {
-        AppError::new("llm_network_error", provider_transport_error_message(error))
-    })?;
+    let response = send_provider_request(req).await?;
     let status = response.status();
     if !status.is_success() {
         let error_body = read_error_response_details(response).await?;
@@ -2047,15 +2091,16 @@ async fn openai_responses_request(
     let base = base_url(&request.connection.provider, &request.connection.base_url);
     let url = format!("{base}/responses");
     log_prompt_connection_request("openai.responses", &url, request, body);
-    let req = provider_http_client_for_url(&url).await?.post(url).json(body);
+    let req = provider_http_client_for_url(&url)
+        .await?
+        .post(url)
+        .json(body);
     let req = if request.connection.provider == "openai_chatgpt" {
         apply_chatgpt_auth_headers(req).await?
     } else {
         apply_openai_auth_headers(req, request)
     };
-    req.send().await.map_err(|error| {
-        AppError::new("llm_network_error", provider_transport_error_message(error))
-    })
+    send_provider_request(req).await
 }
 
 async fn complete_openai_responses_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
@@ -2539,7 +2584,8 @@ fn openai_message(message: &LlmMessage) -> Value {
 
 fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
     let parameters = &request.parameters;
-    let xai_reasoning_active = request.connection.provider == "xai" && xai_reasoning_active(request);
+    let xai_reasoning_active =
+        request.connection.provider == "xai" && xai_reasoning_active(request);
     if should_send_openai_sampling_parameters(request) {
         if let Some(top_p) = param_f64(parameters, &["topP", "top_p"]) {
             body["top_p"] = json!(top_p);
@@ -2564,21 +2610,19 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
             body["presence_penalty"] = json!(presence_penalty);
         }
         if request.connection.provider == "openrouter" || request.connection.provider == "nanogpt" {
-            if let Some(min_p) =
-                param_f64(parameters, &["minP", "min_p"]).filter(|value| (0.0..=1.0).contains(value))
+            if let Some(min_p) = param_f64(parameters, &["minP", "min_p"])
+                .filter(|value| (0.0..=1.0).contains(value))
             {
                 body["min_p"] = json!(min_p);
             }
-            if let Some(top_a) =
-                param_f64(parameters, &["topA", "top_a"]).filter(|value| (0.0..=1.0).contains(value))
+            if let Some(top_a) = param_f64(parameters, &["topA", "top_a"])
+                .filter(|value| (0.0..=1.0).contains(value))
             {
                 body["top_a"] = json!(top_a);
             }
-            if let Some(repetition_penalty) = param_f64(
-                parameters,
-                &["repetitionPenalty", "repetition_penalty"],
-            )
-            .filter(|value| (0.0..=2.0).contains(value))
+            if let Some(repetition_penalty) =
+                param_f64(parameters, &["repetitionPenalty", "repetition_penalty"])
+                    .filter(|value| (0.0..=2.0).contains(value))
             {
                 body["repetition_penalty"] = json!(repetition_penalty);
             }
@@ -2601,8 +2645,9 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
                 {
                     body["typical_p"] = json!(typical_p);
                 }
-                if let Some(mirostat_mode) = param_i64(parameters, &["mirostatMode", "mirostat_mode"])
-                    .filter(|value| (0..=2).contains(value))
+                if let Some(mirostat_mode) =
+                    param_i64(parameters, &["mirostatMode", "mirostat_mode"])
+                        .filter(|value| (0..=2).contains(value))
                 {
                     body["mirostat_mode"] = json!(mirostat_mode);
                 }
@@ -2699,8 +2744,8 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         if let Some(prompt_caching) = nanogpt_prompt_caching_config(parameters) {
             body["prompt_caching"] = prompt_caching;
         }
-        if let Some(caching) =
-            param_boolish(parameters, &["caching"], false).or(request.connection.enable_caching.then_some(true))
+        if let Some(caching) = param_boolish(parameters, &["caching"], false)
+            .or(request.connection.enable_caching.then_some(true))
         {
             body["caching"] = json!(caching);
         }
@@ -2735,15 +2780,14 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         if let Some(ignore_eos) = param_boolish(parameters, &["ignoreEos", "ignore_eos"], false) {
             body["ignore_eos"] = json!(ignore_eos);
         }
-        if let Some(no_repeat_ngram_size) = param_i64(
-            parameters,
-            &["noRepeatNgramSize", "no_repeat_ngram_size"],
-        )
-        .filter(|value| *value >= 0)
+        if let Some(no_repeat_ngram_size) =
+            param_i64(parameters, &["noRepeatNgramSize", "no_repeat_ngram_size"])
+                .filter(|value| *value >= 0)
         {
             body["no_repeat_ngram_size"] = json!(no_repeat_ngram_size);
         }
-        if let Some(stop_token_ids) = param_i64_array(parameters, &["stopTokenIds", "stop_token_ids"])
+        if let Some(stop_token_ids) =
+            param_i64_array(parameters, &["stopTokenIds", "stop_token_ids"])
         {
             body["stop_token_ids"] = json!(stop_token_ids);
         }
@@ -2767,9 +2811,11 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         {
             body["prompt_logprobs"] = json!(prompt_logprobs);
         }
-        if let Some(reasoning_delta_field) =
-            param_string(parameters, &["reasoningDeltaField", "reasoning_delta_field"])
-                .filter(|value| value == "reasoning_content")
+        if let Some(reasoning_delta_field) = param_string(
+            parameters,
+            &["reasoningDeltaField", "reasoning_delta_field"],
+        )
+        .filter(|value| value == "reasoning_content")
         {
             body["reasoning_delta_field"] = json!(reasoning_delta_field);
         }
@@ -2799,8 +2845,8 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         {
             body["prompt_cache_key"] = json!(prompt_cache_key);
         }
-        if let Some(prompt_mode) =
-            param_string(parameters, &["promptMode", "prompt_mode"]).filter(|value| value == "reasoning")
+        if let Some(prompt_mode) = param_string(parameters, &["promptMode", "prompt_mode"])
+            .filter(|value| value == "reasoning")
         {
             body["prompt_mode"] = json!(prompt_mode);
         }
@@ -2811,7 +2857,10 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         ) {
             body["parallel_tool_calls"] = json!(parallel_tool_calls);
         }
-        if let Some(prediction) = parameters.get("prediction").filter(|value| !value.is_null()) {
+        if let Some(prediction) = parameters
+            .get("prediction")
+            .filter(|value| !value.is_null())
+        {
             body["prediction"] = prediction.clone();
         }
     }
@@ -3574,17 +3623,15 @@ async fn anthropic_request(
     let base = base_url(&request.connection.provider, &request.connection.base_url);
     let url = anthropic_endpoint(&base, "messages");
     log_prompt_connection_request(kind, &url, request, body);
-    provider_http_client_for_url(&url)
-        .await?
-        .post(url)
-        .header("x-api-key", request.connection.api_key.trim())
-        .header("anthropic-version", "2023-06-01")
-        .json(body)
-        .send()
-        .await
-        .map_err(|error| {
-            AppError::new("llm_network_error", provider_transport_error_message(error))
-        })
+    send_provider_request(
+        provider_http_client_for_url(&url)
+            .await?
+            .post(url)
+            .header("x-api-key", request.connection.api_key.trim())
+            .header("anthropic-version", "2023-06-01")
+            .json(body),
+    )
+    .await
 }
 
 async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {
@@ -3885,14 +3932,16 @@ fn google_generation_config(request: &LlmRequest) -> Value {
             generation_config["topK"] = json!(top_k);
         }
     }
-    if let Some(frequency_penalty) =
-        param_f64(&request.parameters, &["frequencyPenalty", "frequency_penalty"])
-    {
+    if let Some(frequency_penalty) = param_f64(
+        &request.parameters,
+        &["frequencyPenalty", "frequency_penalty"],
+    ) {
         generation_config["frequencyPenalty"] = json!(frequency_penalty);
     }
-    if let Some(presence_penalty) =
-        param_f64(&request.parameters, &["presencePenalty", "presence_penalty"])
-    {
+    if let Some(presence_penalty) = param_f64(
+        &request.parameters,
+        &["presencePenalty", "presence_penalty"],
+    ) {
         generation_config["presencePenalty"] = json!(presence_penalty);
     }
     if let Some(thinking_config) =
@@ -3988,15 +4037,13 @@ async fn complete_google(request: LlmRequest) -> AppResult<String> {
     let url = google_endpoint(&request, "generateContent", false);
     let body = google_generate_body(&request);
     log_prompt_connection_request("google.generateContent", &url, &request, &body);
-    let response = provider_http_client_for_url(&url)
-        .await?
-        .post(url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| {
-            AppError::new("llm_network_error", provider_transport_error_message(error))
-        })?;
+    let response = send_provider_request(
+        provider_http_client_for_url(&url)
+            .await?
+            .post(url)
+            .json(&body),
+    )
+    .await?;
     parse_json_response(response, |json| {
         json.get("candidates")
             .and_then(Value::as_array)
@@ -4029,15 +4076,13 @@ async fn stream_google(
     let url = google_endpoint(&request, "streamGenerateContent", true);
     let body = google_generate_body(&request);
     log_prompt_connection_request("google.streamGenerateContent", &url, &request, &body);
-    let response = provider_http_client_for_url(&url)
-        .await?
-        .post(url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| {
-            AppError::new("llm_network_error", provider_transport_error_message(error))
-        })?;
+    let response = send_provider_request(
+        provider_http_client_for_url(&url)
+            .await?
+            .post(url)
+            .json(&body),
+    )
+    .await?;
     let status = response.status();
     if !status.is_success() {
         let error_body = read_error_response_details(response).await?;
@@ -4195,7 +4240,10 @@ async fn read_limited_provider_text(mut response: reqwest::Response) -> AppResul
 
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|error| {
-        AppError::new("llm_response_error", provider_transport_error_message(error))
+        AppError::new(
+            "llm_response_error",
+            provider_transport_error_message(error),
+        )
     })? {
         if body.len().saturating_add(chunk.len()) > PROVIDER_RESPONSE_MAX_BYTES {
             return Err(provider_response_too_large_error());
@@ -4210,7 +4258,10 @@ async fn read_capped_provider_error_text(mut response: reqwest::Response) -> App
     let mut truncated = false;
 
     while let Some(chunk) = response.chunk().await.map_err(|error| {
-        AppError::new("llm_response_error", provider_transport_error_message(error))
+        AppError::new(
+            "llm_response_error",
+            provider_transport_error_message(error),
+        )
     })? {
         let remaining = PROVIDER_RESPONSE_MAX_BYTES.saturating_sub(body.len());
         if chunk.len() > remaining {
@@ -4287,19 +4338,17 @@ fn content_thinking_text(value: &Value) -> String {
             .filter(|text| !text.trim().is_empty())
             .collect::<Vec<_>>()
             .join(""),
-        Value::Object(_) if value.get("type").and_then(Value::as_str) == Some("thinking") => {
-            value
-                .get("thinking")
-                .map(content_text)
-                .filter(|text| !text.trim().is_empty())
-                .or_else(|| {
-                    value
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .unwrap_or_default()
-        }
+        Value::Object(_) if value.get("type").and_then(Value::as_str) == Some("thinking") => value
+            .get("thinking")
+            .map(content_text)
+            .filter(|text| !text.trim().is_empty())
+            .or_else(|| {
+                value
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default(),
         _ => String::new(),
     }
 }
@@ -4591,6 +4640,33 @@ mod tests {
         format!("http://{address}")
     }
 
+    async fn serve_delayed_response_headers(delay: Duration) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test LLM server should bind");
+        let address = listener
+            .local_addr()
+            .expect("test LLM server address should be readable");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test LLM server should accept one request");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream
+                .read(&mut buffer)
+                .await
+                .expect("test LLM server should read request");
+            tokio::time::sleep(delay).await;
+            let _ = stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                )
+                .await;
+        });
+        format!("http://{address}")
+    }
+
     async fn response_from_url(url: String) -> reqwest::Response {
         reqwest::Client::new()
             .get(url)
@@ -4834,11 +4910,7 @@ data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output
 
     #[test]
     fn openai_responses_body_downgrades_xhigh_for_unsupported_models() {
-        let xhigh_request = request_for(
-            "openai",
-            "gpt-5.1",
-            json!({ "reasoningEffort": "xhigh" }),
-        );
+        let xhigh_request = request_for("openai", "gpt-5.1", json!({ "reasoningEffort": "xhigh" }));
         let maximum_request = request_for(
             "openai",
             "gpt-5-pro",
@@ -4934,6 +5006,27 @@ data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output
 
             assert!(allowed.is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn provider_request_times_out_waiting_for_response_headers() {
+        let url = serve_delayed_response_headers(Duration::from_millis(250)).await;
+        let request = provider_http_client_for_url(&url)
+            .await
+            .expect("loopback test provider URL should be allowed")
+            .get(&url);
+
+        let error = send_provider_request_with_timeout(
+            request,
+            "llm_network_error",
+            Duration::from_millis(25),
+        )
+        .await
+        .expect_err("slow provider headers should time out");
+
+        assert_eq!(error.code, "llm_network_error");
+        assert!(error.message.contains("timed out"));
+        assert!(error.message.contains("response headers"));
     }
 
     #[test]
