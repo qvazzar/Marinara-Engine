@@ -6,7 +6,7 @@ use super::prompts;
 use super::shared::*;
 use super::*;
 use crate::builtins::is_protected_record;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const MEMORY_CHUNK_SIZE: usize = 5;
 const MEMORY_EMBEDDING_DIMS: usize = 512;
@@ -352,20 +352,44 @@ async fn embed_memory_content(
     context: Option<&MemoryEmbeddingContext>,
     content: &str,
 ) -> AppResult<MemoryEmbeddingResult> {
+    let mut results = embed_memory_contents(context, &[content]).await?;
+    results
+        .pop()
+        .ok_or_else(|| AppError::new("embedding_error", "Embedding provider returned no vectors"))
+}
+
+async fn embed_memory_contents(
+    context: Option<&MemoryEmbeddingContext>,
+    contents: &[&str],
+) -> AppResult<Vec<MemoryEmbeddingResult>> {
     if let Some(context) = context {
-        return Ok(MemoryEmbeddingResult {
-            embedding: prompts::embed_text(&context.connection, &context.model, content).await?,
-            source: "provider",
-            connection_id: Some(context.connection_id.clone()),
-            model: Some(context.model.clone()),
-        });
+        let embeddings =
+            prompts::embed_texts(&context.connection, &context.model, contents).await?;
+        if embeddings.len() != contents.len() {
+            return Err(AppError::new(
+                "embedding_error",
+                "Embedding provider returned a mismatched vector count",
+            ));
+        }
+        return Ok(embeddings
+            .into_iter()
+            .map(|embedding| MemoryEmbeddingResult {
+                embedding,
+                source: "provider",
+                connection_id: Some(context.connection_id.clone()),
+                model: Some(context.model.clone()),
+            })
+            .collect());
     }
-    Ok(MemoryEmbeddingResult {
-        embedding: lexical_memory_embedding(content),
-        source: "lexical",
-        connection_id: None,
-        model: None,
-    })
+    Ok(contents
+        .iter()
+        .map(|content| MemoryEmbeddingResult {
+            embedding: lexical_memory_embedding(content),
+            source: "lexical",
+            connection_id: None,
+            model: None,
+        })
+        .collect())
 }
 
 fn insert_memory_embedding_fields(memory: &mut Map<String, Value>, result: MemoryEmbeddingResult) {
@@ -382,6 +406,67 @@ fn insert_memory_embedding_fields(memory: &mut Map<String, Value>, result: Memor
     if let Some(model) = result.model {
         memory.insert("embeddingModel".to_string(), Value::String(model));
     }
+}
+
+fn memory_has_numeric_embedding(memory: &Value) -> bool {
+    memory
+        .get("embedding")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(Value::is_number))
+}
+
+fn memory_has_current_embedding(memory: &Value, context: Option<&MemoryEmbeddingContext>) -> bool {
+    if !memory_has_numeric_embedding(memory) {
+        return false;
+    }
+    match context {
+        Some(context) => {
+            memory.get("embeddingSource").and_then(Value::as_str) == Some("provider")
+                && memory.get("embeddingConnectionId").and_then(Value::as_str)
+                    == Some(context.connection_id.as_str())
+                && memory.get("embeddingModel").and_then(Value::as_str)
+                    == Some(context.model.as_str())
+        }
+        None => {
+            memory.get("embeddingSource").and_then(Value::as_str) == Some("lexical")
+                && memory
+                    .get("embedding")
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| items.len() == MEMORY_EMBEDDING_DIMS)
+        }
+    }
+}
+
+fn memory_message_ids(memory: &Value) -> Vec<String> {
+    memory
+        .get("messageIds")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn memory_chunk_key(message_ids: &[String]) -> String {
+    message_ids.join("\u{1f}")
+}
+
+fn reusable_chat_memory<'a>(
+    existing: &'a HashMap<String, Value>,
+    message_ids: &[String],
+    content: &str,
+    context: Option<&MemoryEmbeddingContext>,
+) -> Option<&'a Value> {
+    let memory = existing.get(&memory_chunk_key(message_ids))?;
+    if memory.get("content").and_then(Value::as_str) != Some(content) {
+        return None;
+    }
+    memory_has_current_embedding(memory, context).then_some(memory)
 }
 
 fn is_hidden_from_ai(message: &Value) -> bool {
@@ -1415,12 +1500,26 @@ pub(crate) fn delete_chat_memory(
 pub(crate) async fn refresh_chat_memories(state: &AppState, chat_id: &str) -> AppResult<Value> {
     let chat = get_required(state, "chats", chat_id)?;
     let embedding_context = memory_embedding_context(state, &chat);
+    let existing_memories = chat_memory_values_for_mutation(&chat)?;
+    let existing_by_chunk = existing_memories
+        .into_iter()
+        .filter_map(|memory| {
+            let ids = memory_message_ids(&memory);
+            if ids.is_empty() {
+                None
+            } else {
+                Some((memory_chunk_key(&ids), memory))
+            }
+        })
+        .collect::<HashMap<_, _>>();
     let visible_messages = messages_for_chat(state, chat_id)?
         .into_iter()
         .filter(|message| !is_hidden_from_ai(message) && !message_content(message).is_empty())
         .collect::<Vec<_>>();
     let now = now_iso();
-    let mut chunks = Vec::new();
+    let mut chunks: Vec<Value> = Vec::new();
+    let mut pending = Vec::new();
+    let mut reused = 0usize;
     for chunk in visible_messages.chunks(MEMORY_CHUNK_SIZE) {
         if chunk.len() < MEMORY_CHUNK_SIZE {
             continue;
@@ -1443,6 +1542,16 @@ pub(crate) async fn refresh_chat_memories(state: &AppState, chat_id: &str) -> Ap
             .filter(|id| !id.trim().is_empty())
             .map(str::to_string)
             .collect::<Vec<_>>();
+        if let Some(memory) = reusable_chat_memory(
+            &existing_by_chunk,
+            &message_ids,
+            &content,
+            embedding_context.as_ref(),
+        ) {
+            chunks.push(memory.clone());
+            reused += 1;
+            continue;
+        }
         memory.insert("id".to_string(), Value::String(new_id()));
         memory.insert("chatId".to_string(), Value::String(chat_id.to_string()));
         memory.insert("content".to_string(), Value::String(content.clone()));
@@ -1481,16 +1590,25 @@ pub(crate) async fn refresh_chat_memories(state: &AppState, chat_id: &str) -> Ap
                 .unwrap_or(Value::Null),
         );
         memory.insert("createdAt".to_string(), Value::String(now.clone()));
-        insert_memory_embedding_fields(
-            &mut memory,
-            embed_memory_content(embedding_context.as_ref(), &content).await?,
-        );
-        chunks.push(Value::Object(memory));
+        pending.push((chunks.len(), content, memory));
+        chunks.push(Value::Null);
+    }
+    let embedded = pending.len();
+    if !pending.is_empty() {
+        let texts = pending
+            .iter()
+            .map(|(_, content, _)| content.as_str())
+            .collect::<Vec<_>>();
+        let embeddings = embed_memory_contents(embedding_context.as_ref(), &texts).await?;
+        for ((index, _, mut memory), embedding) in pending.into_iter().zip(embeddings) {
+            insert_memory_embedding_fields(&mut memory, embedding);
+            chunks[index] = Value::Object(memory);
+        }
     }
     state
         .storage
         .patch("chats", chat_id, json!({ "memories": chunks }))?;
-    Ok(json!({ "rebuilt": chunks.len(), "chunks": chunks }))
+    Ok(json!({ "rebuilt": chunks.len(), "embedded": embedded, "reused": reused, "chunks": chunks }))
 }
 
 pub(crate) fn export_chat_memories(state: &AppState, chat_id: &str) -> AppResult<Value> {
@@ -4603,6 +4721,94 @@ mod tests {
             .as_str()
             .expect("content should be a string")
             .contains("visible memory 5"));
+    }
+
+    #[tokio::test]
+    async fn refresh_chat_memories_reuses_existing_complete_chunks() {
+        let state = test_state("memory-incremental-chunks");
+        state
+            .storage
+            .create(
+                "chats",
+                json!({
+                    "id": "chat-1",
+                    "name": "Memory chat"
+                }),
+            )
+            .expect("chat should seed");
+        for index in 0..5 {
+            state
+                .storage
+                .create(
+                    "messages",
+                    json!({
+                        "id": format!("message-{index}"),
+                        "chatId": "chat-1",
+                        "role": if index % 2 == 0 { "user" } else { "assistant" },
+                        "content": format!("visible memory {index}"),
+                        "createdAt": format!("2026-06-01T10:0{index}:00.000Z")
+                    }),
+                )
+                .expect("message should seed");
+        }
+
+        let first_result = refresh_chat_memories(&state, "chat-1")
+            .await
+            .expect("first refresh should succeed");
+        let first_chat = state
+            .storage
+            .get("chats", "chat-1")
+            .expect("chat should read")
+            .expect("chat should exist");
+        let first_memory_id = first_chat["memories"][0]["id"]
+            .as_str()
+            .expect("memory id should exist")
+            .to_string();
+        assert_eq!(first_result["embedded"], json!(1));
+        assert_eq!(first_result["reused"], json!(0));
+
+        for index in 5..10 {
+            state
+                .storage
+                .create(
+                    "messages",
+                    json!({
+                        "id": format!("message-{index}"),
+                        "chatId": "chat-1",
+                        "role": if index % 2 == 0 { "user" } else { "assistant" },
+                        "content": format!("visible memory {index}"),
+                        "createdAt": format!("2026-06-01T10:{index}:00.000Z")
+                    }),
+                )
+                .expect("message should seed");
+        }
+
+        let second_result = refresh_chat_memories(&state, "chat-1")
+            .await
+            .expect("second refresh should succeed");
+        let second_chat = state
+            .storage
+            .get("chats", "chat-1")
+            .expect("chat should read")
+            .expect("chat should exist");
+        let memories = second_chat["memories"]
+            .as_array()
+            .expect("memories should be an array");
+
+        assert_eq!(second_result["embedded"], json!(1));
+        assert_eq!(second_result["reused"], json!(1));
+        assert_eq!(memories.len(), 2);
+        assert_eq!(memories[0]["id"], json!(first_memory_id));
+        assert_eq!(
+            memories[1]["messageIds"],
+            json!([
+                "message-5",
+                "message-6",
+                "message-7",
+                "message-8",
+                "message-9"
+            ])
+        );
     }
 
     #[tokio::test]

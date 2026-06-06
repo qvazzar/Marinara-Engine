@@ -57,6 +57,7 @@ import {
   lorebookActivatedEntryForEvent,
   scanActiveLorebooks,
   type ActiveLorebookIncludedPositions,
+  type ActiveLorebookScannerResult,
   type BudgetSkippedLorebookEntry,
 } from "./active-lorebook-scanner";
 
@@ -128,6 +129,7 @@ export interface PromptAssemblyResult {
   budgetSkippedLorebookEntries: BudgetSkippedLorebookEntry[];
   chatSummary: string | null;
   chatSummaryFingerprint: string | null;
+  reusableContext: PromptAssemblyReusableContext;
 }
 
 export interface PromptAssemblyInput {
@@ -145,6 +147,28 @@ export interface PromptAssemblyInput {
   } | null;
   visuals?: VisualAssetGateway;
   persistPromptVariables?: boolean;
+  reusableContext?: PromptAssemblyReusableContext;
+}
+
+export interface PromptAssemblyReusableContext {
+  chatMeta: JsonRecord;
+  chatMode: string;
+  storedMessages: JsonRecord[];
+  characters: GenerationCharacterContext[];
+  persona: GenerationPersonaContext | null;
+  selectedPreset: SelectedPromptPreset | null;
+  presetId: string | null;
+  promptParameters: StoredGenerationParameters | null;
+  maxContext: number | null;
+  wrapFormat: WrapFormat;
+  promptCharacters: GenerationCharacterContext[];
+  baseLorebookIncludedPositions: ActiveLorebookIncludedPositions;
+  loreScan: ActiveLorebookScannerResult;
+  processedLore: ActiveLorebookScannerResult["processedLore"];
+  summary: string | null;
+  memoryRecallBlock: string | null;
+  history: ChatMLMessage[];
+  greetingPromptVariables: Record<string, string>;
 }
 
 type PromptSectionRecord = JsonRecord & {
@@ -1116,7 +1140,7 @@ function macroContext(input: {
       systemPrompt: character.systemPrompt,
       postHistoryInstructions: character.postHistoryInstructions,
     })),
-    variables: input.variables ?? chatPromptVariables(input.chat),
+    variables: { ...(input.variables ?? chatPromptVariables(input.chat)) },
     lastInput: input.latestUserInput,
     chatId: readString(input.chat.id),
     model: readString(input.connection.model),
@@ -2695,6 +2719,12 @@ async function seedPromptVariablesFromGreeting(
   return discovered;
 }
 
+function applyReusableGreetingPromptVariables(macros: MacroContext, variables: Record<string, string>): void {
+  for (const [name, value] of Object.entries(variables)) {
+    macros.variables[name] = value;
+  }
+}
+
 function shouldMergeSameRolePromptMessage(
   previous: ChatMLMessage | undefined,
   _message: ChatMLMessage,
@@ -3131,31 +3161,39 @@ export async function assembleGenerationPrompt(
   rawInput: PromptAssemblyInput,
 ): Promise<PromptAssemblyResult> {
   let input = rawInput;
-  const chatMeta = parseRecord(input.chat.metadata);
-  const chatMode = readString(input.chat.mode || input.chat.chatMode, "conversation");
-  if (chatMode === "game") {
+  const reusableContext = input.reusableContext;
+  const chatMeta = reusableContext?.chatMeta ?? parseRecord(input.chat.metadata);
+  const chatMode = reusableContext?.chatMode ?? readString(input.chat.mode || input.chat.chatMode, "conversation");
+  if (reusableContext) {
+    input = { ...input, storedMessages: reusableContext.storedMessages };
+  } else if (chatMode === "game") {
     input = { ...input, storedMessages: applyAllSegmentEdits(input.storedMessages, chatMeta) };
   }
 
-  const characters = await loadCharacters(storage, input.chat);
-  const persona = await loadPersona(storage, input.chat);
-  const embeddingSource = memoizedEmbeddingSource(input.embeddingSource);
-  const selectedPreset = await loadSelectedPromptPreset(storage, {
-    chat: input.chat,
-    connection: input.connection,
-    request: input.request,
-  });
-  const presetId = selectedPreset?.id ?? null;
-  const promptParameters = mergeStoredGenerationParameters(
-    ...generationParameterSources(input.connection, input.request, input.chat, selectedPreset?.parameters),
-  );
-  const maxContext = effectiveMaxContext(input.connection, promptParameters);
+  const characters = reusableContext?.characters ?? (await loadCharacters(storage, input.chat));
+  const persona = reusableContext?.persona ?? (await loadPersona(storage, input.chat));
+  const embeddingSource = reusableContext ? null : memoizedEmbeddingSource(input.embeddingSource);
+  const selectedPreset =
+    reusableContext?.selectedPreset ??
+    (await loadSelectedPromptPreset(storage, {
+      chat: input.chat,
+      connection: input.connection,
+      request: input.request,
+    }));
+  const presetId = reusableContext?.presetId ?? selectedPreset?.id ?? null;
+  const promptParameters =
+    reusableContext?.promptParameters ??
+    mergeStoredGenerationParameters(
+      ...generationParameterSources(input.connection, input.request, input.chat, selectedPreset?.parameters),
+    );
+  const maxContext = reusableContext?.maxContext ?? effectiveMaxContext(input.connection, promptParameters);
   const wrapFormat =
+    reusableContext?.wrapFormat ??
     selectedPreset?.wrapFormat ??
     normalizeWrapFormat(input.chat.wrapFormat) ??
     normalizeWrapFormat(input.connection.wrapFormat) ??
     "xml";
-  const promptCharacters = promptCharactersForGeneration(input, characters);
+  const promptCharacters = reusableContext?.promptCharacters ?? promptCharactersForGeneration(input, characters);
   const macros = macroContext({
     chat: input.chat,
     connection: input.connection,
@@ -3167,8 +3205,11 @@ export async function assembleGenerationPrompt(
     request: input.request,
   });
   if (selectedPreset) resolvePromptChoiceVariableMacros(macros, selectedPreset.choiceVariableNames);
-  await seedPromptVariablesFromGreeting(storage, input, macros);
-  const baseLorebookIncludedPositions = lorebookIncludedPositionsForPrompt(selectedPreset, chatMode);
+  const greetingPromptVariables =
+    reusableContext?.greetingPromptVariables ?? (await seedPromptVariablesFromGreeting(storage, input, macros));
+  if (reusableContext) applyReusableGreetingPromptVariables(macros, greetingPromptVariables);
+  const baseLorebookIncludedPositions =
+    reusableContext?.baseLorebookIncludedPositions ?? lorebookIncludedPositionsForPrompt(selectedPreset, chatMode);
   const scanLorebooksForPositions = (includedPositions: ActiveLorebookIncludedPositions) =>
     scanActiveLorebooks({
       storage,
@@ -3185,25 +3226,29 @@ export async function assembleGenerationPrompt(
         snapshotVariables: () => snapshotMacroVariables(macros),
       },
     });
-  let loreScan = await scanLorebooksForPositions(baseLorebookIncludedPositions);
-  let processedLore = loreScan.processedLore;
-  const summary = chatSummaryForGeneration(input.chat);
-  const memoryRecallBlock = await buildMemoryRecallBlock(
-    storage,
-    input.chat,
-    input.storedMessages,
-    input.latestUserInput,
-    maxContext || undefined,
-    embeddingSource,
-  );
+  let loreScan = reusableContext?.loreScan ?? (await scanLorebooksForPositions(baseLorebookIncludedPositions));
+  let processedLore = reusableContext?.processedLore ?? loreScan.processedLore;
+  const summary = reusableContext?.summary ?? chatSummaryForGeneration(input.chat);
+  const memoryRecallBlock =
+    reusableContext?.memoryRecallBlock ??
+    (await buildMemoryRecallBlock(
+      storage,
+      input.chat,
+      input.storedMessages,
+      input.latestUserInput,
+      maxContext || undefined,
+      embeddingSource,
+    ));
   const metadataHistoryLimit = readNumber(chatMeta.contextMessageLimit, 0);
   const requestedHistoryLimit = readNumber(input.request.historyLimit, metadataHistoryLimit || 300);
   const historyLimit = Math.max(1, Math.min(300, metadataHistoryLimit || requestedHistoryLimit || 300));
-  const history = historyMessages(
-    input.storedMessages,
-    compactedHistoryLimit(chatMeta, historyLimit, shouldCompactHistoryForSummary(input.chat, selectedPreset, summary)),
-    chatMeta.excludePastReasoning === false,
-  );
+  const history =
+    reusableContext?.history ??
+    historyMessages(
+      input.storedMessages,
+      compactedHistoryLimit(chatMeta, historyLimit, shouldCompactHistoryForSummary(input.chat, selectedPreset, summary)),
+      chatMeta.excludePastReasoning === false,
+    );
   const agentData = input.agentData ?? {};
   let messages: ChatMLMessage[] = [];
   let insertedHistory = false;
@@ -3268,7 +3313,10 @@ export async function assembleGenerationPrompt(
   }
 
   if (messages.length === 0) {
-    if (!baseLorebookIncludedPositions.worldInfoBefore || !baseLorebookIncludedPositions.worldInfoAfter) {
+    if (
+      !reusableContext &&
+      (!baseLorebookIncludedPositions.worldInfoBefore || !baseLorebookIncludedPositions.worldInfoAfter)
+    ) {
       loreScan = await scanLorebooksForPositions({
         ...baseLorebookIncludedPositions,
         worldInfoBefore: true,
@@ -3405,6 +3453,26 @@ export async function assembleGenerationPrompt(
     messages = collapseToSingleUserMessage(messages);
   }
   const summaryFingerprint = fingerprintChatSummary(summary);
+  const nextReusableContext: PromptAssemblyReusableContext = reusableContext ?? {
+    chatMeta,
+    chatMode,
+    storedMessages: input.storedMessages,
+    characters,
+    persona,
+    selectedPreset,
+    presetId,
+    promptParameters,
+    maxContext,
+    wrapFormat,
+    promptCharacters,
+    baseLorebookIncludedPositions,
+    loreScan,
+    processedLore,
+    summary,
+    memoryRecallBlock,
+    history,
+    greetingPromptVariables,
+  };
 
   return {
     messages,
@@ -3420,5 +3488,6 @@ export async function assembleGenerationPrompt(
     budgetSkippedLorebookEntries: loreScan.budgetSkippedLorebookEntries,
     chatSummary: summary,
     chatSummaryFingerprint: summaryFingerprint,
+    reusableContext: nextReusableContext,
   };
 }

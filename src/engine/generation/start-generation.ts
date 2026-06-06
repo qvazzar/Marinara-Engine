@@ -214,14 +214,26 @@ function generationEmbeddingSource(llm: LlmGateway, connection: JsonRecord) {
   if (!llm.embed) return null;
   const connectionId = readString(connection.id).trim() || null;
   const model = readString(connection.embeddingModel).trim() || null;
+  const cache = new Map<string, Promise<number[][] | null>>();
   return {
-    embed: (texts: string[], request?: { connectionId?: string | null; model?: string | null }) =>
-      llm.embed!({
+    embed: (texts: string[], request?: { connectionId?: string | null; model?: string | null }) => {
+      const payload = {
         texts,
         connectionId: request?.connectionId !== undefined ? request.connectionId : connectionId,
         model: request?.model !== undefined ? request.model : model,
-      }),
+      };
+      const key = JSON.stringify(payload);
+      const existing = cache.get(key);
+      if (existing) return existing;
+      const embedding = llm.embed!(payload);
+      cache.set(key, embedding);
+      return embedding;
+    },
   };
+}
+
+function hasPromptAgentData(agentData: Record<string, string> | null | undefined): agentData is Record<string, string> {
+  return Object.values(agentData ?? {}).some((value) => readString(value).trim().length > 0);
 }
 
 function inputAttachments(input: StartGenerationInput): PromptAttachment[] {
@@ -1732,6 +1744,10 @@ async function refreshMemoryRecallSafely(storage: StorageGateway, chat: JsonReco
   }
 }
 
+function scheduleMemoryRecallRefresh(storage: StorageGateway, chat: JsonRecord): void {
+  void refreshMemoryRecallSafely(storage, chat);
+}
+
 async function persistLorebookTimingStatesSafely(
   storage: StorageGateway,
   chatId: string,
@@ -2876,6 +2892,7 @@ export async function* startGeneration(
   const agentEvents: AgentResult[] = [];
   const continueAssistantResponse = shouldContinueAssistantResponse(input, preparedUserInput, generationMessages);
   const agentInjectionOverrides = normalizedAgentInjectionOverrides(input);
+  const turnEmbeddingSource = generationEmbeddingSource(deps.llm, connection);
 
   yield { type: "phase", data: "Assembling prompt..." };
   let prompt = directMessages;
@@ -2885,7 +2902,7 @@ export async function* startGeneration(
     connection,
     request: input,
     latestUserInput,
-    embeddingSource: generationEmbeddingSource(deps.llm, connection),
+    embeddingSource: turnEmbeddingSource,
     visuals: deps.visuals,
     persistPromptVariables: true,
   });
@@ -2907,7 +2924,7 @@ export async function* startGeneration(
             persona: assembly.persona,
             activatedLorebookEntries: assembly.activatedLorebookEntries,
             chatSummary: assembly.chatSummary,
-            embeddingSource: generationEmbeddingSource(deps.llm, connection),
+            embeddingSource: turnEmbeddingSource,
             debugMode: input.debugMode === true,
             debugSink: input.debugSink,
             hideAutomatedSummarySourceMessages: input.hideAutomatedSummarySourceMessages === true,
@@ -2945,18 +2962,21 @@ export async function* startGeneration(
       return;
     }
 
-    assembly = await assembleGenerationPrompt(deps.storage, {
-      chat: chatForGeneration,
-      storedMessages: generationMessages,
-      connection,
-      request: input,
-      latestUserInput,
-      agentData: runtime?.agentData,
-      embeddingSource: generationEmbeddingSource(deps.llm, connection),
-      visuals: deps.visuals,
-      persistPromptVariables: true,
-    });
-    throwIfAborted(signal);
+    if (hasPromptAgentData(runtime?.agentData)) {
+      assembly = await assembleGenerationPrompt(deps.storage, {
+        chat: chatForGeneration,
+        storedMessages: generationMessages,
+        connection,
+        request: input,
+        latestUserInput,
+        agentData: runtime.agentData,
+        embeddingSource: turnEmbeddingSource,
+        visuals: deps.visuals,
+        persistPromptVariables: true,
+        reusableContext: assembly.reusableContext,
+      });
+      throwIfAborted(signal);
+    }
     await consumePendingConnectedInfluences(deps.storage, chatForGeneration);
     throwIfAborted(signal);
     const generationDirectiveMessages = directiveMessages(
@@ -3194,7 +3214,7 @@ export async function* startGeneration(
       }
     }
     if (saved && input.impersonate !== true) {
-      await refreshMemoryRecallSafely(deps.storage, chat);
+      scheduleMemoryRecallRefresh(deps.storage, chat);
     }
     yield { type: "done", data: { transcript: visibleTranscript(generationMessages) } };
     return;
@@ -3359,7 +3379,7 @@ export async function* startGeneration(
     }
   }
   if (saved && input.impersonate !== true) {
-    await refreshMemoryRecallSafely(deps.storage, chat);
+    scheduleMemoryRecallRefresh(deps.storage, chat);
   }
   yield { type: "done" };
 }
