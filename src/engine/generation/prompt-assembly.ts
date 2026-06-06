@@ -3429,10 +3429,6 @@ export async function assembleGenerationPrompt(
       : [...processedLore.depthEntries, ...characterDepthEntries],
     chatHistoryDepthInjectionBounds(messages),
   );
-  const regexScripts = await storage.list<JsonRecord>("regex-scripts");
-  applyRegexScriptsToPromptMessages(messages, regexScripts, {
-    resolveMacros: (value) => resolveMacros(value, macros, { trimResult: false }),
-  });
   const turnPrompt =
     individualGroupTurnPromptMessage(input, characters) ??
     mergedRoleplayGroupTurnPromptMessage(input, characters) ??
@@ -3440,6 +3436,10 @@ export async function assembleGenerationPrompt(
   if (turnPrompt) {
     messages.push(turnPrompt);
   }
+  const regexScripts = await storage.list<JsonRecord>("regex-scripts");
+  applyRegexScriptsToPromptMessages(messages, regexScripts, {
+    resolveMacros: (value) => resolveMacros(value, macros, { trimResult: false }),
+  });
   messages = messages
     .map((message) => ({
       ...message,
