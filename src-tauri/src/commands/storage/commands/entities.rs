@@ -7,7 +7,7 @@ use crate::builtins::is_protected_record;
 use crate::state::AppState;
 use marinara_core::{ensure_object, new_id, now_iso, AppError};
 use serde_json::{json, Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tauri::State;
 
 type LorebookEntryAtomicRows<'a> = (&'a mut Vec<Value>, &'a mut Vec<Value>);
@@ -15,6 +15,13 @@ type LorebookMetadataAtomicRows<'a> = (&'a mut Vec<Value>, &'a mut Vec<Value>, &
 type LorebookFolderDeleteAtomicRows<'a> =
     (&'a mut Vec<Value>, &'a mut Vec<Value>, &'a mut Vec<Value>);
 type ChatFolderDeleteAtomicRows<'a> = (&'a mut Vec<Value>, &'a mut Vec<Value>);
+
+#[derive(Clone)]
+struct LorebookFolderReorderRow {
+    lorebook_id: Option<String>,
+    parent_id: Option<String>,
+    order: i64,
+}
 
 struct StorageWhereIn {
     field: String,
@@ -681,6 +688,7 @@ pub(crate) fn storage_create_inner(
     reject_message_swipe_mutation(&entity)?;
     validate_chat_folder_for_create(state, &entity, &value)?;
     validate_connection_folder_for_create(state, &entity, &value)?;
+    validate_lorebook_folder_for_create(state, &entity, &value)?;
     if entity == "messages" {
         return Ok(shared::project_timeline_message(
             message_swipes::create_message(
@@ -760,6 +768,7 @@ pub(crate) fn storage_update_inner(
     }
     validate_chat_folder_for_patch(state, &entity, &id, &patch)?;
     validate_connection_folder_for_patch(state, &entity, &patch)?;
+    validate_lorebook_folder_for_patch(state, &entity, &id, &patch)?;
     let mut normalized_patch =
         normalize_chat_for_update(&entity, shared::normalize_update_patch(&entity, patch)?)?;
     if entity == "chats" {
@@ -1304,6 +1313,127 @@ fn validate_chat_folder_assignment(
     Ok(())
 }
 
+/// Storage-level guard for malformed lorebook folder ancestry.
+pub(crate) fn validate_lorebook_folder_for_create(
+    state: &AppState,
+    entity: &str,
+    value: &Value,
+) -> Result<(), AppError> {
+    if entity != "lorebook-folders" {
+        return Ok(());
+    }
+    let Some(parent_id) = parse_chat_folder_id(value.get("parentFolderId"))? else {
+        return Ok(());
+    };
+    // New folders have no descendants, so create only checks parent existence and ownership.
+    validate_lorebook_folder_parent(state, lorebook_folder_lorebook_id(value), None, &parent_id)
+}
+
+pub(crate) fn validate_lorebook_folder_for_patch(
+    state: &AppState,
+    entity: &str,
+    id: &str,
+    patch: &Value,
+) -> Result<(), AppError> {
+    if entity != "lorebook-folders" {
+        return Ok(());
+    }
+    let Some(object) = patch.as_object() else {
+        return Err(AppError::invalid_input("Patch must be an object"));
+    };
+    let changes_parent = object.contains_key("parentFolderId");
+    let changes_lorebook = object.contains_key("lorebookId");
+    if !changes_parent && !changes_lorebook {
+        return Ok(());
+    }
+    let existing = state
+        .storage
+        .get("lorebook-folders", id)?
+        .ok_or_else(|| AppError::not_found(format!("lorebook-folders/{id} was not found")))?;
+    // Cross-book folder moves can strand parent/child links, so ownership is immutable.
+    if changes_lorebook
+        && lorebook_folder_lorebook_id(patch) != lorebook_folder_lorebook_id(&existing)
+    {
+        return Err(AppError::invalid_input(
+            "A folder cannot be moved to a different lorebook.",
+        ));
+    }
+    if !changes_parent {
+        return Ok(());
+    }
+    let Some(parent_id) = parse_chat_folder_id(patch.get("parentFolderId"))? else {
+        // Clearing parentFolderId moves the folder to root.
+        return Ok(());
+    };
+    validate_lorebook_folder_parent(
+        state,
+        lorebook_folder_lorebook_id(&existing),
+        Some(id),
+        &parent_id,
+    )
+}
+
+fn lorebook_folder_lorebook_id(value: &Value) -> Option<String> {
+    value
+        .get("lorebookId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .map(str::to_string)
+}
+
+fn validate_lorebook_folder_parent(
+    state: &AppState,
+    lorebook_id: Option<String>,
+    folder_id: Option<&str>,
+    parent_id: &str,
+) -> Result<(), AppError> {
+    if Some(parent_id) == folder_id {
+        return Err(AppError::invalid_input(
+            "A folder cannot be its own parent.",
+        ));
+    }
+    let parent = state
+        .storage
+        .get("lorebook-folders", parent_id)?
+        .ok_or_else(|| {
+            AppError::invalid_input(format!("lorebook-folders/{parent_id} was not found"))
+        })?;
+    if let Some(lorebook_id) = lorebook_id.as_deref() {
+        if parent.get("lorebookId").and_then(Value::as_str) != Some(lorebook_id) {
+            return Err(AppError::invalid_input(
+                "A folder can only nest under a folder in the same lorebook.",
+            ));
+        }
+    }
+    // Walk target ancestors to reject descendant moves; seen handles pre-existing bad cycles.
+    let Some(folder_id) = folder_id else {
+        return Ok(());
+    };
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut cursor = Some(parent_id.to_string());
+    while let Some(current_id) = cursor {
+        if current_id == folder_id {
+            return Err(AppError::invalid_input(
+                "A folder cannot be nested inside one of its own subfolders.",
+            ));
+        }
+        if !seen.insert(current_id.clone()) {
+            break;
+        }
+        cursor = state
+            .storage
+            .get("lorebook-folders", &current_id)?
+            .as_ref()
+            .and_then(|node| node.get("parentFolderId"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|candidate| !candidate.is_empty())
+            .map(str::to_string);
+    }
+    Ok(())
+}
+
 fn parse_chat_folder_id(folder_id: Option<&Value>) -> Result<Option<String>, AppError> {
     let Some(folder_id) = folder_id else {
         return Ok(None);
@@ -1636,6 +1766,284 @@ fn validate_connection_folder_reorder(
 }
 
 #[tauri::command]
+pub fn lorebook_folder_reorder(
+    state: State<'_, AppState>,
+    lorebook_id: String,
+    ordered_ids: Vec<String>,
+    parent_folder_id: Option<String>,
+) -> Result<Value, AppError> {
+    lorebook_folder_reorder_inner(&state, &lorebook_id, ordered_ids, parent_folder_id)
+}
+
+pub(crate) fn lorebook_folder_reorder_inner(
+    state: &AppState,
+    lorebook_id: &str,
+    ordered_ids: Vec<String>,
+    parent_folder_id: Option<String>,
+) -> Result<Value, AppError> {
+    let lorebook_id = lorebook_id.trim().to_string();
+    if lorebook_id.is_empty() {
+        return Err(AppError::invalid_input("lorebookId is required"));
+    }
+    let parent_folder_id = normalize_lorebook_reorder_parent_id(parent_folder_id)?;
+    let ordered_ids = normalize_lorebook_reorder_ids(ordered_ids)?;
+
+    state
+        .storage
+        .update_collections_atomically(vec!["lorebook-folders"], move |collections| {
+            let [folders] = collections else {
+                return Err(AppError::new(
+                    "storage_error",
+                    "Lorebook folder reorder expected the lorebook folder collection",
+                ));
+            };
+            if folders.collection() != "lorebook-folders" {
+                return Err(AppError::new(
+                    "storage_error",
+                    "Lorebook folder reorder received an unexpected collection",
+                ));
+            }
+            lorebook_folder_reorder_in_rows(
+                folders.rows_mut(),
+                &lorebook_id,
+                ordered_ids,
+                parent_folder_id,
+            )
+        })
+}
+
+fn lorebook_folder_reorder_in_rows(
+    folder_rows: &mut [Value],
+    lorebook_id: &str,
+    ordered_ids: Vec<String>,
+    parent_folder_id: Option<String>,
+) -> Result<Value, AppError> {
+    let by_id = folder_rows
+        .iter()
+        .enumerate()
+        .filter_map(|folder| {
+            let (index, folder) = folder;
+            let id = folder.get("id").and_then(Value::as_str)?.to_string();
+            Some((
+                id,
+                LorebookFolderReorderRow {
+                    lorebook_id: lorebook_folder_lorebook_id(folder),
+                    parent_id: lorebook_folder_parent_id(folder),
+                    order: lorebook_folder_order(folder, index),
+                },
+            ))
+        })
+        .collect::<HashMap<_, _>>();
+    let ordered_id_set = ordered_ids.iter().cloned().collect::<HashSet<_>>();
+
+    if let Some(parent_id) = parent_folder_id.as_deref() {
+        validate_lorebook_folder_parent_in_rows(&by_id, Some(lorebook_id), None, parent_id)?;
+    }
+
+    for id in &ordered_ids {
+        if by_id
+            .get(id)
+            .and_then(|folder| folder.lorebook_id.as_deref())
+            != Some(lorebook_id)
+        {
+            return Err(AppError::invalid_input(format!(
+                "lorebook-folders/{id} does not belong to lorebook {lorebook_id}"
+            )));
+        }
+        if let Some(parent_id) = parent_folder_id.as_deref() {
+            validate_lorebook_folder_parent_in_rows(
+                &by_id,
+                Some(lorebook_id),
+                Some(id),
+                parent_id,
+            )?;
+        }
+    }
+
+    for sibling_id in by_id
+        .iter()
+        .filter(|(_, folder)| {
+            folder.lorebook_id.as_deref() == Some(lorebook_id)
+                && folder.parent_id.as_deref() == parent_folder_id.as_deref()
+        })
+        .map(|(id, _)| id.clone())
+    {
+        if !ordered_id_set.contains(&sibling_id) {
+            return Err(AppError::invalid_input(
+                "Lorebook folder reorder must include every existing sibling in the target folder",
+            ));
+        }
+    }
+
+    let affected_source_parents = ordered_ids
+        .iter()
+        .filter_map(|id| by_id.get(id))
+        .filter(|folder| folder.parent_id.as_deref() != parent_folder_id.as_deref())
+        .map(|folder| folder.parent_id.clone())
+        .collect::<HashSet<_>>();
+    let source_reorders = affected_source_parents
+        .into_iter()
+        .map(|source_parent_id| {
+            let mut siblings = by_id
+                .iter()
+                .filter(|(id, folder)| {
+                    folder.lorebook_id.as_deref() == Some(lorebook_id)
+                        && folder.parent_id.as_deref() == source_parent_id.as_deref()
+                        && !ordered_id_set.contains(*id)
+                })
+                .map(|(id, folder)| (folder.order, id.clone()))
+                .collect::<Vec<_>>();
+            siblings.sort_by(|(left_order, left_id), (right_order, right_id)| {
+                left_order
+                    .cmp(right_order)
+                    .then_with(|| left_id.cmp(right_id))
+            });
+            (
+                source_parent_id,
+                siblings.into_iter().map(|(_, id)| id).collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let parent_patch = parent_folder_id.map(Value::String).unwrap_or(Value::Null);
+    let now = now_iso();
+    for (index, id) in ordered_ids.iter().enumerate() {
+        patch_lorebook_folder_reorder_row(folder_rows, id, index, Some(&parent_patch), &now)?;
+    }
+    for (_source_parent_id, sibling_ids) in source_reorders {
+        for (index, id) in sibling_ids.iter().enumerate() {
+            patch_lorebook_folder_reorder_row(folder_rows, id, index, None, &now)?;
+        }
+    }
+
+    Ok(Value::Array(
+        folder_rows
+            .iter()
+            .filter(|folder| lorebook_folder_lorebook_id(folder).as_deref() == Some(lorebook_id))
+            .cloned()
+            .collect(),
+    ))
+}
+
+fn patch_lorebook_folder_reorder_row(
+    folder_rows: &mut [Value],
+    id: &str,
+    index: usize,
+    parent_patch: Option<&Value>,
+    now: &str,
+) -> Result<(), AppError> {
+    let row = folder_rows
+        .iter_mut()
+        .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
+        .ok_or_else(|| AppError::not_found(format!("lorebook-folders/{id} was not found")))?;
+    let Some(object) = row.as_object_mut() else {
+        return Err(AppError::invalid_input("Stored record is not an object"));
+    };
+    object.insert("order".to_string(), json!(index));
+    object.insert("sortOrder".to_string(), json!(index));
+    if let Some(parent_patch) = parent_patch {
+        object.insert("parentFolderId".to_string(), parent_patch.clone());
+    }
+    object.insert("updatedAt".to_string(), Value::String(now.to_string()));
+    Ok(())
+}
+
+fn normalize_lorebook_reorder_parent_id(
+    parent_folder_id: Option<String>,
+) -> Result<Option<String>, AppError> {
+    let Some(parent_folder_id) = parent_folder_id else {
+        return Ok(None);
+    };
+    let parent_folder_id = parent_folder_id.trim();
+    if parent_folder_id.is_empty() {
+        return Err(AppError::invalid_input(
+            "parentFolderId must be a folder id or null",
+        ));
+    }
+    Ok(Some(parent_folder_id.to_string()))
+}
+
+fn normalize_lorebook_reorder_ids(ordered_ids: Vec<String>) -> Result<Vec<String>, AppError> {
+    if ordered_ids.is_empty() {
+        return Err(AppError::invalid_input(
+            "Lorebook folder reorder must include at least one folder",
+        ));
+    }
+    let mut seen = HashSet::with_capacity(ordered_ids.len());
+    let mut normalized = Vec::with_capacity(ordered_ids.len());
+    for raw_id in ordered_ids {
+        let id = raw_id.trim().to_string();
+        if id.is_empty() || !seen.insert(id.clone()) {
+            return Err(AppError::invalid_input(
+                "Lorebook folder reorder must include each folder id exactly once",
+            ));
+        }
+        normalized.push(id);
+    }
+    Ok(normalized)
+}
+
+fn validate_lorebook_folder_parent_in_rows(
+    by_id: &HashMap<String, LorebookFolderReorderRow>,
+    lorebook_id: Option<&str>,
+    folder_id: Option<&str>,
+    parent_id: &str,
+) -> Result<(), AppError> {
+    if Some(parent_id) == folder_id {
+        return Err(AppError::invalid_input(
+            "A folder cannot be its own parent.",
+        ));
+    }
+    let parent = by_id.get(parent_id).ok_or_else(|| {
+        AppError::invalid_input(format!("lorebook-folders/{parent_id} was not found"))
+    })?;
+    if let Some(lorebook_id) = lorebook_id {
+        if parent.lorebook_id.as_deref() != Some(lorebook_id) {
+            return Err(AppError::invalid_input(
+                "A folder can only nest under a folder in the same lorebook.",
+            ));
+        }
+    }
+
+    let Some(folder_id) = folder_id else {
+        return Ok(());
+    };
+    let mut seen = HashSet::new();
+    let mut cursor = Some(parent_id.to_string());
+    while let Some(current_id) = cursor {
+        if current_id == folder_id {
+            return Err(AppError::invalid_input(
+                "A folder cannot be nested inside one of its own subfolders.",
+            ));
+        }
+        if !seen.insert(current_id.clone()) {
+            break;
+        }
+        cursor = by_id
+            .get(&current_id)
+            .and_then(|node| node.parent_id.clone());
+    }
+    Ok(())
+}
+
+fn lorebook_folder_order(folder: &Value, fallback: usize) -> i64 {
+    folder
+        .get("order")
+        .or_else(|| folder.get("sortOrder"))
+        .and_then(Value::as_i64)
+        .unwrap_or(fallback as i64)
+}
+
+fn lorebook_folder_parent_id(folder: &Value) -> Option<String> {
+    folder
+        .get("parentFolderId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+#[tauri::command]
 pub fn connection_move(
     state: State<'_, AppState>,
     connection_id: String,
@@ -1887,6 +2295,17 @@ fn delete_lorebook_folder_with_entry_reparent_sync(
             }
 
             let now = now_iso();
+            // Deleted parents promote direct children to root so stored ancestry matches the UI.
+            for folder in folder_rows.iter_mut() {
+                if folder.get("parentFolderId").and_then(Value::as_str) != Some(folder_id) {
+                    continue;
+                }
+                let Some(object) = folder.as_object_mut() else {
+                    return Err(AppError::invalid_input("Stored record is not an object"));
+                };
+                object.insert("parentFolderId".to_string(), Value::Null);
+                object.insert("updatedAt".to_string(), Value::String(now.clone()));
+            }
             let mut changed_entries = Vec::new();
             for entry in entry_rows.iter_mut() {
                 if entry.get("folderId").and_then(Value::as_str) != Some(folder_id) {
@@ -2701,6 +3120,56 @@ mod tests {
             .expect("connection should read")
             .and_then(|row| row.get("defaultForAgents").and_then(Value::as_bool))
             .unwrap_or(false)
+    }
+
+    fn create_record(state: &AppState, collection: &str, value: Value) {
+        state
+            .storage
+            .create(collection, value)
+            .expect("record should be created");
+    }
+
+    fn read_record(state: &AppState, collection: &str, id: &str) -> Value {
+        state
+            .storage
+            .get(collection, id)
+            .expect("record should read")
+            .expect("record should exist")
+    }
+
+    fn create_lorebook(state: &AppState, id: &str) {
+        create_record(state, "lorebooks", json!({ "id": id, "name": id }));
+    }
+
+    fn create_lorebook_folder(
+        state: &AppState,
+        id: &str,
+        lorebook_id: &str,
+        parent_id: Option<&str>,
+        order: Option<i64>,
+    ) {
+        let mut folder = json!({ "id": id, "lorebookId": lorebook_id, "name": id });
+        let folder_object = folder
+            .as_object_mut()
+            .expect("folder fixture should be an object");
+        if let Some(parent_id) = parent_id {
+            folder_object.insert("parentFolderId".to_string(), json!(parent_id));
+        }
+        if let Some(order) = order {
+            folder_object.insert("order".to_string(), json!(order));
+            folder_object.insert("sortOrder".to_string(), json!(order));
+        }
+        create_record(state, "lorebook-folders", folder);
+    }
+
+    fn lorebook_folder(state: &AppState, id: &str) -> Value {
+        read_record(state, "lorebook-folders", id)
+    }
+
+    fn assert_lorebook_folder_order(state: &AppState, id: &str, order: i64) {
+        let folder = lorebook_folder(state, id);
+        assert_eq!(folder["order"], json!(order));
+        assert_eq!(folder["sortOrder"], json!(order));
     }
 
     #[test]
@@ -4488,98 +4957,196 @@ mod tests {
     #[test]
     fn deleting_lorebook_folder_reparents_entries_with_matching_folder_id() {
         let state = test_state("lorebook-folder-delete-reparent");
-        state
-            .storage
-            .create(
-                "lorebooks",
-                json!({ "id": "book-delete", "name": "Delete folder" }),
-            )
-            .expect("lorebook should be created");
-        state
-            .storage
-            .create("lorebooks", json!({ "id": "book-keep", "name": "Keep" }))
-            .expect("other lorebook should be created");
-        state
-            .storage
-            .create(
-                "lorebook-folders",
-                json!({ "id": "folder-delete", "lorebookId": "book-delete", "name": "Delete" }),
-            )
-            .expect("folder should be created");
-        state
-            .storage
-            .create(
-                "lorebook-entries",
-                json!({
-                    "id": "entry-reparent",
-                    "lorebookId": "book-delete",
-                    "folderId": "folder-delete",
-                    "name": "Reparent",
-                    "content": "x"
-                }),
-            )
-            .expect("entry should be created");
-        state
-            .storage
-            .create(
-                "lorebook-entries",
-                json!({
-                    "id": "entry-stale-cross-lorebook",
-                    "lorebookId": "book-keep",
-                    "folderId": "folder-delete",
-                    "name": "Stale",
-                    "content": "x"
-                }),
-            )
-            .expect("stale cross-lorebook entry should be created");
-        state
-            .storage
-            .create(
-                "lorebook-entries",
-                json!({
-                    "id": "entry-other-folder",
-                    "lorebookId": "book-keep",
-                    "folderId": "folder-keep",
-                    "name": "Other",
-                    "content": "x"
-                }),
-            )
-            .expect("negative-control entry should be created");
+        create_lorebook(&state, "book-delete");
+        create_lorebook(&state, "book-keep");
+        create_lorebook_folder(&state, "folder-delete", "book-delete", None, None);
+        create_record(
+            &state,
+            "lorebook-entries",
+            json!({ "id": "entry-reparent", "lorebookId": "book-delete", "folderId": "folder-delete", "name": "Reparent", "content": "x" }),
+        );
+        create_record(
+            &state,
+            "lorebook-entries",
+            json!({ "id": "entry-stale-cross-lorebook", "lorebookId": "book-keep", "folderId": "folder-delete", "name": "Stale", "content": "x" }),
+        );
+        create_record(
+            &state,
+            "lorebook-entries",
+            json!({ "id": "entry-other-folder", "lorebookId": "book-keep", "folderId": "folder-keep", "name": "Other", "content": "x" }),
+        );
 
         delete_entity(&state, "lorebook-folders", "folder-delete", false)
             .expect("folder delete should succeed");
 
-        let reparented = state
-            .storage
-            .get("lorebook-entries", "entry-reparent")
-            .expect("entry should read")
-            .expect("entry should remain");
+        let reparented = read_record(&state, "lorebook-entries", "entry-reparent");
         assert!(reparented.get("folderId").is_none_or(Value::is_null));
-        let stale = state
-            .storage
-            .get("lorebook-entries", "entry-stale-cross-lorebook")
-            .expect("stale cross-lorebook entry should read")
-            .expect("stale cross-lorebook entry should remain");
+        let stale = read_record(&state, "lorebook-entries", "entry-stale-cross-lorebook");
         assert!(stale.get("folderId").is_none_or(Value::is_null));
-        let other_folder = state
-            .storage
-            .get("lorebook-entries", "entry-other-folder")
-            .expect("negative-control entry should read")
-            .expect("negative-control entry should remain");
+        let other_folder = read_record(&state, "lorebook-entries", "entry-other-folder");
         assert_eq!(other_folder["folderId"], "folder-keep");
+    }
+
+    #[test]
+    fn deleting_lorebook_folder_reparents_child_folders_to_root() {
+        let state = test_state("lorebook-folder-delete-reparent-children");
+        create_lorebook(&state, "book");
+        create_lorebook_folder(&state, "parent", "book", None, None);
+        create_lorebook_folder(&state, "child", "book", Some("parent"), None);
+        create_lorebook_folder(&state, "unrelated", "book", Some("other"), None);
+
+        delete_entity(&state, "lorebook-folders", "parent", false)
+            .expect("folder delete should succeed");
+
+        assert!(state
+            .storage
+            .get("lorebook-folders", "parent")
+            .expect("parent should read")
+            .is_none());
+        let child = lorebook_folder(&state, "child");
+        assert!(child.get("parentFolderId").is_none_or(Value::is_null));
+        let unrelated = lorebook_folder(&state, "unrelated");
+        assert_eq!(unrelated["parentFolderId"], "other");
+    }
+
+    #[test]
+    fn lorebook_folder_reparent_rejects_cycle_and_cross_lorebook() {
+        let state = test_state("lorebook-folder-reparent-validation");
+        create_lorebook(&state, "book");
+        create_lorebook(&state, "other");
+        create_lorebook_folder(&state, "a", "book", None, None);
+        create_lorebook_folder(&state, "b", "book", Some("a"), None);
+        create_lorebook_folder(&state, "c", "other", None, None);
+
+        assert!(
+            storage_update_inner(
+                &state,
+                "lorebook-folders".to_string(),
+                "a".to_string(),
+                json!({ "parentFolderId": "b" }),
+            )
+            .is_err(),
+            "nesting a folder under its own descendant should be rejected"
+        );
+
+        assert!(
+            storage_update_inner(
+                &state,
+                "lorebook-folders".to_string(),
+                "a".to_string(),
+                json!({ "parentFolderId": "c" }),
+            )
+            .is_err(),
+            "nesting under a folder in another lorebook should be rejected"
+        );
+
+        assert!(
+            storage_update_inner(
+                &state,
+                "lorebook-folders".to_string(),
+                "b".to_string(),
+                json!({ "lorebookId": "other" }),
+            )
+            .is_err(),
+            "changing a child folder's lorebookId should be rejected"
+        );
+
+        assert!(
+            storage_update_inner(
+                &state,
+                "lorebook-folders".to_string(),
+                "a".to_string(),
+                json!({ "lorebookId": "other" }),
+            )
+            .is_err(),
+            "changing a root folder's lorebookId would strand its children and must be rejected"
+        );
+
+        assert!(
+            storage_update_inner(
+                &state,
+                "lorebook-folders".to_string(),
+                "b".to_string(),
+                json!({ "parentFolderId": null }),
+            )
+            .is_ok(),
+            "moving a folder to the root should be allowed"
+        );
+    }
+
+    #[test]
+    fn lorebook_folder_reorder_rejects_invalid_batch_without_partial_writes() {
+        let state = test_state("lorebook-folder-reorder-atomic-validation");
+        create_lorebook(&state, "book");
+        create_lorebook(&state, "other");
+        create_lorebook_folder(&state, "folder-a", "book", None, Some(0));
+        create_lorebook_folder(&state, "folder-b", "book", None, Some(1));
+        create_lorebook_folder(&state, "foreign", "other", None, Some(0));
+
+        let error = lorebook_folder_reorder_inner(
+            &state,
+            "book",
+            vec![
+                "folder-b".to_string(),
+                "folder-a".to_string(),
+                "foreign".to_string(),
+            ],
+            None,
+        )
+        .expect_err("cross-lorebook batch member should reject the reorder");
+        assert_eq!(error.code, "invalid_input");
+        assert_lorebook_folder_order(&state, "folder-a", 0);
+        assert_lorebook_folder_order(&state, "folder-b", 1);
+
+        lorebook_folder_reorder_inner(
+            &state,
+            "book",
+            vec!["folder-b".to_string(), "folder-a".to_string()],
+            None,
+        )
+        .expect("valid same-lorebook batch should reorder folders");
+        assert_lorebook_folder_order(&state, "folder-b", 0);
+        assert_lorebook_folder_order(&state, "folder-a", 1);
+    }
+
+    #[test]
+    fn lorebook_folder_reorder_renumbers_source_and_destination_groups() {
+        let state = test_state("lorebook-folder-reorder-source-destination-groups");
+        create_lorebook(&state, "book");
+        for (id, order) in [
+            ("folder-a", 0),
+            ("folder-b", 1),
+            ("folder-c", 2),
+            ("parent", 3),
+        ] {
+            create_lorebook_folder(&state, id, "book", None, Some(order));
+        }
+        create_lorebook_folder(&state, "child-a", "book", Some("parent"), Some(0));
+
+        lorebook_folder_reorder_inner(
+            &state,
+            "book",
+            vec!["child-a".to_string(), "folder-b".to_string()],
+            Some("parent".to_string()),
+        )
+        .expect("cross-parent reorder should update both sibling groups");
+
+        assert_lorebook_folder_order(&state, "folder-a", 0);
+        assert_lorebook_folder_order(&state, "folder-c", 1);
+        assert_lorebook_folder_order(&state, "parent", 2);
+        assert_lorebook_folder_order(&state, "child-a", 0);
+        assert_lorebook_folder_order(&state, "folder-b", 1);
+        assert_eq!(
+            lorebook_folder(&state, "folder-b")["parentFolderId"],
+            "parent"
+        );
     }
 
     #[test]
     fn deleting_lorebook_folder_reparent_rolls_back_when_character_book_sync_fails() {
         let state = test_state("lorebook-folder-delete-reparent-atomic");
         seed_linked_character_book(&state);
-        state
-            .storage
-            .create(
-                "lorebook-folders",
-                json!({ "id": "folder-linked", "lorebookId": "linked-book", "name": "Linked" }),
-            )
-            .expect("folder should be created");
+        create_lorebook_folder(&state, "folder-linked", "linked-book", None, None);
         storage_create_inner(
             &state,
             "lorebook-entries".to_string(),
@@ -4625,11 +5192,7 @@ mod tests {
             .get("lorebook-folders", "folder-linked")
             .expect("folder should read")
             .is_some());
-        let entry = state
-            .storage
-            .get("lorebook-entries", "entry-linked")
-            .expect("entry should read")
-            .expect("entry should remain");
+        let entry = read_record(&state, "lorebook-entries", "entry-linked");
         assert_eq!(entry["folderId"], "folder-linked");
     }
 

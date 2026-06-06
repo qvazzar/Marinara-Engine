@@ -13,6 +13,7 @@ import {
   updateLorebookFolderSchema,
   updateLorebookSchema,
 } from "../../../../engine/contracts/schemas/lorebook.schema";
+import { lorebookFolderApi } from "../../../../shared/api/lorebook-folder-api";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { ApiError } from "../../../../shared/api/api-errors";
 import { lorebookCommandApi } from "../../../../shared/api/lorebook-command-api";
@@ -86,20 +87,16 @@ async function reorderLorebookEntries(
   return storageApi.list<LorebookEntry>("lorebook-entries", { filters: { lorebookId } });
 }
 
-async function reorderLorebookFolders(lorebookId: string, folderIds: string[]): Promise<LorebookFolder[]> {
-  await Promise.all(
-    folderIds.map((folderId, index) =>
-      storageApi.update(
-        "lorebook-folders",
-        folderId,
-        updateLorebookFolderSchema.parse({
-          order: index,
-          sortOrder: index,
-        }),
-      ),
-    ),
-  );
-  return storageApi.list<LorebookFolder>("lorebook-folders", { filters: { lorebookId } });
+async function reorderLorebookFolders(
+  lorebookId: string,
+  folderIds: string[],
+  parentFolderId: string | null,
+): Promise<LorebookFolder[]> {
+  return lorebookFolderApi.reorder({
+    lorebookId,
+    folderIds,
+    parentFolderId,
+  });
 }
 
 async function bulkUnvectorizeLorebookEntries(
@@ -464,11 +461,20 @@ export function useDeleteLorebookFolder() {
 export function useReorderLorebookFolders() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ lorebookId, folderIds }: { lorebookId: string; folderIds: string[] }) =>
-      reorderLorebookFolders(lorebookId, folderIds),
+    mutationFn: ({
+      lorebookId,
+      folderIds,
+      parentFolderId,
+    }: {
+      lorebookId: string;
+      folderIds: string[];
+      parentFolderId: string | null;
+    }) => reorderLorebookFolders(lorebookId, folderIds, parentFolderId),
     onSuccess: (folders, variables) => {
       qc.setQueryData(lorebookKeys.folders(variables.lorebookId), folders);
       qc.invalidateQueries({ queryKey: lorebookKeys.folders(variables.lorebookId) });
+      // Re-parenting a folder changes the disabled-ancestor gate, so refresh activation.
+      qc.invalidateQueries({ queryKey: lorebookKeys.active() });
     },
   });
 }

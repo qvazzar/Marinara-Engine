@@ -1,16 +1,3 @@
-// ──────────────────────────────────────────────
-// Lorebook Folder Row
-// Header for a collapsible folder of lorebook entries. Mirrors the visual
-// language of LorebookEntryRow (compact, drag handle on the left, inline
-// rename, hover-revealed delete) so the two row types feel like one list.
-//
-// Two toggles live on this row:
-//  • Collapse — a UI-only chevron that hides/shows the folder body. Persisted
-//    in localStorage by the parent editor; never sent to native storage.
-//  • Enable  — a native folder.enabled flag. When OFF, every entry
-//    inside the folder is gated out at activation time regardless of the
-//    entry's own enabled flag. Entries' own flags are preserved untouched.
-// ──────────────────────────────────────────────
 import {
   useCallback,
   useEffect,
@@ -23,20 +10,21 @@ import { ChevronDown, Folder, GripVertical, ToggleLeft, ToggleRight, Trash2 } fr
 import { cn } from "../../../../../shared/lib/utils";
 import { showConfirmDialog } from "../../../../../shared/lib/app-dialogs";
 import { useUpdateLorebookFolder, useDeleteLorebookFolder } from "../../hooks/use-lorebooks";
+import { canReparentFolder } from "../../lib/lorebook-folder-tree";
+import { CompactSelect } from "./LorebookEntryRowControls";
 import type { LorebookFolder } from "../../../../../engine/contracts/types/lorebook";
 
 interface Props {
   folder: LorebookFolder;
+  folders: LorebookFolder[];
   lorebookId: string;
-  /** Number of entries currently inside this folder (for the count badge). */
   entryCount: number;
-  /** UI-only collapse state — owned by the parent editor and persisted in localStorage. */
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  // Drag handle wiring — folder rows are draggable to reorder folders, AND
-  // act as drop targets when dragging an entry across containers.
   draggable: boolean;
   isDragging: boolean;
+  isNestTarget?: boolean;
+  inheritedDisabled?: boolean;
   onDragHandleMouseDown: () => void;
   onDragStart: (e: ReactDragEvent<HTMLDivElement>) => void;
   onDragOver: (e: ReactDragEvent<HTMLDivElement>) => void;
@@ -46,12 +34,15 @@ interface Props {
 
 export function LorebookFolderRow({
   folder,
+  folders,
   lorebookId,
   entryCount,
   isCollapsed,
   onToggleCollapse,
   draggable,
   isDragging,
+  isNestTarget,
+  inheritedDisabled = false,
   onDragHandleMouseDown,
   onDragStart,
   onDragOver,
@@ -61,9 +52,10 @@ export function LorebookFolderRow({
   const updateFolder = useUpdateLorebookFolder();
   const deleteFolder = useDeleteLorebookFolder();
 
-  // Optimistic mirrors so toggle/rename feel snappy while the mutation flushes.
+  // Optimistic mirrors roll back on mutation errors.
   const [localEnabled, setLocalEnabled] = useState(folder.enabled);
   const [localName, setLocalName] = useState(folder.name);
+  const [localParentId, setLocalParentId] = useState(folder.parentFolderId);
 
   const lastSyncedRef = useRef(folder);
   useEffect(() => {
@@ -71,6 +63,7 @@ export function LorebookFolderRow({
     lastSyncedRef.current = folder;
     setLocalEnabled(folder.enabled);
     setLocalName(folder.name);
+    setLocalParentId(folder.parentFolderId);
   }, [folder]);
 
   const handleEnableToggle = useCallback(
@@ -78,11 +71,6 @@ export function LorebookFolderRow({
       e.stopPropagation();
       const previous = localEnabled;
       const next = !previous;
-      // Optimistic flip — but if the PATCH fails, restore the previous value
-      // so the row doesn't lie about persisted state. This matters most for
-      // `enabled`: the activation gate runs through native storage, so a failed flip
-      // would mean the row says "off" while entries still activate (or vice
-      // versa).
       setLocalEnabled(next);
       updateFolder.mutate(
         { lorebookId, folderId: folder.id, enabled: next },
@@ -108,15 +96,29 @@ export function LorebookFolderRow({
         { lorebookId, folderId: folder.id, name: trimmed },
         {
           onError: () => {
-            // Roll the displayed name back to whatever native storage still has
-            // so the row doesn't continue showing a renamed folder that the
-            // save never accepted.
             setLocalName(previous);
           },
         },
       );
     }
   }, [localName, folder.name, lorebookId, folder.id, updateFolder]);
+
+  const handleParentChange = useCallback(
+    (value: string) => {
+      const next = value === "" ? null : value;
+      const previous = localParentId;
+      setLocalParentId(next);
+      updateFolder.mutate(
+        { lorebookId, folderId: folder.id, parentFolderId: next },
+        {
+          onError: () => {
+            setLocalParentId(previous);
+          },
+        },
+      );
+    },
+    [localParentId, lorebookId, folder.id, updateFolder],
+  );
 
   const handleDelete = useCallback(
     async (e: ReactMouseEvent) => {
@@ -136,11 +138,23 @@ export function LorebookFolderRow({
     [entryCount, lorebookId, folder.id, deleteFolder],
   );
 
+  // Valid parents use the same ancestry guard as drag/drop.
+  const parentOptions = [
+    { value: "", label: "(no parent)" },
+    ...folders
+      .filter((candidate) => candidate.id !== folder.id && canReparentFolder(folders, folder.id, candidate.id).ok)
+      .map((candidate) => ({ value: candidate.id, label: candidate.name.trim() || "Untitled folder" })),
+  ];
+
+  // Disabled ancestors gate entries even when this folder's own toggle is on.
+  const effectivelyDisabled = inheritedDisabled || !localEnabled;
+
   return (
     <div
       className={cn(
         "rounded-xl bg-[var(--secondary)]/60 ring-1 ring-[var(--border)] transition-all",
         !isCollapsed && "ring-amber-400/30",
+        isNestTarget && "ring-2 ring-amber-400",
         isDragging && "opacity-40",
       )}
       draggable={draggable}
@@ -150,7 +164,6 @@ export function LorebookFolderRow({
       onDragEnd={onDragEnd}
     >
       <div className="group flex cursor-pointer items-center gap-2 px-2 py-1.5" onClick={onToggleCollapse}>
-        {/* Drag handle */}
         <button
           type="button"
           className={cn(
@@ -169,7 +182,6 @@ export function LorebookFolderRow({
           <GripVertical size="0.875rem" />
         </button>
 
-        {/* Collapse chevron */}
         <button
           type="button"
           aria-label={isCollapsed ? "Expand folder" : "Collapse folder"}
@@ -185,29 +197,32 @@ export function LorebookFolderRow({
           />
         </button>
 
-        {/* Enable toggle */}
         <button
           type="button"
           aria-label={localEnabled ? "Disable folder" : "Enable folder"}
           title={
-            localEnabled
-              ? "Folder enabled — entries inside activate normally"
-              : "Folder disabled — entries inside will not activate, regardless of their own toggle"
+            inheritedDisabled
+              ? "A parent folder is disabled, so entries here won't activate even though this folder is on."
+              : localEnabled
+                ? "Folder enabled — entries inside activate normally"
+                : "Folder disabled — entries inside will not activate, regardless of their own toggle"
           }
           onClick={handleEnableToggle}
           className="shrink-0"
         >
           {localEnabled ? (
-            <ToggleRight size="1.125rem" className="text-amber-400" />
+            <ToggleRight
+              size="1.125rem"
+              className={inheritedDisabled ? "text-[var(--muted-foreground)]" : "text-amber-400"}
+            />
           ) : (
             <ToggleLeft size="1.125rem" className="text-[var(--muted-foreground)]" />
           )}
         </button>
 
-        {/* Folder icon + name */}
         <Folder
           size="0.875rem"
-          className={cn("shrink-0", localEnabled ? "text-amber-400" : "text-[var(--muted-foreground)]")}
+          className={cn("shrink-0", effectivelyDisabled ? "text-[var(--muted-foreground)]" : "text-amber-400")}
         />
         <input
           value={localName}
@@ -224,7 +239,27 @@ export function LorebookFolderRow({
           className="min-w-0 flex-1 truncate bg-transparent px-1 text-sm font-semibold outline-none transition-colors hover:bg-[var(--accent)]/40 focus:bg-[var(--accent)]/40 focus:ring-1 focus:ring-[var(--ring)] rounded"
         />
 
-        {/* Entry count badge */}
+        {(folders.length > 1 || localParentId !== null) && (
+          <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+            <CompactSelect
+              value={localParentId ?? ""}
+              onChange={handleParentChange}
+              title="Nest this folder under another folder, or choose (no parent) for the top level."
+              options={parentOptions}
+              className="w-[5.5rem] sm:w-[7rem]"
+            />
+          </span>
+        )}
+
+        {inheritedDisabled && (
+          <span
+            className="shrink-0 rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[0.625rem] font-medium text-amber-500/80"
+            title="A parent folder is disabled, so entries in this folder won't activate."
+          >
+            parent off
+          </span>
+        )}
+
         <span
           className="shrink-0 rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]"
           title={`${entryCount} entr${entryCount === 1 ? "y" : "ies"} in this folder`}
@@ -232,7 +267,6 @@ export function LorebookFolderRow({
           {entryCount}
         </span>
 
-        {/* Delete (hover-revealed on desktop, always visible on mobile per the row-action convention) */}
         <button
           type="button"
           aria-label="Delete folder"
