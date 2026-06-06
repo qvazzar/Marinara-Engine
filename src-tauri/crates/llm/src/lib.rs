@@ -3124,6 +3124,46 @@ fn claude_subscription_scratch_cwd() -> Option<PathBuf> {
     Some(dir)
 }
 
+fn render_claude_subscription_history_turn(message: &LlmMessage) -> Option<String> {
+    let content = message.content.trim();
+    if content.is_empty() && message.images.is_empty() {
+        return None;
+    }
+    let content = if content.is_empty() {
+        format!("[{} image attachment(s)]", message.images.len())
+    } else {
+        content.to_string()
+    };
+    let label = match message.role.as_str() {
+        "assistant" => "Assistant",
+        "tool" => "Tool result",
+        _ => "User",
+    };
+    Some(format!("{label}: {content}"))
+}
+
+fn render_claude_subscription_history_context(history: &[&LlmMessage]) -> Option<String> {
+    let turns = history
+        .iter()
+        .filter_map(|message| render_claude_subscription_history_turn(message))
+        .collect::<Vec<_>>();
+    (!turns.is_empty()).then(|| turns.join("\n\n"))
+}
+
+fn claude_subscription_session_prompt_with_history(
+    history: &[&LlmMessage],
+    current_prompt: &str,
+    current_label: Option<&str>,
+) -> String {
+    let Some(history) = render_claude_subscription_history_context(history) else {
+        return current_prompt.to_string();
+    };
+    let current = current_label
+        .map(|label| format!("{label}: {current_prompt}"))
+        .unwrap_or_else(|| current_prompt.to_string());
+    format!("Previous Marinara conversation:\n{history}\n\nCurrent turn:\n{current}")
+}
+
 fn render_claude_subscription_current_prompt(
     messages: &[LlmMessage],
 ) -> (Option<String>, String, &'static str) {
@@ -3151,19 +3191,28 @@ fn render_claude_subscription_current_prompt(
         );
     };
     if trailing.role == "assistant" {
+        let prompt =
+            claude_subscription_session_prompt_with_history(&non_system, "(continue)", None);
         return (
             (!system.is_empty()).then(|| system.join("\n\n")),
-            "(continue)".to_string(),
+            prompt,
             "trailing-assistant-continue",
         );
     }
+    let history = &non_system[..non_system.len().saturating_sub(1)];
+    let current_prompt = if trailing.role == "tool" {
+        format!("Tool result: {}", trailing.content.trim())
+    } else {
+        trailing.content.trim().to_string()
+    };
+    let prompt = claude_subscription_session_prompt_with_history(
+        history,
+        &current_prompt,
+        (trailing.role != "tool").then_some("User"),
+    );
     (
         (!system.is_empty()).then(|| system.join("\n\n")),
-        if trailing.role == "tool" {
-            format!("Tool result: {}", trailing.content.trim())
-        } else {
-            trailing.content.trim().to_string()
-        },
+        prompt,
         if trailing.role == "tool" {
             "trailing-tool"
         } else {
@@ -6053,7 +6102,10 @@ data: {"type":"content_block_delta","index":0,"delta":{"thinking":"summary witho
         };
         let prompt = claude_subscription_prompt(&request);
         assert_eq!(prompt.system_prompt.as_deref(), Some("Rules."));
-        assert_eq!(prompt.prompt, "Next turn.");
+        assert!(prompt
+            .prompt
+            .contains("Previous Marinara conversation:\nAssistant: Earlier reply."));
+        assert!(prompt.prompt.contains("Current turn:\nUser: Next turn."));
         assert_eq!(prompt.prompt_shape, "trailing-user");
         let expected_session_id = claude_subscription_session_id("chat-1");
         assert_eq!(
@@ -6085,6 +6137,43 @@ data: {"type":"content_block_delta","index":0,"delta":{"thinking":"summary witho
         };
         let prompt = claude_subscription_prompt(&request);
         assert_eq!(prompt.prompt, "User: Regenerate from here.");
+        assert_eq!(prompt.session_id, None);
+        assert_eq!(prompt.prompt_shape, "transcript-fold");
+    }
+
+    #[test]
+    fn claude_subscription_impersonation_uses_transcript_fold() {
+        let request = LlmRequest {
+            connection: test_connection(),
+            messages: vec![
+                LlmMessage {
+                    role: "assistant".to_string(),
+                    content: "Existing reply.".to_string(),
+                    name: None,
+                    images: Vec::new(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+                LlmMessage {
+                    role: "user".to_string(),
+                    content: "Impersonated turn.".to_string(),
+                    name: None,
+                    images: Vec::new(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+            ],
+            parameters: json!({
+                "_marinara": {
+                    "chatId": "chat-1",
+                    "impersonate": true
+                }
+            }),
+            tools: Vec::new(),
+        };
+        let prompt = claude_subscription_prompt(&request);
+        assert!(prompt.prompt.contains("Assistant: Existing reply."));
+        assert!(prompt.prompt.contains("User: Impersonated turn."));
         assert_eq!(prompt.session_id, None);
         assert_eq!(prompt.prompt_shape, "transcript-fold");
     }
