@@ -289,7 +289,8 @@ function QuickStartCard({
       title={tooltip}
       aria-label={`${comingSoon && !onClick ? "Show status for" : "Start"} ${label} chat`}
       className={cn(
-        "group card-3d-tilt btn-scanlines relative flex w-full sm:w-28 flex-col items-center justify-center gap-1.5 sm:gap-2 rounded-xl border-2 border-[var(--border)] bg-[var(--card)] p-2.5 sm:p-4 text-center transition-all",
+        "group card-3d-tilt btn-scanlines relative flex w-full flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-[var(--border)] bg-[var(--card)] p-2.5 text-center transition-all",
+        "sm:w-28 sm:gap-2 sm:p-4",
         "cursor-pointer hover:-translate-y-1 hover:border-[var(--primary)]/40 hover:shadow-lg",
       )}
       style={shadowColor ? { ["--tw-shadow-color" as string]: shadowColor } : undefined}
@@ -300,12 +301,12 @@ function QuickStartCard({
         </span>
       )}
       <div
-        className="flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-xl text-white shadow-sm transition-transform group-hover:scale-110"
+        className="flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm transition-transform group-hover:scale-110 sm:h-10 sm:w-10"
         style={{ background: bg }}
       >
         {icon}
       </div>
-      <span className="text-[0.625rem] sm:text-xs font-medium text-[var(--muted-foreground)]">{label}</span>
+      <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)] sm:text-xs">{label}</span>
     </button>
   );
 }

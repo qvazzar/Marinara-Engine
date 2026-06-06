@@ -4,7 +4,9 @@
 import { ChatSidebar, type ChatSidebarTab } from "./ChatSidebar";
 import { AppFindOverlay } from "./AppFindOverlay";
 import { TopBar } from "./TopBar";
+import { TopBarActionsProvider } from "../../shared/components/mobile-shell-actions";
 import { WindowTitleBar } from "./WindowTitleBar";
+import { MobileTabBar } from "./MobileTabBar";
 import { DISCOVERY_APP_EVENT, type DiscoveryAppEventDetail } from "../../features/shell/discovery/discovery-events";
 import {
   getTrackerPanelWidthForProfile,
@@ -163,11 +165,13 @@ function MountOnceWhenOpened({
   children,
   overlay,
   hideOverlayWhenClosed,
+  slideFromBottom,
 }: {
   open: boolean;
   children: React.ReactNode;
   overlay?: boolean;
   hideOverlayWhenClosed?: boolean;
+  slideFromBottom?: boolean;
 }) {
   const [everOpened, setEverOpened] = useState(false);
   useEffect(() => {
@@ -175,10 +179,11 @@ function MountOnceWhenOpened({
   }, [open, everOpened]);
   if (!everOpened) return null;
   if (overlay) {
+    const closedPosition = slideFromBottom ? { opacity: 0, x: 0, y: 30 } : { opacity: 0, x: 30, y: 0 };
     return (
       <motion.div
-        initial={{ opacity: 0, x: 30 }}
-        animate={open ? { opacity: 1, x: 0 } : { opacity: 0, x: 30 }}
+        initial={closedPosition}
+        animate={open ? { opacity: 1, x: 0, y: 0 } : closedPosition}
         transition={{ duration: 0.2 }}
         className={cn(
           "absolute inset-0 flex flex-col overflow-hidden bg-[var(--background)]",
@@ -287,6 +292,7 @@ export function AppShell() {
   const sidebarPanelRef = useRef<HTMLElement>(null);
   const mobileTrackerPanelRef = useRef<HTMLElement>(null);
   const mobileRightPanelRef = useRef<HTMLElement>(null);
+  const mobileToolsPanelRef = useRef<HTMLDivElement>(null);
   const lastFocusedBeforeMobilePanelRef = useRef<HTMLElement | null>(null);
   const mobilePanelHistoryTokenRef = useRef<string | null>(null);
   const closingMobilePanelFromPopRef = useRef(false);
@@ -737,21 +743,30 @@ export function AppShell() {
         ? "var(--tracker-panel-mobile-width)"
         : `${trackerPanelWidth + TRACKER_PANEL_HUD_GAP}px`
       : "0px";
+  const [mobileToolsSheetOpen, setMobileToolsSheetOpen] = useState(false);
+
+  useEffect(() => {
+    if (activeChatId !== null) setMobileToolsSheetOpen(false);
+  }, [activeChatId]);
+
   const activeMobilePanel = isMobile
     ? rightPanelOpen
       ? "right"
       : trackerPanelVisible
         ? "tracker"
-        : sidebarOpen
-          ? "sidebar"
-          : null
+        : mobileToolsSheetOpen
+          ? "tools"
+          : sidebarOpen
+            ? "sidebar"
+            : null
     : null;
-  const activeMobileOverlayPanel = activeMobilePanel === "tracker" ? null : activeMobilePanel;
+  const activeMobileOverlayPanel = activeMobilePanel;
 
   const closeActiveMobilePanel = useCallback(() => {
     if (activeMobilePanel === "right") closeRightPanel();
     else if (activeMobilePanel === "tracker") setTrackerPanelOpen(false);
     else if (activeMobilePanel === "sidebar") setSidebarOpen(false);
+    else if (activeMobilePanel === "tools") setMobileToolsSheetOpen(false);
   }, [activeMobilePanel, closeRightPanel, setSidebarOpen, setTrackerPanelOpen]);
 
   useEffect(() => {
@@ -802,6 +817,7 @@ export function AppShell() {
       setInert(sidebarPanelRef.current, false);
       setInert(mobileTrackerPanelRef.current, false);
       setInert(mobileRightPanelRef.current, false);
+      setInert(mobileToolsPanelRef.current, false);
       setInert(headerRef.current, false);
       setInert(mainRef.current, false);
       return;
@@ -810,6 +826,7 @@ export function AppShell() {
     setInert(sidebarPanelRef.current, activeMobilePanel !== "sidebar");
     setInert(mobileTrackerPanelRef.current, activeMobilePanel !== "tracker");
     setInert(mobileRightPanelRef.current, activeMobilePanel !== "right");
+    setInert(mobileToolsPanelRef.current, activeMobilePanel !== "tools");
     setInert(headerRef.current, activeMobileOverlayPanel !== null);
     setInert(mainRef.current, activeMobileOverlayPanel !== null);
   }, [activeMobileOverlayPanel, activeMobilePanel, isMobile]);
@@ -819,6 +836,7 @@ export function AppShell() {
     const sidebarPanel = sidebarPanelRef.current;
     const mobileTrackerPanel = mobileTrackerPanelRef.current;
     const mobileRightPanel = mobileRightPanelRef.current;
+    const mobileToolsPanel = mobileToolsPanelRef.current;
     const header = headerRef.current;
     const main = mainRef.current;
 
@@ -827,6 +845,7 @@ export function AppShell() {
       setInert(sidebarPanel, false);
       setInert(mobileTrackerPanel, false);
       setInert(mobileRightPanel, false);
+      setInert(mobileToolsPanel, false);
       setInert(header, false);
       setInert(main, false);
     };
@@ -837,6 +856,8 @@ export function AppShell() {
 
     const getPanel = () => {
       if (activeMobileOverlayPanel === "right") return mobileRightPanelRef.current;
+      if (activeMobileOverlayPanel === "tracker") return mobileTrackerPanelRef.current;
+      if (activeMobileOverlayPanel === "tools") return mobileToolsPanelRef.current;
       return sidebarPanelRef.current;
     };
 
@@ -859,8 +880,7 @@ export function AppShell() {
 
       if (event.key === "Escape") {
         event.preventDefault();
-        if (activeMobileOverlayPanel === "right") closeRightPanel();
-        else setSidebarOpen(false);
+        closeActiveMobilePanel();
         return;
       }
 
@@ -901,7 +921,7 @@ export function AppShell() {
         previous.focus();
       }
     };
-  }, [activeMobileOverlayPanel, closeRightPanel, hasCompletedOnboarding, isMobile, setSidebarOpen]);
+  }, [activeMobileOverlayPanel, closeActiveMobilePanel, hasCompletedOnboarding, isMobile]);
 
   const trackerPanelDesktop = (side: "left" | "right") =>
     trackerPanelVisible && trackerPanelSide === side ? (
@@ -963,6 +983,7 @@ export function AppShell() {
     ) : null;
 
   return (
+    <TopBarActionsProvider>
     <div
       data-component="AppShell"
       className={cn(
@@ -1005,7 +1026,7 @@ export function AppShell() {
         {/* Mobile sidebar backdrop */}
         {sidebarOpen && (
           <div
-            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
+            className="fixed inset-0 z-[65] bg-black/50 backdrop-blur-sm md:hidden"
             onClick={() => setSidebarOpen(false)}
           />
         )}
@@ -1024,12 +1045,12 @@ export function AppShell() {
             "mari-sidebar flex-shrink-0 overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl",
             sidebarDragWidth == null && "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
             // Mobile: fixed overlay
-            "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:shadow-2xl max-md:pt-[env(safe-area-inset-top)]",
+            "max-md:fixed max-md:top-0 max-md:left-0 max-md:z-[70] max-md:shadow-2xl max-md:pt-[env(safe-area-inset-top)]",
             !sidebarOpen && "max-md:w-0!",
           )}
-          style={{ width: sidebarOpen ? (isMobile ? "100vw" : liveSidebarWidth) : 0 }}
+          style={{ width: sidebarOpen ? (isMobile ? "min(18.75rem, 85vw)" : liveSidebarWidth) : 0, bottom: isMobile && sidebarOpen ? "calc(4.5rem + env(safe-area-inset-bottom))" : 0 }}
         >
-          <div className="h-full" style={{ width: isMobile ? "100vw" : liveSidebarWidth }}>
+          <div className="h-full" style={{ width: isMobile ? "min(18.75rem, 85vw)" : liveSidebarWidth }}>
             <ChatSidebar activeTab={activeChatSidebarTab} onActiveTabChange={setActiveChatSidebarTab} />
           </div>
         </aside>
@@ -1067,7 +1088,10 @@ export function AppShell() {
           data-component="CenterContent"
           aria-label="Main content"
           aria-hidden={activeMobileOverlayPanel ? true : undefined}
-          className="@container mari-main relative flex min-w-0 flex-1 flex-col overflow-hidden"
+          className={cn(
+            "@container mari-main relative flex min-w-0 flex-1 flex-col overflow-hidden",
+            isMobile && !activeChatId && "pb-14 pt-3",
+          )}
         >
           <div className="relative flex flex-1 flex-col overflow-hidden">
             {/* Bot Browser — kept mounted once opened so state persists across close/reopen */}
@@ -1078,7 +1102,7 @@ export function AppShell() {
             <MountOnceWhenOpened open={gameAssetsBrowserOpen} overlay>
               <GameAssetsBrowserView />
             </MountOnceWhenOpened>
-            <MountOnceWhenOpened open={professorMariOpen} overlay hideOverlayWhenClosed>
+            <MountOnceWhenOpened open={professorMariOpen} overlay hideOverlayWhenClosed slideFromBottom={isMobile}>
               <ProfessorMariSurface />
             </MountOnceWhenOpened>
             <div
@@ -1139,12 +1163,13 @@ export function AppShell() {
                 transition={{ type: "spring", damping: 28, stiffness: 350 }}
                 data-component="TrackerDataSidebarMobile"
                 aria-label="Tracker data panel"
-                role="complementary"
+                role="dialog"
+                aria-modal="true"
                 className={cn(
-                  "mari-tracker-panel fixed! inset-y-0 z-30 overflow-hidden bg-[var(--background)]/65 pt-[env(safe-area-inset-top)] shadow-2xl backdrop-blur-xl",
+                  "mari-tracker-panel fixed! top-0 z-[70] overflow-y-auto bg-[var(--background)]/65 shadow-2xl backdrop-blur-xl",
                   trackerPanelSide === "left" ? "left-0" : "right-0",
                 )}
-                style={{ width: mobileTrackerPanelWidth }}
+                style={{ width: mobileTrackerPanelWidth, paddingTop: 'calc(3.25rem + env(safe-area-inset-top))', bottom: 'calc(3.5rem + env(safe-area-inset-bottom))' }}
               >
                 <Suspense fallback={<SidePanelFallback />}>
                   <TrackerDataSidebar fillHeight />
@@ -1154,10 +1179,18 @@ export function AppShell() {
           </AnimatePresence>
         )}
 
+        {/* Mobile tracker panel backdrop */}
+        {isMobile && trackerPanelVisible && (
+          <div
+            className="fixed inset-0 z-[65] bg-black/50 backdrop-blur-sm md:hidden"
+            onClick={() => setTrackerPanelOpen(false)}
+          />
+        )}
+
         {/* Mobile right panel backdrop */}
         {rightPanelOpen && (
           <div
-            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
+            className="fixed inset-0 z-[65] bg-black/50 backdrop-blur-sm md:hidden"
             onClick={() => closeRightPanel()}
           />
         )}
@@ -1178,7 +1211,8 @@ export function AppShell() {
                 aria-modal="true"
                 role="dialog"
                 tabIndex={-1}
-                className="mari-right-panel fixed! inset-y-0 right-0 z-50 w-full! shadow-2xl overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl pt-[env(safe-area-inset-top)]"
+                className="mari-right-panel fixed! top-0 right-0 z-[70] w-full! shadow-2xl overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl pt-[env(safe-area-inset-top)]"
+                style={{ bottom: 'calc(3.5rem + env(safe-area-inset-bottom))' }}
               >
                 <Suspense fallback={<SidePanelFallback />}>
                   <RightPanel />
@@ -1246,5 +1280,15 @@ export function AppShell() {
         )}
       </div>
     </div>
+    <MobileTabBar
+      professorMariOpen={professorMariOpen}
+      toolsSheetOpen={mobileToolsSheetOpen}
+      toolsSheetRef={mobileToolsPanelRef}
+      trackerPanelVisible={trackerPanelVisible}
+      onToolsSheetOpenChange={setMobileToolsSheetOpen}
+      onToggleProfessorMari={() => setProfessorMariOpen((v) => !v)}
+      onGoHome={() => setProfessorMariOpen(false)}
+    />
+    </TopBarActionsProvider>
   );
 }

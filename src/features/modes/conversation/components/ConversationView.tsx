@@ -1,7 +1,6 @@
 // ──────────────────────────────────────────────
 // Chat: Conversation View — Discord-style composite
 // ──────────────────────────────────────────────
-import { createPortal } from "react-dom";
 import {
   Suspense,
   lazy,
@@ -11,7 +10,7 @@ import {
   useCallback,
   useMemo,
   useState,
-  type ReactNode,
+
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -19,10 +18,11 @@ import {
   ChevronUp,
   Settings2,
   FolderOpen,
+  GitBranch,
   Globe,
   Image as ImageIcon,
-  ArrowRightLeft,
-  MoreHorizontal,
+  MoreVertical,
+  LayoutGrid,
   ScrollText,
 } from "lucide-react";
 import { ConversationMessage } from "./ConversationMessage";
@@ -30,6 +30,7 @@ import { ConversationInput } from "./ConversationInput";
 import { SceneBanner, EndSceneBar } from "../../shared/scene-ui";
 import {
   ChatBranchSelector,
+  type ChatBranchSelectorHandle,
   getTranscriptRenderWindow,
   isNearTranscriptBottom,
   preserveTranscriptScrollAfterPrepend,
@@ -38,19 +39,22 @@ import {
   scrollTranscriptToBottom,
   TRANSCRIPT_RENDER_WINDOW_STEP,
 } from "../../shared/chat-ui/index";
-import { ActiveWorldInfoButton, ActiveWorldInfoModal } from "../../../runtime/visuals/index";
+
 import { useChatStore } from "../../../../shared/stores/chat.store";
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import { showConversationLocalNotification } from "../../../../shared/lib/local-notifications";
 import { playNotificationPing } from "../../../../shared/lib/notification-sound";
-import { getAvatarCropStyle, type AvatarCropValue } from "../../../../shared/lib/utils";
+import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../../../shared/lib/utils";
+import { TOOLS_PANELS, useTopBarActions } from "../../../../shared/components/mobile-shell-actions";
 import { usePageActivity } from "../../../../shared/hooks/use-page-activity";
+import { ActiveWorldInfoButton, ActiveWorldInfoModal } from "../../../runtime/visuals/index";
 import { invalidateCharacterCollectionQueries } from "../../../catalog/characters/index";
-import { useUpdateChatMetadata } from "../../../catalog/chats/index";
+
 import { getConversationStatus } from "../../../../engine/modes/chat/autonomous/autonomous.service";
 import { storageApi } from "../../../../shared/api/storage-api";
 import type { CharacterMap, MessageSelectionToggle, PeekPromptOptions, PersonaInfo } from "../../shared/chat-ui/types";
 import type { Message } from "../../../../engine/contracts/types/chat";
+import { useUpdateChatMetadata } from "../../../catalog/chats/index";
 
 const ConversationAutonomousEffects = lazy(async () => {
   const module = await import("./ConversationAutonomousEffects");
@@ -61,6 +65,31 @@ const SummaryPopover = lazy(async () => {
   const module = await import("../../shared/chat-ui/index");
   return { default: module.SummaryPopover };
 });
+
+const SHEET_FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "textarea:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+function getSheetFocusableElements(root: HTMLElement) {
+  return Array.from(root.querySelectorAll<HTMLElement>(SHEET_FOCUSABLE_SELECTOR)).filter((element) => {
+    if (element.closest("[inert]")) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden";
+  });
+}
+
+function setElementInert(element: HTMLElement | null, inert: boolean) {
+  if (!element) return;
+  element.toggleAttribute("inert", inert);
+  (element as HTMLElement & { inert?: boolean }).inert = inert;
+  if (inert) element.setAttribute("aria-hidden", "true");
+  else element.removeAttribute("aria-hidden");
+}
 
 interface ConversationViewProps {
   chatId: string;
@@ -304,68 +333,6 @@ function splitAssistantContentLines(content: string, charName?: string | null): 
 // from replaying when the user navigates away from a chat and comes back.
 const globalSeenKeys = new Set<string>();
 
-const HEADER_BTN =
-  "flex items-center justify-center rounded-lg bg-[var(--card)]/80 p-1.5 text-foreground/80 backdrop-blur-sm transition-colors hover:bg-[var(--card)] hover:text-foreground dark:bg-black/30 dark:hover:bg-black/50";
-const MOBILE_MENU_BTN =
-  "flex h-8 w-8 items-center justify-center rounded-lg text-foreground/80 transition-colors hover:bg-[var(--accent)] hover:text-foreground";
-
-function ConversationToolbarMenu({
-  desktopChildren,
-  mobileChildren,
-}: {
-  desktopChildren: ReactNode;
-  mobileChildren: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const btnRef = useRef<HTMLDivElement>(null);
-  const popRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
-
-  useLayoutEffect(() => {
-    if (!open || !btnRef.current) return;
-    const rect = btnRef.current.getBoundingClientRect();
-    setPos({
-      top: rect.bottom + 4,
-      right: window.innerWidth - rect.right,
-    });
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handle = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (target instanceof Element && target.closest("[data-chat-branch-popover]")) return;
-      if (btnRef.current?.contains(target) || popRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [open]);
-
-  return (
-    <>
-      <div className="hidden items-center gap-1.5 md:flex">{desktopChildren}</div>
-      <div className="relative shrink-0 md:hidden" ref={btnRef}>
-        <button onClick={() => setOpen(!open)} className={HEADER_BTN} title="More options" aria-label="More options">
-          <MoreHorizontal size="0.875rem" />
-        </button>
-        {open &&
-          createPortal(
-            <div
-              ref={popRef}
-              className="fixed z-[9999] flex w-9 flex-col items-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--card)] p-1 shadow-xl backdrop-blur-xl animate-message-in"
-              style={{ top: pos.top, right: pos.right }}
-              onClick={() => setOpen(false)}
-            >
-              {mobileChildren}
-            </div>,
-            document.body,
-          )}
-      </div>
-    </>
-  );
-}
-
 export function ConversationView({
   chatId,
   messages,
@@ -509,15 +476,40 @@ export function ConversationView({
   const isPageActive = usePageActivity();
 
   // ── Periodic status refresh (every 60s) ──
-  // Keeps status dots in sync with the character's schedule regardless of autonomous messaging
+  // Keeps status dots and activity text in sync with the character's schedule
   useEffect(() => {
     if (!chatId || !isPageActive) return;
     const refreshStatus = async () => {
+      let changed = false;
       try {
-        await getConversationStatus(storageApi, chatId);
-        invalidateCharacterCollectionQueries(qc);
+        const statusResult = await getConversationStatus(storageApi, chatId);
+        for (const [characterId, info] of Object.entries(statusResult.statuses)) {
+          const row = await storageApi.get<{ data?: { extensions?: Record<string, unknown> } }>("characters", characterId);
+          if (row?.data) {
+            const extensions = row.data.extensions ?? {};
+            const currentStatus = typeof extensions.conversationStatus === "string" ? extensions.conversationStatus : "";
+            const currentActivity = typeof extensions.conversationActivity === "string" ? extensions.conversationActivity : "";
+            if (currentStatus !== info.status || currentActivity !== info.activity) {
+              await storageApi.update("characters", characterId, {
+                data: {
+                  ...row.data,
+                  extensions: {
+                    ...extensions,
+                    conversationStatus: info.status,
+                    conversationActivity: info.activity,
+                  },
+                },
+              });
+              changed = true;
+            }
+          }
+        }
       } catch {
         /* non-critical */
+      } finally {
+        if (changed) {
+          invalidateCharacterCollectionQueries(qc);
+        }
       }
     };
     void refreshStatus();
@@ -530,6 +522,7 @@ export function ConversationView({
   // a CSS variable so custom themes can override the conversation background.
   const convoGradient = useUIStore((s) => s.convoGradient);
   const theme = useUIStore((s) => s.theme);
+
   const gradientStyle = useMemo(() => {
     const g = convoGradient[theme];
     const isDefaultDark = convoGradient.dark.from === "#0a0a0e" && convoGradient.dark.to === "#1c2133";
@@ -540,79 +533,27 @@ export function ConversationView({
     return { background: `linear-gradient(135deg, ${g.from}, ${g.to})` };
   }, [convoGradient, theme]);
   const hasAutonomousMessaging = !!chatMeta.autonomousMessages || !!chatMeta.characterExchanges;
-  const [mobileWorldInfoOpen, setMobileWorldInfoOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [mobileWorldInfoOpen, setMobileWorldInfoOpen] = useState(false);
+  const [toolsSheetOpen, setToolsSheetOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const sheetContentRef = useRef<HTMLDivElement>(null);
+  const toolsSheetRef = useRef<HTMLDivElement>(null);
+  const moreSheetRef = useRef<HTMLDivElement>(null);
+  const lastSheetFocusRef = useRef<HTMLElement | null>(null);
+  const skipSheetFocusRestoreRef = useRef(false);
+  const { setRightSlot } = useTopBarActions();
+  const openRightPanel = useUIStore((s) => s.openRightPanel);
+  const closeAllDetails = useUIStore((s) => s.closeAllDetails);
+  const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
+  const setTrackerPanelOpen = useUIStore((s) => s.setTrackerPanelOpen);
+  const [charActivityPopupId, setCharActivityPopupId] = useState<string | null>(null);
+  const mobileBranchSelectorRef = useRef<ChatBranchSelectorHandle>(null);
   const updateMeta = useUpdateChatMetadata();
   const summaryContextSize =
     typeof chatMeta.summaryContextSize === "number" && Number.isFinite(chatMeta.summaryContextSize)
       ? chatMeta.summaryContextSize
       : 50;
-  const renderToolbarActions = (compact = false) => (
-    <>
-      <ChatBranchSelector
-        activeChatId={chatId}
-        activeChatName={chatName}
-        groupId={chatGroupId}
-        compact={compact}
-        className={
-          compact ? "bg-transparent text-foreground/80 hover:bg-[var(--accent)] hover:text-foreground" : undefined
-        }
-      />
-      <div className="relative" onClick={(e) => e.stopPropagation()}>
-        <button
-          onClick={() => setSummaryOpen((open) => !open)}
-          className={compact ? MOBILE_MENU_BTN : HEADER_BTN}
-          title="Chat Summary"
-          aria-label="Chat Summary"
-        >
-          <ScrollText size="0.875rem" />
-        </button>
-        {summaryOpen && compact === (typeof window !== "undefined" && window.innerWidth < 768) && (
-          <Suspense fallback={null}>
-            <SummaryPopover
-              chatId={chatId}
-              summary={chatMetaString(chatMeta.summary, "") || null}
-              contextSize={summaryContextSize}
-              totalMessageCount={totalMessageCount}
-              onContextSizeChange={(size) => updateMeta.mutate({ id: chatId, summaryContextSize: size })}
-              onClose={() => setSummaryOpen(false)}
-            />
-          </Suspense>
-        )}
-      </div>
-      {compact ? (
-        <button
-          onClick={() => setMobileWorldInfoOpen(true)}
-          className={MOBILE_MENU_BTN}
-          title="Active World Info"
-          aria-label="Active World Info"
-        >
-          <Globe size="0.875rem" />
-        </button>
-      ) : (
-        <ActiveWorldInfoButton chatId={chatId} buttonClassName={HEADER_BTN} />
-      )}
-      <button onClick={onOpenFiles} className={compact ? MOBILE_MENU_BTN : HEADER_BTN} title="Manage Chat Files">
-        <FolderOpen size="0.875rem" />
-      </button>
-      <button onClick={onOpenGallery} className={compact ? MOBILE_MENU_BTN : HEADER_BTN} title="Gallery">
-        <ImageIcon size="0.875rem" />
-      </button>
-      {onSwitchChat && (
-        <button
-          onClick={onSwitchChat}
-          className={compact ? MOBILE_MENU_BTN : HEADER_BTN}
-          title={connectedChatName ? `Switch to ${connectedChatName}` : "Switch to connected chat"}
-        >
-          <ArrowRightLeft size="0.875rem" />
-        </button>
-      )}
-      <button onClick={onOpenSettings} className={compact ? MOBILE_MENU_BTN : HEADER_BTN} title="Chat Settings">
-        <Settings2 size="0.875rem" />
-      </button>
-    </>
-  );
-
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef(0);
@@ -627,6 +568,78 @@ export function ConversationView({
     messageId: undefined,
     isStreaming: false,
   });
+
+  useEffect(() => {
+    if (!charActivityPopupId) return;
+    let removeClickListener = () => {};
+    const timer = window.setTimeout(() => {
+      const handleDocumentClick = () => setCharActivityPopupId(null);
+      document.addEventListener("click", handleDocumentClick);
+      removeClickListener = () => document.removeEventListener("click", handleDocumentClick);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      removeClickListener();
+    };
+  }, [charActivityPopupId]);
+
+  useEffect(() => {
+    const activeSheet = toolsSheetOpen ? toolsSheetRef.current : moreMenuOpen ? moreSheetRef.current : null;
+    const content = sheetContentRef.current;
+    setElementInert(content, !!activeSheet);
+    if (!activeSheet) return;
+
+    lastSheetFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusSheet = () => {
+      if (!activeSheet.isConnected || activeSheet.contains(document.activeElement)) return;
+      const [firstFocusable] = getSheetFocusableElements(activeSheet);
+      (firstFocusable ?? activeSheet).focus();
+    };
+    const frame = window.requestAnimationFrame(focusSheet);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        skipSheetFocusRestoreRef.current = false;
+        setToolsSheetOpen(false);
+        setMoreMenuOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = getSheetFocusableElements(activeSheet);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        activeSheet.focus();
+        return;
+      }
+
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      const activeElement = document.activeElement;
+      if (!activeSheet.contains(activeElement)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", handleKeyDown, true);
+      setElementInert(content, false);
+      const previous = lastSheetFocusRef.current;
+      if (!skipSheetFocusRestoreRef.current && previous?.isConnected) previous.focus();
+      skipSheetFocusRestoreRef.current = false;
+    };
+  }, [toolsSheetOpen, moreMenuOpen]);
 
   // ── Scroll tracking ──
   useEffect(() => {
@@ -725,6 +738,46 @@ export function ConversationView({
   useEffect(() => {
     setTranscriptWindowStart(null);
   }, [chatId]);
+
+  useEffect(() => {
+    setRightSlot(
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            setToolsSheetOpen(false);
+            setMoreMenuOpen((v) => !v);
+          }}
+          className={cn(
+            "flex h-9 w-9 items-center justify-center rounded-xl text-[var(--muted-foreground)] transition-all active:scale-90 hover:bg-[var(--accent)]/30 hover:text-[var(--foreground)]",
+            moreMenuOpen && "bg-[var(--accent)]/30 text-[var(--foreground)]",
+          )}
+          title="More options"
+          aria-label="More options"
+          aria-expanded={moreMenuOpen}
+        >
+          <MoreVertical size="1.15rem" />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setMoreMenuOpen(false);
+            setToolsSheetOpen((v) => !v);
+          }}
+          className={cn(
+            "flex h-9 w-9 items-center justify-center rounded-xl text-[var(--muted-foreground)] transition-all active:scale-90 hover:bg-[var(--accent)]/30 hover:text-[var(--foreground)]",
+            toolsSheetOpen && "bg-[var(--accent)]/30 text-[var(--foreground)]",
+          )}
+          title="Tools"
+          aria-label="Tools"
+          aria-expanded={toolsSheetOpen}
+        >
+          <LayoutGrid size="1.15rem" />
+        </button>
+      </>,
+    );
+    return () => { setRightSlot(null); };
+  }, [moreMenuOpen, toolsSheetOpen, setRightSlot]);
 
   // ── Build message list with day separators ──
   // Assistant messages with multiple lines are split into separate visual
@@ -1064,13 +1117,20 @@ export function ConversationView({
       data-chat-mode="conversation"
       style={{ ...gradientStyle, isolation: "isolate" }}
     >
+      <div ref={sheetContentRef} className="flex min-h-0 flex-1 flex-col">
       {/* ── Messages scroll area ── */}
       <div ref={scrollRef} className="mari-messages-scroll flex-1 overflow-y-auto overflow-x-hidden">
-        {/* Floating header — character info + action buttons */}
-        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2">
+        {/* Desktop floating header */}
+        <div className="sticky top-0 z-10 hidden min-w-0 items-center justify-between px-4 py-2 md:flex">
           {/* Character identity pill */}
           {(() => {
-            const chars = chatCharIds.map((id) => characterMap.get(id)).filter(Boolean) as Array<{
+            const chars = chatCharIds
+              .map((id) => {
+                const character = characterMap.get(id);
+                return character ? { id, ...character } : null;
+              })
+              .filter(Boolean) as Array<{
+              id: string;
               name: string;
               avatarUrl: string | null;
               avatarCrop?: AvatarCropValue | null;
@@ -1093,7 +1153,13 @@ export function ConversationView({
             if (chars.length === 1) {
               const c = chars[0]!;
               return (
-                <div className="flex items-center gap-2 rounded-lg bg-[var(--card)]/80 px-2.5 py-1.5 backdrop-blur-sm dark:bg-black/30">
+                <button
+                  type="button"
+                  className="flex items-center gap-2 rounded-lg bg-[var(--card)]/80 px-2.5 py-1.5 backdrop-blur-sm dark:bg-black/30 cursor-pointer hover:bg-[var(--card)] transition-colors"
+                  onClick={() => setTrackerPanelOpen(true)}
+                  title="View schedule"
+                  aria-label={c.name}
+                >
                   <div className="relative flex-shrink-0">
                     {c.avatarUrl ? (
                       <span className="relative block h-5 w-5 overflow-hidden rounded-full">
@@ -1119,40 +1185,59 @@ export function ConversationView({
                       <span className="text-[0.5625rem] text-foreground/50">{c.conversationActivity}</span>
                     )}
                   </div>
-                </div>
+                </button>
               );
             }
 
-            // Multiple characters — show stacked avatars + names
+            // Multiple characters — individual clickable avatars showing activity on click
             return (
               <div className="flex items-center gap-2 rounded-lg bg-[var(--card)]/80 px-2.5 py-1.5 backdrop-blur-sm dark:bg-black/30">
                 <div
                   className="relative flex-shrink-0"
                   style={{ width: `${Math.min(chars.length, 3) * 12 + 8}px`, height: 20 }}
                 >
-                  {chars.slice(0, 3).map((c, i) => (
-                    <div key={i} className="absolute top-0" style={{ left: i * 12 }}>
-                      <div className="relative">
-                        {c.avatarUrl ? (
-                          <span className="relative block h-5 w-5 overflow-hidden rounded-full ring-1 ring-[var(--border)]">
-                            <img
-                              src={c.avatarUrl}
-                              alt={c.name}
-                              className="h-full w-full object-cover"
-                              style={getAvatarCropStyle(c.avatarCrop)}
-                            />
-                          </span>
-                        ) : (
-                          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-foreground/20 text-[0.5rem] font-bold text-foreground ring-1 ring-[var(--border)]">
-                            {c.name[0]}
+                  {chars.slice(0, 3).map((c, i) => {
+                    const isOpen = charActivityPopupId === c.id;
+                    return (
+                      <div key={c.id} className="absolute top-0" style={{ left: i * 12, zIndex: isOpen ? 10 : 3 - i }}>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setCharActivityPopupId(isOpen ? null : c.id);
+                          }}
+                          className="relative block transition-transform active:scale-90"
+                          aria-label={c.name}
+                        >
+                          {c.avatarUrl ? (
+                            <span className="relative block h-5 w-5 overflow-hidden rounded-full ring-1 ring-[var(--border)]">
+                              <img
+                                src={c.avatarUrl}
+                                alt={c.name}
+                                className="h-full w-full object-cover"
+                                style={getAvatarCropStyle(c.avatarCrop)}
+                              />
+                            </span>
+                          ) : (
+                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-foreground/20 text-[0.5rem] font-bold text-foreground ring-1 ring-[var(--border)]">
+                              {c.name[0]}
+                            </div>
+                          )}
+                          <span
+                            className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-[1px] ring-[var(--border)] ${statusColor(c.conversationStatus)}`}
+                          />
+                        </button>
+                        {isOpen && (
+                          <div className="absolute left-1/2 top-full mt-1.5 z-50 min-w-[7rem] -translate-x-1/2 rounded-xl border border-[var(--border)]/60 bg-[var(--card)] px-3 py-2 shadow-lg backdrop-blur-xl">
+                            <p className="text-[0.7rem] font-semibold text-[var(--foreground)] leading-tight">{c.name}</p>
+                            {c.conversationActivity && (
+                              <p className="mt-0.5 text-[0.6rem] text-[var(--muted-foreground)]/70 leading-tight">{c.conversationActivity}</p>
+                            )}
                           </div>
                         )}
-                        <span
-                          className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-[1px] ring-[var(--border)] ${statusColor(c.conversationStatus)}`}
-                        />
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <span className="text-[0.75rem] font-medium text-[var(--foreground)]/90">
                   {chars.length <= 2 ? chars.map((c) => c.name).join(" & ") : `${chars[0]!.name} + ${chars.length - 1}`}
@@ -1161,18 +1246,58 @@ export function ConversationView({
             );
           })()}
 
-          <ConversationToolbarMenu
-            desktopChildren={renderToolbarActions()}
-            mobileChildren={renderToolbarActions(true)}
+          {/* Desktop toolbar */}
+          <div className="flex items-center gap-1.5">
+          <ChatBranchSelector
+            activeChatId={chatId}
+            activeChatName={chatName}
+            groupId={chatGroupId}
           />
-          <ActiveWorldInfoModal
-            chatId={chatId}
-            open={mobileWorldInfoOpen}
-            onClose={() => setMobileWorldInfoOpen(false)}
-          />
+          <button
+            onClick={() => setSummaryOpen(true)}
+            className="flex items-center justify-center rounded-lg bg-[var(--card)]/80 p-1.5 text-foreground/80 backdrop-blur-sm transition-colors hover:bg-[var(--card)] hover:text-foreground dark:bg-black/30 dark:hover:bg-black/50"
+            title="Chat Summary"
+            aria-label="Chat Summary"
+          >
+            <ScrollText size="0.875rem" />
+          </button>
+          <ActiveWorldInfoButton chatId={chatId} />
+          <button
+            onClick={onOpenGallery}
+            className="flex items-center justify-center rounded-lg bg-[var(--card)]/80 p-1.5 text-foreground/80 backdrop-blur-sm transition-colors hover:bg-[var(--card)] hover:text-foreground dark:bg-black/30 dark:hover:bg-black/50"
+            title="Gallery"
+            aria-label="Gallery"
+          >
+            <ImageIcon size="0.875rem" />
+          </button>
+          <button
+            onClick={onOpenFiles}
+            className="flex items-center justify-center rounded-lg bg-[var(--card)]/80 p-1.5 text-foreground/80 backdrop-blur-sm transition-colors hover:bg-[var(--card)] hover:text-foreground dark:bg-black/30 dark:hover:bg-black/50"
+            title="Chat Files"
+            aria-label="Chat Files"
+          >
+            <FolderOpen size="0.875rem" />
+          </button>
+          {onSwitchChat && (
+            <button
+              onClick={onSwitchChat}
+              className="flex items-center justify-center rounded-lg bg-[var(--card)]/80 p-1.5 text-foreground/80 backdrop-blur-sm transition-colors hover:bg-[var(--card)] hover:text-foreground dark:bg-black/30 dark:hover:bg-black/50"
+              title={connectedChatName ? `Switch to ${connectedChatName}` : "Switch to connected chat"}
+            >
+              <span className="text-[0.7rem] font-medium">{connectedChatName || "Switch"}</span>
+            </button>
+          )}
+          <button
+            onClick={onOpenSettings}
+            className="flex items-center justify-center rounded-lg bg-[var(--card)]/80 p-1.5 text-foreground/80 backdrop-blur-sm transition-colors hover:bg-[var(--card)] hover:text-foreground dark:bg-black/30 dark:hover:bg-black/50"
+            title="Chat Settings"
+            aria-label="Chat Settings"
+          >
+            <Settings2 size="0.875rem" />
+          </button>
         </div>
-
-        {/* Load More */}
+      </div>
+      {/* Load More */}
         {(hasNextPage || transcriptWindow.hiddenBeforeCount > 0) && (
           <div className="flex justify-center py-3">
             <button
@@ -1427,6 +1552,170 @@ export function ConversationView({
         }
         onPeekPrompt={onPeekPrompt}
       />
+      </div>
+
+      {/* Tools top sheet */}
+      {toolsSheetOpen && (
+        <>
+          <div
+            className="fixed inset-0 z-[9998] bg-black/50 backdrop-blur-sm md:hidden"
+            onClick={() => setToolsSheetOpen(false)}
+          />
+          <div
+            ref={toolsSheetRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Tools"
+            tabIndex={-1}
+            className="fixed left-0 right-0 z-[9999] max-h-[70dvh] overflow-y-auto rounded-b-3xl border-b border-[var(--border)]/50 bg-[var(--card)] shadow-2xl backdrop-blur-2xl animate-fade-in-down md:hidden"
+            style={{ top: "calc(3.25rem + env(safe-area-inset-top))" }}
+          >
+            <p className="px-5 pt-4 pb-3 text-[0.7rem] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]/60">
+              Panels
+            </p>
+            <div className="grid grid-cols-2 gap-2.5 px-4 pb-4 overflow-hidden">
+              {TOOLS_PANELS.map(({ panel, icon: Icon, label, gradient }) => (
+                <button
+                  key={panel}
+                  type="button"
+                  onClick={() => {
+                    skipSheetFocusRestoreRef.current = true;
+                    setToolsSheetOpen(false);
+                    setSidebarOpen(false);
+                    closeAllDetails();
+                    openRightPanel(panel);
+                  }}
+                  className="flex items-center gap-3 rounded-2xl border border-[var(--border)]/50 bg-[var(--secondary)]/50 p-4 text-left transition-all active:scale-95 hover:border-[var(--border)]"
+                >
+                  <div
+                    className={cn(
+                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm",
+                      gradient,
+                    )}
+                  >
+                    <Icon size="1rem" />
+                  </div>
+                  <span className="text-sm font-semibold text-[var(--foreground)]">{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* More options top sheet */}
+      {moreMenuOpen && (
+        <>
+          <div
+            className="fixed inset-0 z-[9998] bg-black/50 backdrop-blur-sm md:hidden"
+            onClick={() => setMoreMenuOpen(false)}
+          />
+          <div
+            ref={moreSheetRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="More options"
+            tabIndex={-1}
+            className="fixed left-0 right-0 z-[9999] max-h-[70dvh] overflow-y-auto rounded-b-3xl border-b border-[var(--border)]/50 bg-[var(--card)] shadow-2xl backdrop-blur-2xl animate-fade-in-down md:hidden"
+            style={{ top: "calc(3.25rem + env(safe-area-inset-top))" }}
+          >
+            <div className="flex flex-col py-3">
+              {chatGroupId && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    className="relative flex w-full items-center gap-3 px-5 py-3 text-left transition-all active:bg-[var(--accent)]/30 hover:bg-[var(--accent)]/20"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      mobileBranchSelectorRef.current?.toggle();
+                    }}
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-sm">
+                      <GitBranch size="0.9rem" />
+                    </div>
+                    <span className="text-sm font-medium text-[var(--foreground)]">Branches</span>
+                  </button>
+                  <div className="pointer-events-none absolute inset-0 opacity-0" aria-hidden="true">
+                    <ChatBranchSelector
+                      ref={mobileBranchSelectorRef}
+                      activeChatId={chatId}
+                      activeChatName={chatName}
+                      groupId={chatGroupId}
+                      compact
+                      triggerAriaHidden
+                      triggerTabIndex={-1}
+                    />
+                  </div>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => { skipSheetFocusRestoreRef.current = true; setMoreMenuOpen(false); setSummaryOpen(true); }}
+                className="flex w-full items-center gap-3 px-5 py-3 text-left transition-all active:bg-[var(--accent)]/30 hover:bg-[var(--accent)]/20"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-purple-500 text-white shadow-sm">
+                  <ScrollText size="0.9rem" />
+                </div>
+                <span className="text-sm font-medium text-[var(--foreground)]">Summary</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { skipSheetFocusRestoreRef.current = true; setMoreMenuOpen(false); setMobileWorldInfoOpen(true); }}
+                className="flex w-full items-center gap-3 px-5 py-3 text-left transition-all active:bg-[var(--accent)]/30 hover:bg-[var(--accent)]/20"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-blue-500 text-white shadow-sm">
+                  <Globe size="0.9rem" />
+                </div>
+                <span className="text-sm font-medium text-[var(--foreground)]">World Info</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { skipSheetFocusRestoreRef.current = true; setMoreMenuOpen(false); onOpenGallery(); }}
+                className="flex w-full items-center gap-3 px-5 py-3 text-left transition-all active:bg-[var(--accent)]/30 hover:bg-[var(--accent)]/20"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-pink-500 to-rose-500 text-white shadow-sm">
+                  <ImageIcon size="0.9rem" />
+                </div>
+                <span className="text-sm font-medium text-[var(--foreground)]">Gallery</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { skipSheetFocusRestoreRef.current = true; setMoreMenuOpen(false); onOpenFiles(); }}
+                className="flex w-full items-center gap-3 px-5 py-3 text-left transition-all active:bg-[var(--accent)]/30 hover:bg-[var(--accent)]/20"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 text-white shadow-sm">
+                  <FolderOpen size="0.9rem" />
+                </div>
+                <span className="text-sm font-medium text-[var(--foreground)]">Chat Files</span>
+              </button>
+              <div className="mx-5 my-1 h-px bg-[var(--border)]/30" />
+              <button
+                type="button"
+                onClick={() => { skipSheetFocusRestoreRef.current = true; setMoreMenuOpen(false); onOpenSettings(); }}
+                className="flex w-full items-center gap-3 px-5 py-3 text-left transition-all active:bg-[var(--accent)]/30 hover:bg-[var(--accent)]/20"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-purple-500 text-white shadow-sm">
+                  <Settings2 size="0.9rem" />
+                </div>
+                <span className="text-sm font-medium text-[var(--foreground)]">Chat Settings</span>
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+      {summaryOpen && (
+        <Suspense fallback={null}>
+          <SummaryPopover
+            chatId={chatId}
+            summary={chatMetaString(chatMeta.summary, "") || null}
+            contextSize={summaryContextSize}
+            totalMessageCount={totalMessageCount}
+            onContextSizeChange={(size) => updateMeta.mutate({ id: chatId, summaryContextSize: size })}
+            onClose={() => setSummaryOpen(false)}
+          />
+        </Suspense>
+      )}
+      <ActiveWorldInfoModal chatId={chatId} open={mobileWorldInfoOpen} onClose={() => setMobileWorldInfoOpen(false)} />
     </div>
   );
 }
