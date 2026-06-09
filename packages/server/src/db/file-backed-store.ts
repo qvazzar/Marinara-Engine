@@ -6,20 +6,8 @@
 // DATA_DIR/storage. SQLite is only opened during one-time legacy import when a
 // previous marinara-engine.db exists; the live runtime uses this in-memory
 // file-native table store and persists dirty tables back to JSON.
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  closeSync,
-  fsyncSync,
-  readFileSync,
-  readSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, readFileSync, readSync, statSync } from "node:fs";
+import { copyFile, open, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { logger } from "../lib/logger.js";
 import { getFileStorageDir } from "../config/runtime-config.js";
@@ -283,17 +271,17 @@ function quoteIdentifier(value: string) {
   return `"${value.replace(/"/g, '""')}"`;
 }
 
-function flushFile(path: string) {
-  let fd: number | null = null;
+async function flushFile(path: string) {
+  let handle: import("node:fs/promises").FileHandle | null = null;
   try {
-    fd = openSync(path, "r");
-    fsyncSync(fd);
+    handle = await open(path, "r");
+    await handle.sync();
   } catch {
     // Best effort only. Some mobile filesystems reject fsync for app data.
   } finally {
-    if (fd !== null) {
+    if (handle !== null) {
       try {
-        closeSync(fd);
+        await handle.close();
       } catch {
         /* ignore */
       }
@@ -326,7 +314,7 @@ function looksNulFilled(path: string): boolean {
   }
 }
 
-function atomicWriteFile(path: string, content: string, options: { refreshBackup?: boolean } = {}) {
+async function atomicWriteFile(path: string, content: string, options: { refreshBackup?: boolean } = {}) {
   mkdirSync(dirname(path), { recursive: true });
   const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
   const refreshBackup = options.refreshBackup ?? true;
@@ -345,12 +333,12 @@ function atomicWriteFile(path: string, content: string, options: { refreshBackup
       const bakPath = `${path}.bak`;
       const bakTmpPath = `${bakPath}.tmp-${process.pid}-${Date.now()}`;
       try {
-        copyFileSync(path, bakTmpPath);
-        flushFile(bakTmpPath);
-        renameSync(bakTmpPath, bakPath);
+        await copyFile(path, bakTmpPath);
+        await flushFile(bakTmpPath);
+        await rename(bakTmpPath, bakPath);
       } catch (err) {
         try {
-          if (existsSync(bakTmpPath)) unlinkSync(bakTmpPath);
+          if (existsSync(bakTmpPath)) await unlink(bakTmpPath);
         } catch {
           /* ignore */
         }
@@ -361,13 +349,13 @@ function atomicWriteFile(path: string, content: string, options: { refreshBackup
         );
       }
     }
-    writeFileSync(tmpPath, content);
-    flushFile(tmpPath);
-    renameSync(tmpPath, path);
-    flushFile(dirname(path));
+    await writeFile(tmpPath, content);
+    await flushFile(tmpPath);
+    await rename(tmpPath, path);
+    await flushFile(dirname(path));
   } catch (err) {
     try {
-      if (existsSync(tmpPath)) unlinkSync(tmpPath);
+      if (existsSync(tmpPath)) await unlink(tmpPath);
     } catch {
       /* ignore */
     }
@@ -941,11 +929,19 @@ class FileTableStore {
     if (!force && !this.dirty && this.dirtyTables.size === 0) return;
     this.saving = true;
     this.dirty = false;
+    // Snapshot the dirty set and reset it BEFORE the async write. saveFileSnapshots
+    // now yields the event loop, so a markDirty() that interleaves during the I/O
+    // must be recorded for the NEXT flush instead of being erased by a post-await
+    // clear() — the synchronous version had a zero-width window here.
+    const dirtyTables = this.dirtyTables;
+    this.dirtyTables = new Set();
     try {
-      this.saveFileSnapshots();
-      this.dirtyTables.clear();
+      await this.saveFileSnapshots(dirtyTables);
     } catch (err) {
       this.dirty = true;
+      // Re-mark the tables we failed to persist so they retry on the next flush
+      // (without clobbering any tables marked dirty during the failed write).
+      for (const table of dirtyTables) this.dirtyTables.add(table);
       logger.error(err, "[file-storage] Failed to persist file-native storage");
     } finally {
       this.saving = false;
@@ -1214,7 +1210,7 @@ class FileTableStore {
     return Object.values(this.legacyRepair.tables ?? {}).some((count) => count > 0);
   }
 
-  private saveFileSnapshots() {
+  private async saveFileSnapshots(dirtyTables: Set<string>) {
     mkdirSync(join(this.rootDir, "tables"), { recursive: true });
     const tables: Record<string, number> = {};
 
@@ -1222,8 +1218,8 @@ class FileTableStore {
       const rows = this.rows(table);
       tables[table] = rows.length;
       const path = tableFilePath(this.rootDir, table);
-      if (this.dirtyTables.has(table) || !existsSync(path)) {
-        atomicWriteFile(path, JSON.stringify(rows), { refreshBackup: !this.backupRecoveredPaths.has(path) });
+      if (dirtyTables.has(table) || !existsSync(path)) {
+        await atomicWriteFile(path, JSON.stringify(rows), { refreshBackup: !this.backupRecoveredPaths.has(path) });
       }
     }
 
@@ -1236,7 +1232,7 @@ class FileTableStore {
       tables,
     };
     const path = manifestPath(this.rootDir);
-    atomicWriteFile(path, JSON.stringify(manifest, null, 2), { refreshBackup: !this.backupRecoveredPaths.has(path) });
+    await atomicWriteFile(path, JSON.stringify(manifest, null, 2), { refreshBackup: !this.backupRecoveredPaths.has(path) });
     this.backupRecoveredPaths.clear();
   }
 
