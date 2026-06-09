@@ -840,9 +840,13 @@ export async function processLorebooks(
     gameState ?? null,
   );
 
-  // Scan for activated entries
+  // Scan for activated entries.
+  // Bound the default global scan window so a lorebook/entry that leaves
+  // scanDepth unset doesn't re-scan the full chat history every turn. An
+  // explicit per-entry/per-lorebook scanDepth 0 ("scan all") is still honored
+  // in keyword-scanner.ts.
   const scanOpts: ScanOptions = {
-    scanDepth: 0, // Scan all messages
+    scanDepth: LIMITS.LOREBOOK_DEFAULT_SCAN_DEPTH,
     gameState: gameState ?? null,
     chatEmbedding: options?.chatEmbedding ?? null,
     semanticThreshold: options?.semanticThreshold,
