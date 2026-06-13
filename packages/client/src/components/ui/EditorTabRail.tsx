@@ -23,7 +23,7 @@ export function EditorTabRail<T extends string>({
 }) {
   return (
     <nav
-      role="tablist"
+      aria-label="Editor sections"
       className={cn(
         "flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[var(--border)] p-2 @max-5xl:w-full @max-5xl:flex-row @max-5xl:overflow-x-auto @max-5xl:border-b @max-5xl:border-r-0 @max-5xl:p-1.5",
         className,
@@ -33,11 +33,11 @@ export function EditorTabRail<T extends string>({
         const Icon = tab.icon;
         const active = activeId === tab.id;
         const badge = getBadge?.(tab.id);
+        const hasBadge = badge !== null && badge !== undefined && badge !== false;
         return (
           <button
             type="button"
-            role="tab"
-            aria-selected={active}
+            aria-current={active ? "page" : undefined}
             key={tab.id}
             onClick={() => onChange(tab.id)}
             className={cn(
@@ -49,7 +49,7 @@ export function EditorTabRail<T extends string>({
           >
             <Icon size="0.875rem" className="shrink-0" />
             <span>{tab.label}</span>
-            {badge && (
+            {hasBadge && (
               <span className="ml-auto rounded-full bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] text-[var(--foreground)] ring-1 ring-[var(--border)] @max-5xl:ml-1">
                 {badge}
               </span>

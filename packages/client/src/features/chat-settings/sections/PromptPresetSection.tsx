@@ -44,6 +44,8 @@ export function PromptPresetSection({
         </select>
         {promptPresetId && hasVariables && (
           <button
+            type="button"
+            aria-label="Edit preset variables"
             onClick={onEditVariables}
             className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
             title="Edit preset variables"

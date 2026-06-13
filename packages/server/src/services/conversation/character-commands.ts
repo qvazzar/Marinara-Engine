@@ -578,8 +578,10 @@ function parsePresetInjectionPosition(raw: unknown): CreatePresetSectionCommand[
 }
 
 function parseOptionalInteger(raw: unknown): number | undefined {
-  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
-  return Math.trunc(raw);
+  if (typeof raw !== "number") return undefined;
+  if (!Number.isSafeInteger(raw)) return undefined;
+  if (raw < 0) return undefined;
+  return raw;
 }
 
 function parseCreatePresetBlock(raw: string): CreatePresetCommand | null {

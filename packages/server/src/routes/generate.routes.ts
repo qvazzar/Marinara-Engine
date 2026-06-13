@@ -1444,7 +1444,38 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function normalizeAssistantPresetIdentifier(value: string | undefined, fallbackIndex: number, used: Set<string>): string {
+const MAX_MARI_FETCHED_PRESET_CONTEXT_CHARS = 8000;
+type AssistantPresetWrapFormat = "xml" | "markdown" | "none";
+type AssistantPresetRole = "system" | "user" | "assistant";
+type AssistantPresetInjectionPosition = "ordered" | "depth";
+const ASSISTANT_PRESET_WRAP_FORMATS = new Set<AssistantPresetWrapFormat>(["xml", "markdown", "none"]);
+const ASSISTANT_PRESET_ROLES = new Set<AssistantPresetRole>(["system", "user", "assistant"]);
+const ASSISTANT_PRESET_INJECTION_POSITIONS = new Set<AssistantPresetInjectionPosition>(["ordered", "depth"]);
+
+function resolveAssistantPresetWrapFormat(value: unknown): AssistantPresetWrapFormat {
+  return typeof value === "string" && ASSISTANT_PRESET_WRAP_FORMATS.has(value as AssistantPresetWrapFormat)
+    ? (value as AssistantPresetWrapFormat)
+    : "xml";
+}
+
+function resolveAssistantPresetRole(value: unknown): AssistantPresetRole {
+  return typeof value === "string" && ASSISTANT_PRESET_ROLES.has(value as AssistantPresetRole)
+    ? (value as AssistantPresetRole)
+    : "system";
+}
+
+function resolveAssistantPresetInjectionPosition(value: unknown): AssistantPresetInjectionPosition {
+  return typeof value === "string" &&
+    ASSISTANT_PRESET_INJECTION_POSITIONS.has(value as AssistantPresetInjectionPosition)
+    ? (value as AssistantPresetInjectionPosition)
+    : "ordered";
+}
+
+function normalizeAssistantPresetIdentifier(
+  value: string | undefined,
+  fallbackIndex: number,
+  used: Set<string>,
+): string {
   const base =
     value
       ?.trim()
@@ -10304,6 +10335,7 @@ export async function generateRoutes(app: FastifyInstance) {
             "update_persona",
             "create_lorebook",
             "update_lorebook",
+            "create_preset",
             "create_chat",
             "navigate",
             "fetch",
@@ -11414,26 +11446,33 @@ export async function generateRoutes(app: FastifyInstance) {
                 if (command.type === "create_preset") {
                   const presetCmd = command as CreatePresetCommand;
                   try {
-                    const created = await presets.create({
-                      name: presetCmd.name,
-                      description: presetCmd.description ?? "",
-                      wrapFormat: presetCmd.wrapFormat ?? "xml",
-                      isDefault: false,
-                      author: presetCmd.author ?? "Professor Mari",
-                    });
+                    const createdPresetAction = await app.db.transaction(async (tx) => {
+                      const txPresets = createPromptsStorage(tx as unknown as typeof app.db);
+                      const created = await txPresets.create({
+                        name: presetCmd.name,
+                        description: presetCmd.description ?? "",
+                        wrapFormat: resolveAssistantPresetWrapFormat(presetCmd.wrapFormat),
+                        isDefault: false,
+                        author: presetCmd.author ?? "Professor Mari",
+                      });
 
-                    if (created) {
+                      if (!created) return null;
+
                       const createdPreset = created as unknown as { id: string };
                       const groupIds = new Map<string, string>();
                       const groupKey = (name: string) => name.trim().toLowerCase();
 
-                      const ensureGroup = async (name: string, order?: number, enabled?: boolean): Promise<string | null> => {
+                      const ensureGroup = async (
+                        name: string,
+                        order?: number,
+                        enabled?: boolean,
+                      ): Promise<string | null> => {
                         const trimmed = name.trim();
                         if (!trimmed) return null;
                         const key = groupKey(trimmed);
                         const existing = groupIds.get(key);
                         if (existing) return existing;
-                        const group = await presets.createGroup({
+                        const group = await txPresets.createGroup({
                           presetId: createdPreset.id,
                           name: trimmed,
                           order: order ?? (groupIds.size + 1) * 100,
@@ -11453,7 +11492,7 @@ export async function generateRoutes(app: FastifyInstance) {
                         const childId = groupIds.get(groupKey(group.name));
                         const parentId = await ensureGroup(group.parentGroupName);
                         if (childId && parentId) {
-                          await presets.updateGroup(childId, { parentGroupId: parentId });
+                          await txPresets.updateGroup(childId, { parentGroupId: parentId });
                         }
                       }
 
@@ -11461,17 +11500,21 @@ export async function generateRoutes(app: FastifyInstance) {
                       let sectionCount = 0;
                       for (const [index, section] of (presetCmd.sections ?? []).entries()) {
                         const groupId = section.groupName ? await ensureGroup(section.groupName) : null;
-                        await presets.createSection({
+                        await txPresets.createSection({
                           presetId: createdPreset.id,
-                          identifier: normalizeAssistantPresetIdentifier(section.identifier ?? section.name, index, usedIdentifiers),
+                          identifier: normalizeAssistantPresetIdentifier(
+                            section.identifier ?? section.name,
+                            index,
+                            usedIdentifiers,
+                          ),
                           name: section.name,
                           content: section.content ?? "",
-                          role: section.role ?? "system",
+                          role: resolveAssistantPresetRole(section.role),
                           enabled: section.enabled ?? true,
                           isMarker: false,
                           groupId,
                           markerConfig: null,
-                          injectionPosition: section.injectionPosition ?? "ordered",
+                          injectionPosition: resolveAssistantPresetInjectionPosition(section.injectionPosition),
                           injectionDepth: Math.max(0, section.injectionDepth ?? 0),
                           injectionOrder: section.injectionOrder ?? (index + 1) * 100,
                           forbidOverrides: section.forbidOverrides ?? false,
@@ -11483,7 +11526,7 @@ export async function generateRoutes(app: FastifyInstance) {
                       let choiceBlockCount = 0;
                       for (const [index, choiceBlock] of (presetCmd.choiceBlocks ?? []).entries()) {
                         const optionIds = new Set<string>();
-                        await presets.createChoiceBlock({
+                        await txPresets.createChoiceBlock({
                           presetId: createdPreset.id,
                           variableName: normalizeAssistantPresetVariableName(
                             choiceBlock.variableName,
@@ -11503,24 +11546,33 @@ export async function generateRoutes(app: FastifyInstance) {
                         choiceBlockCount += 1;
                       }
 
+                      return {
+                        id: createdPreset.id,
+                        name: presetCmd.name,
+                        sectionCount,
+                        choiceBlockCount,
+                      };
+                    });
+
+                    if (createdPresetAction) {
                       reply.raw.write(
                         `data: ${JSON.stringify({
                           type: "assistant_action",
                           data: {
                             action: "preset_created",
-                            id: createdPreset.id,
-                            name: presetCmd.name,
-                            sectionCount,
-                            choiceBlockCount,
+                            id: createdPresetAction.id,
+                            name: createdPresetAction.name,
+                            sectionCount: createdPresetAction.sectionCount,
+                            choiceBlockCount: createdPresetAction.choiceBlockCount,
                           },
                         })}\n\n`,
                       );
                       logger.info(
                         '[commands] Assistant created preset: "%s" (%s), sections=%d choiceBlocks=%d',
-                        presetCmd.name,
-                        createdPreset.id,
-                        sectionCount,
-                        choiceBlockCount,
+                        createdPresetAction.name,
+                        createdPresetAction.id,
+                        createdPresetAction.sectionCount,
+                        createdPresetAction.choiceBlockCount,
                       );
                     }
                   } catch (err) {
@@ -11686,10 +11738,14 @@ export async function generateRoutes(app: FastifyInstance) {
                         parts.push(`Wrap Format: ${found.wrapFormat ?? "xml"}`);
                         parts.push(`Default Preset: ${String(found.isDefault) === "true" ? "yes" : "no"}`);
                         if (Object.keys(parameters).length > 0) {
-                          parts.push(`Generation Parameters: ${truncateMariFetchedText(JSON.stringify(parameters), 1200)}`);
+                          parts.push(
+                            `Generation Parameters: ${truncateMariFetchedText(JSON.stringify(parameters), 1200)}`,
+                          );
                         }
                         if (Object.keys(defaultChoices).length > 0) {
-                          parts.push(`Default Choices: ${truncateMariFetchedText(JSON.stringify(defaultChoices), 1200)}`);
+                          parts.push(
+                            `Default Choices: ${truncateMariFetchedText(JSON.stringify(defaultChoices), 1200)}`,
+                          );
                         }
                         if ((groups as any[]).length > 0) {
                           parts.push(`Groups (${(groups as any[]).length}):`);
@@ -11737,7 +11793,10 @@ export async function generateRoutes(app: FastifyInstance) {
                             );
                           }
                         }
-                        fetchedContent = parts.join("\n");
+                        fetchedContent = truncateMariFetchedText(
+                          parts.join("\n"),
+                          MAX_MARI_FETCHED_PRESET_CONTEXT_CHARS,
+                        );
                       }
                     }
 

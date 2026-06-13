@@ -38,6 +38,11 @@ export const lorebookScheduleSchema = z.object({
   activeLocations: z.array(z.string()).default([]),
 });
 
+const lorebookGeneratedBySchema = z
+  .enum(["user", "agent", "import", "lorebook-maker"])
+  .nullable()
+  .transform((value) => (value === "lorebook-maker" ? "agent" : value));
+
 // ──────────────────────────────────────────────
 // Folders — collapsible containers for entries
 // `parentFolderId` is reserved for a future nested-folder PR; v1 enforces
@@ -77,7 +82,7 @@ export const createLorebookSchema = z.object({
   enabled: z.boolean().default(true),
   scope: lorebookScopeSchema.default({ mode: "all", chatIds: [] }),
   tags: z.array(z.string()).default([]),
-  generatedBy: z.enum(["user", "agent", "import"]).nullable().default(null),
+  generatedBy: lorebookGeneratedBySchema.default(null),
   sourceAgentId: z.string().nullable().default(null),
 });
 
@@ -101,7 +106,7 @@ export const updateLorebookSchema = z
     enabled: z.boolean().optional(),
     scope: lorebookScopeSchema.optional(),
     tags: z.array(z.string()).optional(),
-    generatedBy: z.enum(["user", "agent", "import"]).nullable().optional(),
+    generatedBy: lorebookGeneratedBySchema.optional(),
     sourceAgentId: z.string().nullable().optional(),
   })
   .superRefine((value, ctx) => {

@@ -21,7 +21,7 @@ export function ConnectionSection({ connectionId, connections, isGame, onConnect
       icon={<Plug size="0.875rem" />}
       help={
         isGame
-          ? "Separate AI models for the Game Master (narration, world, NPCs) and the Party chat (inter-character banter)."
+          ? "Choose the model used for game generation in this chat. GM and Party flows share this selection."
           : "Which AI provider and model to use for this chat. 'Random' picks a different connection each time from your random pool."
       }
     >

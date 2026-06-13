@@ -93,7 +93,10 @@ export function TranslationSection({ metadata, textConnections, onMetadataChange
           <div>
             <label className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
               DeepLX URL
-              <HelpTooltip text="URL of your self-hosted DeepLX instance (e.g. http://localhost:1188)" size="0.625rem" />
+              <HelpTooltip
+                text="URL of your self-hosted DeepLX instance (e.g. http://localhost:1188)"
+                size="0.625rem"
+              />
             </label>
             <input
               type="text"
@@ -141,10 +144,14 @@ function TranslationToggle({
 }) {
   return (
     <button
+      type="button"
+      aria-pressed={enabled}
       onClick={onToggle}
       className={cn(
         "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-        enabled ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30" : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+        enabled
+          ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+          : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
       )}
     >
       <div className="flex-1 min-w-0">
@@ -157,7 +164,9 @@ function TranslationToggle({
           enabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
         )}
       >
-        <div className={cn("h-4 w-4 rounded-full bg-white shadow-sm transition-transform", enabled && "translate-x-3.5")} />
+        <div
+          className={cn("h-4 w-4 rounded-full bg-white shadow-sm transition-transform", enabled && "translate-x-3.5")}
+        />
       </div>
     </button>
   );

@@ -39,6 +39,8 @@ export function SceneInstructionsSection({
           className="w-full resize-y rounded-lg bg-[var(--secondary)] px-3 py-2 pr-8 text-xs leading-relaxed outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
         />
         <button
+          type="button"
+          aria-label="Expand scene instructions editor"
           onClick={() => onExpandedChange(true)}
           className="absolute right-1.5 top-1.5 rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
           title="Expand editor"

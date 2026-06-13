@@ -39,7 +39,12 @@ export function PickerDropdown({
           autoFocus
           className="flex-1 bg-transparent text-xs outline-none placeholder:text-[var(--muted-foreground)]"
         />
-        <button onClick={onClose} className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+        <button
+          type="button"
+          aria-label="Close picker"
+          onClick={onClose}
+          className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+        >
           <X size="0.75rem" />
         </button>
       </div>

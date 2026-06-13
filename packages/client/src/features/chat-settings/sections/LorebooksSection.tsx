@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { BookOpen, Plus, Trash2 } from "lucide-react";
 import { LIMITS, type Lorebook } from "@marinara-engine/shared";
 import { isLorebookScopeActiveForChat } from "../../../lib/lorebook-scope";
@@ -39,6 +40,7 @@ export function LorebooksSection({
   onShowLorebookPickerChange,
   onToggleLorebook,
 }: LorebooksSectionProps) {
+  const [tokenBudgetDraft, setTokenBudgetDraft] = useState(String(lorebookTokenBudget));
   const activeLorebookIdSet = new Set(activeLorebooks.map((lorebook) => lorebook.id));
   const inactiveLorebooks = lorebooks
     .filter((lorebook) => isLorebookScopeActiveForChat(lorebook.scope, chatId))
@@ -46,6 +48,15 @@ export function LorebooksSection({
   const visibleInactiveLorebooks = inactiveLorebooks.filter((lorebook) =>
     lorebook.name.toLowerCase().includes(lorebookSearch.toLowerCase()),
   );
+  const commitTokenBudget = () => {
+    const next = Math.max(0, Math.floor(Number(tokenBudgetDraft) || 0));
+    onLorebookTokenBudgetChange(next);
+    setTokenBudgetDraft(String(next));
+  };
+
+  useEffect(() => {
+    setTokenBudgetDraft(String(lorebookTokenBudget));
+  }, [lorebookTokenBudget]);
 
   return (
     <ChatSettingsSection
@@ -64,10 +75,13 @@ export function LorebooksSection({
         <input
           type="number"
           min={0}
-          value={lorebookTokenBudget}
-          onChange={(event) => {
-            const next = Math.max(0, Math.floor(Number(event.target.value) || 0));
-            onLorebookTokenBudgetChange(next);
+          value={tokenBudgetDraft}
+          onChange={(event) => setTokenBudgetDraft(event.target.value)}
+          onBlur={commitTokenBudget}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            }
           }}
           className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
         />

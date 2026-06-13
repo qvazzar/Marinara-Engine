@@ -142,6 +142,8 @@ export function ToolEditor() {
     return { type: "object", properties, required };
   }, [localParams]);
 
+  const currentEnabled = dbTool ? dbTool.enabled === "true" || dbTool.enabled === "1" : true;
+
   const handleSave = useCallback(async () => {
     if (!toolDetailId) return;
     setSaveError(null);
@@ -171,7 +173,7 @@ export function ToolEditor() {
       webhookUrl: localExecType === "webhook" ? localWebhookUrl || null : null,
       staticResult: localExecType === "static" ? localStaticResult || null : null,
       scriptBody: localExecType === "script" ? localScriptBody || null : null,
-      enabled: true,
+      enabled: currentEnabled,
     };
 
     try {
@@ -196,6 +198,7 @@ export function ToolEditor() {
     localStaticResult,
     localScriptBody,
     dbTool,
+    currentEnabled,
     createTool,
     updateTool,
     buildParamsSchema,
@@ -216,11 +219,12 @@ export function ToolEditor() {
         webhookUrl: localExecType === "webhook" ? localWebhookUrl || null : null,
         staticResult: localExecType === "static" ? localStaticResult || null : null,
         scriptBody: localExecType === "script" ? localScriptBody || null : null,
-        enabled: true,
+        enabled: currentEnabled,
       },
       `${sanitizeExportFilenamePart(localName, "function")}.json`,
     );
   }, [
+    currentEnabled,
     localName,
     localDesc,
     localExecType,

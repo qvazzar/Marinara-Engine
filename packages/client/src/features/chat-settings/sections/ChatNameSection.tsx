@@ -33,12 +33,18 @@ export function ChatNameSection({
             autoFocus
             className="flex-1 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-[var(--primary)]/40"
           />
-          <button onClick={onSaveName} className="rounded-lg bg-[var(--primary)] px-3 py-2 text-xs text-white">
+          <button
+            type="button"
+            aria-label="Save chat name"
+            onClick={onSaveName}
+            className="rounded-lg bg-[var(--primary)] px-3 py-2 text-xs text-white"
+          >
             <Check size="0.75rem" />
           </button>
         </div>
       ) : (
         <button
+          type="button"
           onClick={onBeginEdit}
           className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]"
         >

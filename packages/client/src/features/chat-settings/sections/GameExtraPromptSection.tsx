@@ -19,7 +19,8 @@ export function GameExtraPromptSection({
   onExpandedChange,
   onValueChange,
 }: GameExtraPromptSectionProps) {
-  const commitIfChanged = () => {
+  const commitIfChanged = (nextFocusTarget?: EventTarget | null) => {
+    if ((nextFocusTarget as HTMLElement | null)?.closest?.("[data-skip-blur-commit='true']")) return;
     if (value !== storedValue) onCommit(value || null);
   };
 
@@ -34,12 +35,15 @@ export function GameExtraPromptSection({
           <textarea
             value={value}
             onChange={(event) => onValueChange(event.target.value)}
-            onBlur={commitIfChanged}
+            onBlur={(event) => commitIfChanged(event.relatedTarget)}
             placeholder="e.g. Write in a poetic, literary style. Avoid graphic violence. Always describe the weather..."
             rows={5}
             className="w-full resize-y rounded-lg bg-[var(--secondary)] px-3 py-2 pr-8 text-xs leading-relaxed outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
           />
           <button
+            type="button"
+            aria-label="Expand extra prompt editor"
+            data-skip-blur-commit="true"
             onClick={() => onExpandedChange(true)}
             className="absolute right-1.5 top-1.5 rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
             title="Expand editor"
@@ -52,6 +56,8 @@ export function GameExtraPromptSection({
         </p>
         {value && (
           <button
+            type="button"
+            data-skip-blur-commit="true"
             onClick={() => {
               onValueChange("");
               onCommit(null);
@@ -66,7 +72,7 @@ export function GameExtraPromptSection({
         open={expanded}
         onClose={() => {
           onExpandedChange(false);
-          commitIfChanged();
+          commitIfChanged(null);
         }}
         title="Extra Prompt"
         value={value}
