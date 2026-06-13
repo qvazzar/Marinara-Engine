@@ -88,13 +88,14 @@ import { HelpTooltip } from "../ui/HelpTooltip";
 import { TrackerPanelIcon } from "../ui/TrackerPanelIcon";
 import { TrackerSizeTierIcon } from "../ui/TrackerSizeTierIcon";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
-import { ConversationSoundSetting, ToggleSetting } from "./settings/SettingControls";
+import { ConversationSoundSetting, SettingsIntro, SettingsSection, ToggleSetting } from "./settings/SettingControls";
 import { TrackerCardColorSettings } from "./settings/TrackerCardColorSettings";
 import { PromptOverridesEditor } from "./settings/PromptOverridesEditor";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
 import { inspectCharacterFilesForEmbeddedLorebooks } from "../../lib/character-import";
 import { showConfirmDialog } from "../../lib/app-dialogs";
+import { downloadJsonFile, sanitizeExportFilenamePart } from "../../lib/download-json";
 
 type CustomFontFace = {
   filename: string;
@@ -122,6 +123,38 @@ const SETTINGS_COMPONENTS: Record<(typeof TABS)[number]["id"], React.FC> = {
   import: React.memo(ImportSettings),
   advanced: React.memo(AdvancedSettings),
 };
+
+type SettingsArtPreviewSize = { width: number; height: number };
+
+const SETTINGS_ART_PREVIEW_FRAME = {
+  width: 6,
+  height: 4,
+  gap: 0.75,
+} as const;
+
+function fitSettingsArtPreviewSizes(sizes: SettingsArtPreviewSize[]): SettingsArtPreviewSize[] {
+  const visibleSizes = sizes.filter((size) => size.width > 0 && size.height > 0);
+  if (!visibleSizes.length) return sizes;
+
+  const totalWidth =
+    visibleSizes.reduce((sum, size) => sum + size.width, 0) +
+    SETTINGS_ART_PREVIEW_FRAME.gap * Math.max(0, visibleSizes.length - 1);
+  const maxHeight = Math.max(...visibleSizes.map((size) => size.height));
+  const fit = Math.min(
+    1,
+    SETTINGS_ART_PREVIEW_FRAME.width / totalWidth,
+    SETTINGS_ART_PREVIEW_FRAME.height / maxHeight,
+  );
+
+  return sizes.map((size) => ({
+    width: size.width * fit,
+    height: size.height * fit,
+  }));
+}
+
+function toPreviewRem(value: number) {
+  return `${Number(value.toFixed(3))}rem`;
+}
 
 const EXPUNGE_SCOPE_OPTIONS: Array<{ id: ExpungeScope; label: string; description: string }> = [
   {
@@ -489,9 +522,7 @@ function ImageStyleProfilesEditor({
           </label>
 
           <label className="min-w-0">
-            <span className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-              Editing
-            </span>
+            <span className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Editing</span>
             <select
               value={selected.id}
               onChange={(event) => setSelectedId(event.target.value)}
@@ -546,9 +577,7 @@ function ImageStyleProfilesEditor({
           />
         </label>
         <label className="min-w-0">
-          <span className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-            Prompt grammar
-          </span>
+          <span className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Prompt grammar</span>
           <select
             value={selected.promptMode}
             onChange={(event) => updateSelected({ promptMode: event.target.value as ImagePromptMode })}
@@ -1017,23 +1046,22 @@ export function SettingsPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="grid flex-shrink-0 grid-cols-2 gap-2 p-3 pb-2 md:grid-cols-3">
+      <div role="tablist" className="grid flex-shrink-0 grid-cols-2 gap-2 p-3 pb-2 md:grid-cols-3">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             type="button"
-            aria-pressed={settingsTab === tab.id}
+            role="tab"
+            aria-selected={settingsTab === tab.id}
             onClick={() => setSettingsTab(tab.id)}
             className={cn(
-              "flex min-w-0 items-center justify-center rounded-xl border px-2 py-2.5 font-medium text-white transition-all [container-type:inline-size] active:scale-[0.98]",
+              "flex min-w-0 items-center justify-center rounded-xl border px-2 py-2.5 text-[0.6875rem] font-medium leading-tight text-[var(--foreground)] transition-all active:scale-[0.98] sm:text-xs",
               settingsTab === tab.id
                 ? "border-[var(--primary)]/35 bg-[var(--accent)]"
                 : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--primary)]/35 hover:bg-[var(--accent)]",
             )}
           >
-            <span className="max-w-full whitespace-nowrap text-center text-[clamp(0.5625rem,12cqw,0.75rem)] leading-tight">
-              {tab.label}
-            </span>
+            <span className="max-w-full text-center">{tab.label}</span>
           </button>
         ))}
       </div>
@@ -1072,22 +1100,6 @@ function GeneralSettings() {
   const setGameTextSpeed = useUIStore((s) => s.setGameTextSpeed);
   const gameAutoPlayDelay = useUIStore((s) => s.gameAutoPlayDelay);
   const setGameAutoPlayDelay = useUIStore((s) => s.setGameAutoPlayDelay);
-  const reviewImagePromptsBeforeSend = useUIStore((s) => s.reviewImagePromptsBeforeSend);
-  const setReviewImagePromptsBeforeSend = useUIStore((s) => s.setReviewImagePromptsBeforeSend);
-  const imageBackgroundWidth = useUIStore((s) => s.imageBackgroundWidth);
-  const imageBackgroundHeight = useUIStore((s) => s.imageBackgroundHeight);
-  const setImageBackgroundDimensions = useUIStore((s) => s.setImageBackgroundDimensions);
-  const imageIllustrationWidth = useUIStore((s) => s.imageIllustrationWidth);
-  const imageIllustrationHeight = useUIStore((s) => s.imageIllustrationHeight);
-  const setImageIllustrationDimensions = useUIStore((s) => s.setImageIllustrationDimensions);
-  const imagePortraitWidth = useUIStore((s) => s.imagePortraitWidth);
-  const imagePortraitHeight = useUIStore((s) => s.imagePortraitHeight);
-  const setImagePortraitDimensions = useUIStore((s) => s.setImagePortraitDimensions);
-  const imageSelfieWidth = useUIStore((s) => s.imageSelfieWidth);
-  const imageSelfieHeight = useUIStore((s) => s.imageSelfieHeight);
-  const setImageSelfieDimensions = useUIStore((s) => s.setImageSelfieDimensions);
-  const imageStyleProfiles = useUIStore((s) => s.imageStyleProfiles);
-  const setImageStyleProfiles = useUIStore((s) => s.setImageStyleProfiles);
   const enterToSendRP = useUIStore((s) => s.enterToSendRP);
   const setEnterToSendRP = useUIStore((s) => s.setEnterToSendRP);
   const enterToSendConvo = useUIStore((s) => s.enterToSendConvo);
@@ -1118,6 +1130,397 @@ function GeneralSettings() {
   const setEditLastMessageOnArrowUp = useUIStore((s) => s.setEditLastMessageOnArrowUp);
   const editMessageOnDoubleClick = useUIStore((s) => s.editMessageOnDoubleClick);
   const setEditMessageOnDoubleClick = useUIStore((s) => s.setEditMessageOnDoubleClick);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <SettingsIntro>Core app behavior, ordered from daily controls to mode-specific tuning.</SettingsIntro>
+
+      <SettingsSection
+        title="Application"
+        description="Global preferences that affect the whole app."
+        icon={<Power size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-2.5">
+          <label className="flex flex-col gap-1">
+            <span className="inline-flex items-center gap-1 text-xs font-medium">
+              Language
+              <HelpTooltip text="Choose the app language. Only English is available right now, but this setting is persisted so future translation PRs can extend it cleanly." />
+            </span>
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as (typeof APP_LANGUAGE_OPTIONS)[number]["id"])}
+              className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]"
+            >
+              {APP_LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+              English is the only bundled language for now. Future translations can add more options here without
+              changing the settings shape.
+            </p>
+          </label>
+
+          <ToggleSetting
+            label="Confirm before deleting"
+            checked={confirmBeforeDelete}
+            onChange={setConfirmBeforeDelete}
+            help="Shows a confirmation dialog before permanently deleting chats, characters, or other items. Recommended to keep on."
+          />
+          <ToggleSetting
+            label="Spotify mini player"
+            checked={spotifyPlayerEnabled}
+            onChange={setSpotifyPlayerEnabled}
+            help="Shows a compact Spotify player in the top bar on desktop and as a draggable floating widget on mobile. Requires the Spotify DJ agent to be connected."
+          />
+          <ToggleSetting
+            label="Mini Mari surprise visits"
+            checked={chibiProfessorMariEnabled}
+            onChange={setChibiProfessorMariEnabled}
+            help="Allows the rare Chibi Professor Mari message to appear while scrolling. Turn this off if it gets in the way of settings or other workflows."
+          />
+          <ConversationSoundSetting />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Responses"
+        description="How replies arrive, save, and paginate."
+        icon={<MessageCircle size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-2.5">
+          <ToggleSetting
+            label="Enable streaming responses"
+            checked={enableStreaming}
+            onChange={setEnableStreaming}
+            help="When on, AI responses appear word-by-word as they're generated. When off, the full response appears at once after completion."
+          />
+
+          <label
+            className={cn(
+              "flex flex-col gap-1.5 rounded-lg p-1 transition-colors",
+              enableStreaming ? "hover:bg-[var(--secondary)]/50" : "opacity-40 pointer-events-none",
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-xs">Streaming speed</span>
+              <span className="text-xs tabular-nums text-[var(--muted-foreground)]">{streamingSpeed}</span>
+              <HelpTooltip text="How fast streaming tokens appear on screen. Lower values give a slower typewriter effect so you can read along. Higher values show text almost instantly." />
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={100}
+              step={1}
+              value={streamingSpeed}
+              onChange={(e) => setStreamingSpeed(Number(e.target.value))}
+              className="w-full accent-[var(--primary)]"
+            />
+            <div className="flex justify-between text-[0.625rem] text-[var(--muted-foreground)]">
+              <span>Slow</span>
+              <span>Fast</span>
+            </div>
+          </label>
+
+          <ToggleSetting
+            label="Trim incomplete model endings"
+            checked={trimIncompleteModelOutput}
+            onChange={setTrimIncompleteModelOutput}
+            help="When on, Marinara trims a trailing unfinished sentence from AI responses before saving the message. It leaves complete responses and command-only endings alone."
+          />
+
+          <label className="flex flex-wrap items-center gap-2.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
+            <span className="text-xs">Messages per page</span>
+            <DraftNumberInput
+              value={messagesPerPage}
+              min={0}
+              max={500}
+              commitOnValidChange
+              onCommit={(nextValue) => setMessagesPerPage(Math.max(0, Math.min(500, nextValue)))}
+              className="w-16 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs"
+            />
+            <HelpTooltip text="How many messages to load at a time. Click 'Load More' in the chat to see older messages. Set to 0 to load all messages at once." />
+          </label>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Input & Editing"
+        description="Message input behavior and fast edit controls."
+        icon={<UserCheck size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-2.5">
+          <div className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
+            <div className="flex items-center gap-2">
+              <span className="text-xs">Send on Enter</span>
+              <HelpTooltip text="Choose which chat modes send on Enter. When off, Enter creates a new line and you have to press the send button manually." />
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                onClick={() => setEnterToSendRP(!enterToSendRP)}
+                className={cn(
+                  "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-all",
+                  enterToSendRP
+                    ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
+                    : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                )}
+              >
+                Roleplay
+              </button>
+              <button
+                onClick={() => setEnterToSendConvo(!enterToSendConvo)}
+                className={cn(
+                  "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-all",
+                  enterToSendConvo
+                    ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
+                    : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                )}
+              >
+                Conversations
+              </button>
+              <button
+                onClick={() => setEnterToSendGame(!enterToSendGame)}
+                className={cn(
+                  "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-all",
+                  enterToSendGame
+                    ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
+                    : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                )}
+              >
+                Game
+              </button>
+            </div>
+          </div>
+
+          <ToggleSetting
+            label="Speech-to-text microphone"
+            checked={speechToTextEnabled}
+            onChange={setSpeechToTextEnabled}
+            help="When on, chat input bars show a microphone button for browser dictation. Handy still works independently by pasting into the focused input field."
+          />
+          <ToggleSetting
+            label="Intuitive swipe navigation"
+            checked={intuitiveSwipeNavigation}
+            onChange={setIntuitiveSwipeNavigation}
+            help="In Conversation and Roleplay modes, use Left/Right Arrow on desktop or horizontal touch swipes on mobile to move between alternate generations on the latest assistant message."
+          />
+          <div
+            className={cn("pl-5 transition-opacity", intuitiveSwipeNavigation ? "" : "pointer-events-none opacity-45")}
+          >
+            <ToggleSetting
+              label="Reroll past the newest swipe"
+              checked={intuitiveSwipeRerollLatest}
+              onChange={setIntuitiveSwipeRerollLatest}
+              help="When intuitive swipes are enabled, pressing Right Arrow or swiping left on the newest swipe of the latest assistant message creates a new reroll."
+            />
+          </div>
+          <ToggleSetting
+            label="Up Arrow edits last message"
+            checked={editLastMessageOnArrowUp}
+            onChange={setEditLastMessageOnArrowUp}
+            help="In Conversation and Roleplay modes, press Up Arrow while the chat input is empty to open the most recent message in the chat for editing — whether it's yours or the AI's."
+          />
+          <ToggleSetting
+            label="Double-click edits messages"
+            checked={editMessageOnDoubleClick}
+            onChange={setEditMessageOnDoubleClick}
+            help="When on, double-click or double-tap a Roleplay message to open it for editing. Turn it off to avoid accidental edits; edit buttons and keyboard shortcuts still work."
+          />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Text Rules"
+        description="Formatting applied to chat text."
+        icon={<FileText size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-2.5">
+          <ToggleSetting
+            label="Bold dialogue in quotes"
+            checked={boldDialogue ?? true}
+            onChange={setBoldDialogue}
+            help={
+              'When on, text inside dialogue quotation marks ("like this", 「like this」, or 『like this』) is bolded in addition to its dialogue highlight color. Turn it off to keep the color without bold.'
+            }
+          />
+
+          <div className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
+            <div className="flex items-center gap-2">
+              <span className="text-xs">Quote style</span>
+              <HelpTooltip text="Choose how straight and smart quotation marks are unified in chat inputs and displayed AI output." />
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {QUOTE_FORMAT_OPTIONS.map((option) => {
+                const active = quoteFormat === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setQuoteFormat(option.id)}
+                    className={cn(
+                      "flex min-w-0 flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left text-xs transition-all ring-1",
+                      active
+                        ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-[var(--primary)]/35"
+                        : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-[var(--border)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                    )}
+                  >
+                    <span className="font-medium">{option.label}</span>
+                    <span className="max-w-full truncate text-[0.625rem] opacity-80">{option.sample}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Game Playback"
+        description="Game mode reading and navigation."
+        icon={<ScrollText size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-2.5">
+          <ToggleSetting
+            label="Instantly reveal game text"
+            checked={gameInstantTextReveal}
+            onChange={setGameInstantTextReveal}
+            help="When enabled, Game mode narration segments appear fully as soon as you enter them. This skips the typewriter effect and hides the narration speed control."
+          />
+          <ToggleSetting
+            label="Mouse-wheel + click navigation"
+            checked={gameMiddleMouseNav}
+            onChange={setGameMiddleMouseNav}
+            help="In Game mode, scroll the mouse wheel up to step back through past assistant turns and down to step forward. Clicking the scene background acts like the Next button. While reviewing the past, Next becomes Return — clicking the background or pressing Return jumps you back to where you were reading."
+          />
+
+          {!gameInstantTextReveal && (
+            <label className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
+              <div className="flex items-center gap-2">
+                <span className="text-xs">Game narration speed</span>
+                <span className="text-xs tabular-nums text-[var(--muted-foreground)]">{gameTextSpeed}</span>
+                <HelpTooltip text="How fast the typewriter effect displays narration text in Game mode. Lower values give a slower cinematic reveal. Higher values show text almost instantly." />
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={100}
+                step={1}
+                value={gameTextSpeed}
+                onChange={(e) => setGameTextSpeed(Number(e.target.value))}
+                className="w-full accent-[var(--primary)]"
+              />
+              <div className="flex justify-between text-[0.625rem] text-[var(--muted-foreground)]">
+                <span>Slow</span>
+                <span>Fast</span>
+              </div>
+            </label>
+          )}
+
+          <label className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
+            <div className="flex items-center gap-2">
+              <span className="text-xs">Game auto-play segment delay</span>
+              <span className="text-xs tabular-nums text-[var(--muted-foreground)]">
+                {(gameAutoPlayDelay / 1000).toFixed(1)}s
+              </span>
+              <HelpTooltip text="Pause between each narration segment when auto-play is enabled in Game mode. Enable auto-play via the ▶ button next to Next." />
+            </div>
+            <input
+              type="range"
+              min={200}
+              max={5000}
+              step={100}
+              value={gameAutoPlayDelay}
+              onChange={(e) => setGameAutoPlayDelay(Number(e.target.value))}
+              className="w-full accent-[var(--primary)]"
+            />
+            <div className="flex justify-between text-[0.625rem] text-[var(--muted-foreground)]">
+              <span>Short</span>
+              <span>Long</span>
+            </div>
+          </label>
+        </div>
+      </SettingsSection>
+    </div>
+  );
+}
+
+function ImageGenerationSettings() {
+  const reviewImagePromptsBeforeSend = useUIStore((s) => s.reviewImagePromptsBeforeSend);
+  const setReviewImagePromptsBeforeSend = useUIStore((s) => s.setReviewImagePromptsBeforeSend);
+  const imageBackgroundWidth = useUIStore((s) => s.imageBackgroundWidth);
+  const imageBackgroundHeight = useUIStore((s) => s.imageBackgroundHeight);
+  const setImageBackgroundDimensions = useUIStore((s) => s.setImageBackgroundDimensions);
+  const imageIllustrationWidth = useUIStore((s) => s.imageIllustrationWidth);
+  const imageIllustrationHeight = useUIStore((s) => s.imageIllustrationHeight);
+  const setImageIllustrationDimensions = useUIStore((s) => s.setImageIllustrationDimensions);
+  const imagePortraitWidth = useUIStore((s) => s.imagePortraitWidth);
+  const imagePortraitHeight = useUIStore((s) => s.imagePortraitHeight);
+  const setImagePortraitDimensions = useUIStore((s) => s.setImagePortraitDimensions);
+  const imageSelfieWidth = useUIStore((s) => s.imageSelfieWidth);
+  const imageSelfieHeight = useUIStore((s) => s.imageSelfieHeight);
+  const setImageSelfieDimensions = useUIStore((s) => s.setImageSelfieDimensions);
+  const imageStyleProfiles = useUIStore((s) => s.imageStyleProfiles);
+  const setImageStyleProfiles = useUIStore((s) => s.setImageStyleProfiles);
+
+  return (
+    <SettingsSection
+      title="Image Generation"
+      description="Review generated prompts, set image canvas defaults, and tune prompt style profiles."
+      icon={<Image size="0.875rem" />}
+    >
+      <div className="flex flex-col gap-2.5">
+        <ToggleSetting
+          label="Expose image prompts before sending"
+          checked={reviewImagePromptsBeforeSend}
+          onChange={setReviewImagePromptsBeforeSend}
+          help="Shows generated image prompts for review before sending Game assets, character or persona avatars, and sprite generations to the image provider."
+        />
+
+        <ImageDimensionRow
+          label="Backgrounds"
+          help="Used for Game mode generated backgrounds."
+          width={imageBackgroundWidth}
+          height={imageBackgroundHeight}
+          onCommit={setImageBackgroundDimensions}
+        />
+        <ImageDimensionRow
+          label="Illustrations"
+          help="Used for Illustrator agent images saved to chat galleries, including comic pages and scene illustrations."
+          width={imageIllustrationWidth}
+          height={imageIllustrationHeight}
+          onCommit={setImageIllustrationDimensions}
+        />
+        <ImageDimensionRow
+          label="Portraits"
+          help="Used for generated character and NPC portraits."
+          width={imagePortraitWidth}
+          height={imagePortraitHeight}
+          onCommit={setImagePortraitDimensions}
+        />
+        <ImageDimensionRow
+          label="Selfies"
+          help="Default selfie canvas for Roleplay and Conversation image commands when a chat does not override selfie resolution."
+          width={imageSelfieWidth}
+          height={imageSelfieHeight}
+          onCommit={setImageSelfieDimensions}
+        />
+
+        <div className="mt-1">
+          <div className="mb-2 flex items-center gap-1 text-xs font-medium text-[var(--foreground)]">
+            Style Profiles
+            <HelpTooltip text="Defines what Anime, Danbooru, Realistic, and custom styles mean when Marinara compiles image prompts. Profiles merge with per-chat and connection settings, then clean duplicate tags before sending." />
+          </div>
+          <ImageStyleProfilesEditor value={imageStyleProfiles} onChange={setImageStyleProfiles} />
+        </div>
+      </div>
+    </SettingsSection>
+  );
+}
+
+function GameAssetsSettings() {
   const rescanGameAssets = useGameAssetStore((s) => s.rescanAssets);
   const assetFileRef = useRef<HTMLInputElement>(null);
   const [assetCategory, setAssetCategory] = useState<GameAssetCategoryId>("backgrounds");
@@ -1186,354 +1589,13 @@ function GeneralSettings() {
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="text-xs text-[var(--muted-foreground)]">General application settings.</div>
-
-      <label className="flex flex-col gap-1">
-        <span className="inline-flex items-center gap-1 text-xs font-medium">
-          Language
-          <HelpTooltip text="Choose the app language. Only English is available right now, but this setting is persisted so future translation PRs can extend it cleanly." />
-        </span>
-        <select
-          value={language}
-          onChange={(e) => setLanguage(e.target.value as (typeof APP_LANGUAGE_OPTIONS)[number]["id"])}
-          className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]"
-        >
-          {APP_LANGUAGE_OPTIONS.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-          English is the only bundled language for now. Future translations can add more options here without changing
-          the settings shape.
-        </p>
-      </label>
-
-      <ToggleSetting
-        label="Enable streaming responses"
-        checked={enableStreaming}
-        onChange={setEnableStreaming}
-        help="When on, AI responses appear word-by-word as they're generated. When off, the full response appears at once after completion."
-      />
-
-      <ToggleSetting
-        label="Spotify mini player"
-        checked={spotifyPlayerEnabled}
-        onChange={setSpotifyPlayerEnabled}
-        help="Shows a compact Spotify player in the top bar on desktop and as a draggable floating widget on mobile. Requires the Spotify DJ agent to be connected."
-      />
-
-      <ToggleSetting
-        label="Mini Mari surprise visits"
-        checked={chibiProfessorMariEnabled}
-        onChange={setChibiProfessorMariEnabled}
-        help="Allows the rare Chibi Professor Mari message to appear while scrolling. Turn this off if it gets in the way of settings or other workflows."
-      />
-
-      {/* Streaming Speed */}
-      <label
-        className={cn(
-          "flex flex-col gap-1.5 rounded-lg p-1 transition-colors",
-          enableStreaming ? "hover:bg-[var(--secondary)]/50" : "opacity-40 pointer-events-none",
-        )}
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-xs">Streaming speed</span>
-          <span className="text-xs tabular-nums text-[var(--muted-foreground)]">{streamingSpeed}</span>
-          <HelpTooltip text="How fast streaming tokens appear on screen. Lower values give a slower typewriter effect so you can read along. Higher values show text almost instantly." />
-        </div>
-        <input
-          type="range"
-          min={1}
-          max={100}
-          step={1}
-          value={streamingSpeed}
-          onChange={(e) => setStreamingSpeed(Number(e.target.value))}
-          className="w-full accent-[var(--primary)]"
-        />
-        <div className="flex justify-between text-[0.625rem] text-[var(--muted-foreground)]">
-          <span>Slow</span>
-          <span>Fast</span>
-        </div>
-      </label>
-
-      <ToggleSetting
-        label="Instantly reveal game text"
-        checked={gameInstantTextReveal}
-        onChange={setGameInstantTextReveal}
-        help="When enabled, Game mode narration segments appear fully as soon as you enter them. This skips the typewriter effect and hides the narration speed control."
-      />
-
-      <ToggleSetting
-        label="Mouse-wheel + click navigation"
-        checked={gameMiddleMouseNav}
-        onChange={setGameMiddleMouseNav}
-        help="In Game mode, scroll the mouse wheel up to step back through past assistant turns and down to step forward. Clicking the scene background acts like the Next button. While reviewing the past, Next becomes Return — clicking the background or pressing Return jumps you back to where you were reading."
-      />
-
-      {/* Game Narration Text Speed */}
-      {!gameInstantTextReveal && (
-        <label className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
-          <div className="flex items-center gap-2">
-            <span className="text-xs">Game narration speed</span>
-            <span className="text-xs tabular-nums text-[var(--muted-foreground)]">{gameTextSpeed}</span>
-            <HelpTooltip text="How fast the typewriter effect displays narration text in Game mode. Lower values give a slower cinematic reveal. Higher values show text almost instantly." />
-          </div>
-          <input
-            type="range"
-            min={1}
-            max={100}
-            step={1}
-            value={gameTextSpeed}
-            onChange={(e) => setGameTextSpeed(Number(e.target.value))}
-            className="w-full accent-[var(--primary)]"
-          />
-          <div className="flex justify-between text-[0.625rem] text-[var(--muted-foreground)]">
-            <span>Slow</span>
-            <span>Fast</span>
-          </div>
-        </label>
-      )}
-
-      {/* Game Auto-Play Delay */}
-      <label className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
-        <div className="flex items-center gap-2">
-          <span className="text-xs">Game auto-play segment delay</span>
-          <span className="text-xs tabular-nums text-[var(--muted-foreground)]">
-            {(gameAutoPlayDelay / 1000).toFixed(1)}s
-          </span>
-          <HelpTooltip text="Pause between each narration segment when auto-play is enabled in Game mode. Enable auto-play via the ▶ button next to Next." />
-        </div>
-        <input
-          type="range"
-          min={200}
-          max={5000}
-          step={100}
-          value={gameAutoPlayDelay}
-          onChange={(e) => setGameAutoPlayDelay(Number(e.target.value))}
-          className="w-full accent-[var(--primary)]"
-        />
-        <div className="flex justify-between text-[0.625rem] text-[var(--muted-foreground)]">
-          <span>Short</span>
-          <span>Long</span>
-        </div>
-      </label>
-
-      {/* Send on Enter — inline toggles per mode */}
-      <div className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
-        <div className="flex items-center gap-2">
-          <span className="text-xs">Send on Enter</span>
-          <HelpTooltip text="Choose which chat modes send on Enter. When off, Enter creates a new line and you have to press the send button manually." />
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setEnterToSendRP(!enterToSendRP)}
-            className={cn(
-              "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-all",
-              enterToSendRP
-                ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
-                : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
-            )}
-          >
-            Roleplay
-          </button>
-          <button
-            onClick={() => setEnterToSendConvo(!enterToSendConvo)}
-            className={cn(
-              "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-all",
-              enterToSendConvo
-                ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
-                : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
-            )}
-          >
-            Conversations
-          </button>
-          <button
-            onClick={() => setEnterToSendGame(!enterToSendGame)}
-            className={cn(
-              "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-all",
-              enterToSendGame
-                ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
-                : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
-            )}
-          >
-            Game
-          </button>
-        </div>
-      </div>
-
-      <ToggleSetting
-        label="Confirm before deleting"
-        checked={confirmBeforeDelete}
-        onChange={setConfirmBeforeDelete}
-        help="Shows a confirmation dialog before permanently deleting chats, characters, or other items. Recommended to keep on."
-      />
-
-      {/* Messages per page */}
-      <label className="flex items-center gap-2.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
-        <span className="text-xs">Messages per page</span>
-        <DraftNumberInput
-          value={messagesPerPage}
-          min={0}
-          max={500}
-          commitOnValidChange
-          onCommit={(nextValue) => setMessagesPerPage(Math.max(0, Math.min(500, nextValue)))}
-          className="w-16 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs"
-        />
-        <HelpTooltip text="How many messages to load at a time. Click 'Load More' in the chat to see older messages. Set to 0 to load all messages at once." />
-      </label>
-
-      <ToggleSetting
-        label="Bold dialogue in quotes"
-        checked={boldDialogue ?? true}
-        onChange={setBoldDialogue}
-        help={
-          'When on, text inside dialogue quotation marks ("like this", 「like this」, or 『like this』) is bolded in addition to its dialogue highlight color. Turn it off to keep the color without bold.'
-        }
-      />
-
-      <div className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
-        <div className="flex items-center gap-2">
-          <span className="text-xs">Quote style</span>
-          <HelpTooltip text="Choose how straight and smart quotation marks are unified in chat inputs and displayed AI output." />
-        </div>
-        <div className="grid grid-cols-2 gap-1.5">
-          {QUOTE_FORMAT_OPTIONS.map((option) => {
-            const active = quoteFormat === option.id;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                aria-pressed={active}
-                onClick={() => setQuoteFormat(option.id)}
-                className={cn(
-                  "flex min-w-0 flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left text-xs transition-all ring-1",
-                  active
-                    ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-[var(--primary)]/35"
-                    : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-[var(--border)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                )}
-              >
-                <span className="font-medium">{option.label}</span>
-                <span className="max-w-full truncate text-[0.625rem] opacity-80">{option.sample}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <ToggleSetting
-        label="Trim incomplete model endings"
-        checked={trimIncompleteModelOutput}
-        onChange={setTrimIncompleteModelOutput}
-        help="When on, Marinara trims a trailing unfinished sentence from AI responses before saving the message. It leaves complete responses and command-only endings alone."
-      />
-
-      <ToggleSetting
-        label="Speech-to-text microphone"
-        checked={speechToTextEnabled}
-        onChange={setSpeechToTextEnabled}
-        help="When on, chat input bars show a microphone button for browser dictation. Handy still works independently by pasting into the focused input field."
-      />
-
-      <ToggleSetting
-        label="Intuitive swipe navigation"
-        checked={intuitiveSwipeNavigation}
-        onChange={setIntuitiveSwipeNavigation}
-        help="In Conversation and Roleplay modes, use Left/Right Arrow on desktop or horizontal touch swipes on mobile to move between alternate generations on the latest assistant message."
-      />
-
-      <div className={cn("pl-5 transition-opacity", intuitiveSwipeNavigation ? "" : "pointer-events-none opacity-45")}>
-        <ToggleSetting
-          label="Reroll past the newest swipe"
-          checked={intuitiveSwipeRerollLatest}
-          onChange={setIntuitiveSwipeRerollLatest}
-          help="When intuitive swipes are enabled, pressing Right Arrow or swiping left on the newest swipe of the latest assistant message creates a new reroll."
-        />
-      </div>
-
-      <ToggleSetting
-        label="Up Arrow edits last message"
-        checked={editLastMessageOnArrowUp}
-        onChange={setEditLastMessageOnArrowUp}
-        help="In Conversation and Roleplay modes, press Up Arrow while the chat input is empty to open the most recent message in the chat for editing — whether it's yours or the AI's."
-      />
-
-      <ToggleSetting
-        label="Double-click edits messages"
-        checked={editMessageOnDoubleClick}
-        onChange={setEditMessageOnDoubleClick}
-        help="When on, double-click or double-tap a Roleplay message to open it for editing. Turn it off to avoid accidental edits; edit buttons and keyboard shortcuts still work."
-      />
-
-      <div className="rounded-xl bg-[var(--secondary)]/50 p-4 ring-1 ring-[var(--border)]">
-        <div className="mb-3 flex flex-col gap-1">
-          <div className="text-xs font-semibold text-[var(--foreground)]">Image Generation</div>
-          <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-            Review generated prompts before Game mode sends them, and set default canvases for generated assets.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2.5">
-          <ToggleSetting
-            label="Expose image prompts before sending"
-            checked={reviewImagePromptsBeforeSend}
-            onChange={setReviewImagePromptsBeforeSend}
-            help="Shows generated image prompts for review before sending Game assets, character or persona avatars, and sprite generations to the image provider."
-          />
-
-          <ImageDimensionRow
-            label="Backgrounds"
-            help="Used for Game mode generated backgrounds."
-            width={imageBackgroundWidth}
-            height={imageBackgroundHeight}
-            onCommit={setImageBackgroundDimensions}
-          />
-          <ImageDimensionRow
-            label="Illustrations"
-            help="Used for Illustrator agent images saved to chat galleries, including comic pages and scene illustrations."
-            width={imageIllustrationWidth}
-            height={imageIllustrationHeight}
-            onCommit={setImageIllustrationDimensions}
-          />
-          <ImageDimensionRow
-            label="Portraits"
-            help="Used for generated character and NPC portraits."
-            width={imagePortraitWidth}
-            height={imagePortraitHeight}
-            onCommit={setImagePortraitDimensions}
-          />
-          <ImageDimensionRow
-            label="Selfies"
-            help="Default selfie canvas for Roleplay and Conversation image commands when a chat does not override selfie resolution."
-            width={imageSelfieWidth}
-            height={imageSelfieHeight}
-            onCommit={setImageSelfieDimensions}
-          />
-
-          <div className="mt-1">
-            <div className="mb-2 flex items-center gap-1 text-xs font-medium text-[var(--foreground)]">
-              Style Profiles
-              <HelpTooltip text="Defines what Anime, Danbooru, Realistic, and custom styles mean when Marinara compiles image prompts. Profiles merge with per-chat and connection settings, then clean duplicate tags before sending." />
-            </div>
-            <ImageStyleProfilesEditor value={imageStyleProfiles} onChange={setImageStyleProfiles} />
-          </div>
-        </div>
-      </div>
-
-      <PromptOverridesEditor
-        title="Game Image Prompt Templates"
-        description="Edit the reusable templates Game Mode uses for NPC portraits, backgrounds, and scene illustrations."
-        help="These templates render before Game Mode sends recurring image-generation requests. One-off prompt review edits still only affect the current request."
-        keys={GAME_IMAGE_PROMPT_TEMPLATE_KEYS}
-        preferredKey="game.npcPortrait"
-      />
-
-      {/* Game Assets Folders */}
-      <div className="rounded-xl bg-[var(--secondary)]/50 p-4 ring-1 ring-[var(--border)]">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="text-xs font-semibold text-[var(--foreground)]">Game Assets</div>
+    <SettingsSection
+      title="Game Assets"
+      description="Open existing asset folders, import new files, and refresh the server manifest."
+      icon={<FolderOpen size="0.875rem" />}
+    >
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => {
               rescanGameAssets()
@@ -1545,8 +1607,6 @@ function GeneralSettings() {
             <RefreshCw size="0.75rem" />
             Rescan
           </button>
-        </div>
-        <div className="flex flex-wrap gap-2">
           {GAME_ASSET_CATEGORIES.map((folder) => (
             <button
               key={folder.id}
@@ -1559,7 +1619,7 @@ function GeneralSettings() {
           ))}
         </div>
 
-        <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <label className="flex min-w-0 flex-col gap-1">
             <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Type</span>
             <select
@@ -1585,7 +1645,7 @@ function GeneralSettings() {
           </label>
         </div>
 
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <input
             ref={assetFileRef}
             type="file"
@@ -1621,14 +1681,12 @@ function GeneralSettings() {
           )}
         </div>
 
-        <p className="mt-2.5 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-          On desktop, folder buttons open the server's asset folders. On mobile or a dedicated server, use upload here
-          so files from your phone are copied onto the server. Audio supports MP3, OGG, WAV, FLAC, M4A, AAC, and WebM;
-          images support PNG, JPG, GIF, WebP, AVIF, and SVG for sprites. Music folders use state/genre/intensity, such
-          as exploration/fantasy/calm.
+        <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+          Audio supports MP3, OGG, WAV, FLAC, M4A, AAC, and WebM. Images support PNG, JPG, GIF, WebP, AVIF, and SVG for
+          sprites. Music folders use state/genre/intensity, such as exploration/fantasy/calm.
         </p>
       </div>
-    </div>
+    </SettingsSection>
   );
 }
 
@@ -1752,349 +1810,403 @@ function AppearanceSettings() {
     },
   });
 
+  const roleplayAvatarPreviewBase: SettingsArtPreviewSize =
+    roleplayAvatarStyle === "none"
+      ? { width: 5, height: 2.5 }
+      : roleplayAvatarStyle === "panel"
+        ? { width: 2.6 * roleplayAvatarScale, height: 2 * roleplayAvatarScale }
+        : {
+            width: (roleplayAvatarStyle === "rectangles" ? 2.15 : 2) * roleplayAvatarScale,
+            height: (roleplayAvatarStyle === "rectangles" ? 2.7 : 3.4) * roleplayAvatarScale,
+          };
+  const roleplaySpritePreviewBase: SettingsArtPreviewSize = {
+    width: 0.85 * roleplaySpriteScale,
+    height: 3.2 * roleplaySpriteScale,
+  };
+  const [roleplayAvatarPreviewSize, roleplaySpritePreviewSize] = fitSettingsArtPreviewSizes([
+    roleplayAvatarPreviewBase,
+    roleplaySpritePreviewBase,
+  ]);
+  const roleplayAvatarPreview = roleplayAvatarPreviewSize ?? roleplayAvatarPreviewBase;
+  const roleplaySpritePreview = roleplaySpritePreviewSize ?? roleplaySpritePreviewBase;
+  const gameAvatarPreviewBase: SettingsArtPreviewSize = {
+    width: 2.25 * gameAvatarScale,
+    height: 2.6 * gameAvatarScale,
+  };
+  const gameFullBodyPreviewBase: SettingsArtPreviewSize = {
+    width: 0.9 * gameFullBodySpriteScale,
+    height: 3.4 * gameFullBodySpriteScale,
+  };
+  const [gameAvatarPreviewSize, gameFullBodyPreviewSize] = fitSettingsArtPreviewSizes([
+    gameAvatarPreviewBase,
+    gameFullBodyPreviewBase,
+  ]);
+  const gameAvatarPreview = gameAvatarPreviewSize ?? gameAvatarPreviewBase;
+  const gameFullBodyPreview = gameFullBodyPreviewSize ?? gameFullBodyPreviewBase;
+
   return (
-    <div className="flex flex-col gap-4">
-      {/* ── Visual Style ── */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1.5">
-          <Paintbrush size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <span className="text-xs font-medium">Visual Style</span>
-          <HelpTooltip text="Choose how the entire app looks. 'Marinara' uses a retro Y2K aesthetic with glow effects. 'SillyTavern' uses a clean, minimal look inspired by the original SillyTavern." />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {(
-            [
-              {
-                id: "default" as VisualTheme,
-                label: "Default (Marinara)",
-                desc: "Y2K / retro aesthetic with glow effects",
-              },
-              {
-                id: "sillytavern" as VisualTheme,
-                label: "SillyTavern",
-                desc: "Classic SillyTavern look — clean & minimal",
-              },
-            ] as const
-          ).map((opt) => (
-            <button
-              key={opt.id}
-              onClick={() => setVisualTheme(opt.id)}
-              className={cn(
-                "flex flex-col items-start gap-1 rounded-lg border p-3 text-left text-xs transition-all",
-                visualTheme === opt.id
-                  ? "border-[var(--primary)] bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]"
-                  : "border-[var(--border)] hover:border-[var(--primary)]/40",
-              )}
-            >
-              <span className="font-semibold">{opt.label}</span>
-              <span className="text-[0.625rem] text-[var(--muted-foreground)] leading-tight">{opt.desc}</span>
-            </button>
-          ))}
-        </div>
-      </div>
+    <div className="flex flex-col gap-3">
+      <SettingsIntro>Visual preferences, grouped from global app chrome to chat-specific presentation.</SettingsIntro>
 
-      <label className="flex flex-col gap-1">
-        <span className="text-xs font-medium inline-flex items-center gap-1">
-          Color Scheme{" "}
-          <HelpTooltip text="Switch between dark and light mode. Dark mode is easier on the eyes in low-light environments." />
-        </span>
-        <select
-          value={theme}
-          onChange={(e) => setTheme(e.target.value as "dark" | "light")}
-          className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]"
-        >
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-        </select>
-      </label>
-
-      <label className="flex flex-col gap-1">
-        <span className="text-xs font-medium inline-flex items-center gap-1">
-          Font{" "}
-          <HelpTooltip text="Choose the font used across the app. 'Default (Inter)' is optimized for screen readability. Drop .ttf, .otf, .woff, or .woff2 font files into the data/fonts/ folder to add custom fonts." />
-        </span>
-        <select
-          value={fontFamily}
-          onChange={(e) => setFontFamily(e.target.value)}
-          className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]"
-        >
-          <option value="">Default (Inter)</option>
-          {customFontOptions.map((f) => (
-            <option key={f.family} value={f.family}>
-              {f.family}
-            </option>
-          ))}
-        </select>
-        {(!customFonts || customFonts.length === 0) && (
-          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-            Drop font files (.ttf, .otf, .woff, .woff2) into the <span className="font-medium">data/fonts/</span> folder
-            to add custom fonts.
-          </p>
-        )}
-        <button
-          onClick={() => api.post("/fonts/open-folder").catch(() => {})}
-          className="mt-1 inline-flex items-center gap-1.5 self-start rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-        >
-          <FolderOpen size="0.75rem" />
-          Open Fonts Folder
-        </button>
-      </label>
-
-      {/* ── Google Fonts ── */}
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs font-medium inline-flex items-center gap-1">
-          Google Fonts{" "}
-          <HelpTooltip text="Download a font directly from Google Fonts by name. Browse available fonts at fonts.google.com and type the exact name here." />
-        </span>
-        <div className="flex gap-1.5">
-          <input
-            type="text"
-            value={googleFontName}
-            onChange={(e) => setGoogleFontName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && googleFontName.trim() && !googleFontMutation.isPending) {
-                googleFontMutation.mutate(googleFontName.trim());
-              }
-            }}
-            placeholder="e.g. Fira Code, Lora, Poppins…"
-            className="flex-1 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
-          />
-          <button
-            onClick={() => googleFontMutation.mutate(googleFontName.trim())}
-            disabled={!googleFontName.trim() || googleFontMutation.isPending}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--primary-foreground)] transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {googleFontMutation.isPending ? (
-              <Loader2 size="0.75rem" className="animate-spin" />
-            ) : (
-              <Download size="0.75rem" />
-            )}
-            {googleFontMutation.isPending ? "Downloading…" : "Add"}
-          </button>
-        </div>
-        <a
-          href="https://fonts.google.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--primary)] transition-colors inline-flex items-center gap-1"
-        >
-          Browse fonts at fonts.google.com →
-        </a>
-      </div>
-
-      <label className="flex flex-col gap-1">
-        <span className="text-xs font-medium inline-flex items-center gap-1">
-          Display Size{" "}
-          <HelpTooltip text="Adjusts the base font size across the whole app on this device. Larger sizes improve readability. Default is 17px." />
-        </span>
-        <select
-          value={String(fontSize)}
-          onChange={(e) => setFontSize(Number(e.target.value) as 12 | 14 | 16 | 17 | 19 | 22)}
-          className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]"
-        >
-          <option value="12">Tiny</option>
-          <option value="14">Small</option>
-          <option value="16">Medium</option>
-          <option value="17">Default</option>
-          <option value="19">Large</option>
-          <option value="22">Huge</option>
-        </select>
-      </label>
-
-      <label className="flex flex-col gap-1">
-        <span className="text-xs font-medium inline-flex items-center gap-1">
-          Chat Font Size{" "}
-          <HelpTooltip text="Adjusts the font size of chat messages on this device. Drag the slider to find your preferred reading size. Default is 16px." />
-        </span>
-        <div className="flex items-center gap-3">
-          <input
-            type="range"
-            min={12}
-            max={48}
-            step={1}
-            value={chatFontSize}
-            onChange={(e) => setChatFontSize(Number(e.target.value))}
-            className="flex-1 accent-[var(--primary)]"
-          />
-          <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-8 text-right">{chatFontSize}px</span>
-        </div>
-      </label>
-
-      <div className="flex flex-col gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-3">
-        <div className="flex items-center gap-1.5">
-          <MessageCircle size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <span className="text-xs font-medium">Chat Layout</span>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {(
-            [
-              { id: "classic" as ConversationMessageStyle, label: "Linear", desc: "Chat-style rows" },
-              { id: "bubble" as ConversationMessageStyle, label: "Bubbles", desc: "Messenger-style bubbles" },
-            ] as const
-          ).map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => setConversationMessageStyle(opt.id)}
-              className={cn(
-                "flex flex-col items-start gap-1 rounded-lg border p-3 text-left text-xs transition-all",
-                conversationMessageStyle === opt.id
-                  ? "border-[var(--primary)] bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]"
-                  : "border-[var(--border)] bg-[var(--background)]/35 hover:border-[var(--primary)]/40",
-              )}
-              aria-pressed={conversationMessageStyle === opt.id}
-            >
-              <span className="font-semibold">{opt.label}</span>
-              <span className="text-[0.625rem] leading-tight text-[var(--muted-foreground)]">{opt.desc}</span>
-            </button>
-          ))}
-        </div>
-        <div className="rounded-lg border border-[var(--border)]/60 bg-[var(--background)]/35 p-2.5 text-[0.6875rem]">
-          {conversationMessageStyle === "bubble" ? (
-            <div className="space-y-1.5">
-              <div className="flex justify-end">
-                <div className="mari-message-bubble texting-bubble texting-bubble-user max-w-[78%] rounded-2xl px-3 py-1.5 text-xs shadow-sm">
-                  Hey, how's it going?
-                </div>
-              </div>
-              <div className="flex items-end gap-1.5 justify-start">
-                <div className="h-5 w-5 shrink-0 rounded-full bg-[var(--accent)]" />
-                <div className="mari-message-bubble texting-bubble texting-bubble-other max-w-[78%] rounded-2xl px-3 py-1.5 text-xs shadow-sm">
-                  Pretty good, thanks!
-                </div>
-              </div>
+      <SettingsSection
+        title="App Style"
+        description="Theme family, color scheme, fonts, and reading scale."
+        icon={<Paintbrush size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-3">
+          {/* ── Visual Style ── */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-1.5">
+              <Paintbrush size="0.75rem" className="text-[var(--muted-foreground)]" />
+              <span className="text-xs font-medium">Visual Style</span>
+              <HelpTooltip text="Choose how the entire app looks. 'Marinara' uses a retro Y2K aesthetic with glow effects. 'SillyTavern' uses a clean, minimal look inspired by the original SillyTavern." />
             </div>
-          ) : (
-            <div className="flex gap-2 text-xs">
-              <div className="h-6 w-6 shrink-0 rounded-full bg-[var(--accent)]" />
-              <div className="min-w-0 flex-1">
-                <div className="mb-0.5 flex items-baseline gap-2">
-                  <span className="font-semibold">Character</span>
-                  <span className="text-[0.625rem] text-[var(--muted-foreground)]">12:45</span>
-                </div>
-                <div className="space-y-0.5 text-[var(--foreground)]/90">
-                  <div>Messages appear as rows,</div>
-                  <div>grouped by sender.</div>
-                </div>
-              </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(
+                [
+                  {
+                    id: "default" as VisualTheme,
+                    label: "Default (Marinara)",
+                    desc: "Y2K / retro aesthetic with glow effects",
+                  },
+                  {
+                    id: "sillytavern" as VisualTheme,
+                    label: "SillyTavern",
+                    desc: "Classic SillyTavern look — clean & minimal",
+                  },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => setVisualTheme(opt.id)}
+                  className={cn(
+                    "flex flex-col items-start gap-1 rounded-lg border p-3 text-left text-xs transition-all",
+                    visualTheme === opt.id
+                      ? "border-[var(--primary)] bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]"
+                      : "border-[var(--border)] hover:border-[var(--primary)]/40",
+                  )}
+                >
+                  <span className="font-semibold">{opt.label}</span>
+                  <span className="text-[0.625rem] text-[var(--muted-foreground)] leading-tight">{opt.desc}</span>
+                </button>
+              ))}
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Text Appearance ── */}
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-1.5">
-          <Paintbrush size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <span className="text-xs font-medium">Text Appearance</span>
-          <HelpTooltip text="Customize the look of chat message text. Chat Text Color sets the default font color for all non-dialogue text. Background Opacity controls the transparency of roleplay message bubbles." />
-        </div>
-
-        {/* Chat Text Color */}
-        <div className="flex flex-col gap-1">
-          <span className="text-[0.6875rem] font-medium">Chat Text Color</span>
-          <div className="flex items-center gap-2">
-            <input
-              type="color"
-              value={draftChatFontColor}
-              onChange={(e) => {
-                setDraftChatFontColor(e.target.value);
-                setChatFontColor(e.target.value);
-              }}
-              className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
-            />
-            <input
-              type="text"
-              value={draftChatFontColor}
-              onChange={(e) => {
-                setDraftChatFontColor(e.target.value);
-                if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) setChatFontColor(e.target.value);
-              }}
-              onBlur={() => setDraftChatFontColor(chatFontColor || "#c3c2c2")}
-              className="w-24 rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-            />
           </div>
-        </div>
 
-        {/* Roleplay Messages Background Opacity */}
-        <label className="flex flex-col gap-1">
-          <span className="text-[0.6875rem] font-medium">Roleplay Messages Background Opacity</span>
-          <div className="flex items-center gap-3">
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={5}
-              value={chatFontOpacity}
-              onChange={(e) => setChatFontOpacity(Number(e.target.value))}
-              className="flex-1 accent-[var(--primary)]"
-            />
-            <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-8 text-right">
-              {chatFontOpacity}%
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium inline-flex items-center gap-1">
+              Color Scheme{" "}
+              <HelpTooltip text="Switch between dark and light mode. Dark mode is easier on the eyes in low-light environments." />
             </span>
-          </div>
-        </label>
-        <button
-          onClick={() => {
-            setChatFontColor("");
-            setDraftChatFontColor("#c3c2c2");
-            setChatFontOpacity(90);
-          }}
-          className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
-        >
-          Reset to default
-        </button>
+            <select
+              value={theme}
+              onChange={(e) => setTheme(e.target.value as "dark" | "light")}
+              className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]"
+            >
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </label>
 
-        {/* Text Stroke */}
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[0.6875rem] font-medium inline-flex items-center gap-1">
-            Text Outline / Stroke
-            <HelpTooltip text="Adds an outline around chat text for better readability over backgrounds. Set width to 0 to disable." />
-          </span>
-          <div className="flex items-center gap-3">
-            <label className="flex flex-col gap-1 flex-1">
-              <span className="text-[0.625rem] text-[var(--muted-foreground)]">Width</span>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium inline-flex items-center gap-1">
+              Font{" "}
+              <HelpTooltip text="Choose the font used across the app. 'Default (Inter)' is optimized for screen readability. Drop .ttf, .otf, .woff, or .woff2 font files into the data/fonts/ folder to add custom fonts." />
+            </span>
+            <select
+              value={fontFamily}
+              onChange={(e) => setFontFamily(e.target.value)}
+              className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]"
+            >
+              <option value="">Default (Inter)</option>
+              {customFontOptions.map((f) => (
+                <option key={f.family} value={f.family}>
+                  {f.family}
+                </option>
+              ))}
+            </select>
+            {(!customFonts || customFonts.length === 0) && (
+              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                Drop font files (.ttf, .otf, .woff, .woff2) into the <span className="font-medium">data/fonts/</span>{" "}
+                folder to add custom fonts.
+              </p>
+            )}
+            <button
+              onClick={() => api.post("/fonts/open-folder").catch(() => {})}
+              className="mt-1 inline-flex items-center gap-1.5 self-start rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            >
+              <FolderOpen size="0.75rem" />
+              Open Fonts Folder
+            </button>
+          </label>
+
+          {/* ── Google Fonts ── */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium inline-flex items-center gap-1">
+              Google Fonts{" "}
+              <HelpTooltip text="Download a font directly from Google Fonts by name. Browse available fonts at fonts.google.com and type the exact name here." />
+            </span>
+            <div className="flex gap-1.5">
+              <input
+                type="text"
+                value={googleFontName}
+                onChange={(e) => setGoogleFontName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && googleFontName.trim() && !googleFontMutation.isPending) {
+                    googleFontMutation.mutate(googleFontName.trim());
+                  }
+                }}
+                placeholder="e.g. Fira Code, Lora, Poppins…"
+                className="flex-1 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
+              />
+              <button
+                onClick={() => googleFontMutation.mutate(googleFontName.trim())}
+                disabled={!googleFontName.trim() || googleFontMutation.isPending}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--primary-foreground)] transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {googleFontMutation.isPending ? (
+                  <Loader2 size="0.75rem" className="animate-spin" />
+                ) : (
+                  <Download size="0.75rem" />
+                )}
+                {googleFontMutation.isPending ? "Downloading…" : "Add"}
+              </button>
+            </div>
+            <a
+              href="https://fonts.google.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--primary)] transition-colors inline-flex items-center gap-1"
+            >
+              Browse fonts at fonts.google.com →
+            </a>
+          </div>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium inline-flex items-center gap-1">
+              Display Size{" "}
+              <HelpTooltip text="Adjusts the base font size across the whole app on this device. Larger sizes improve readability. Default is 17px." />
+            </span>
+            <select
+              value={String(fontSize)}
+              onChange={(e) => setFontSize(Number(e.target.value) as 12 | 14 | 16 | 17 | 19 | 22)}
+              className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]"
+            >
+              <option value="12">Tiny</option>
+              <option value="14">Small</option>
+              <option value="16">Medium</option>
+              <option value="17">Default</option>
+              <option value="19">Large</option>
+              <option value="22">Huge</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium inline-flex items-center gap-1">
+              Chat Font Size{" "}
+              <HelpTooltip text="Adjusts the font size of chat messages on this device. Drag the slider to find your preferred reading size. Default is 16px." />
+            </span>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={12}
+                max={48}
+                step={1}
+                value={chatFontSize}
+                onChange={(e) => setChatFontSize(Number(e.target.value))}
+                className="flex-1 accent-[var(--primary)]"
+              />
+              <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-8 text-right">
+                {chatFontSize}px
+              </span>
+            </div>
+          </label>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Chat Display"
+        description="Conversation layout, message text styling, and chat gradients."
+        icon={<MessageCircle size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-3">
+            <div className="flex items-center gap-1.5">
+              <MessageCircle size="0.75rem" className="text-[var(--muted-foreground)]" />
+              <span className="text-xs font-medium">Chat Layout</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(
+                [
+                  { id: "classic" as ConversationMessageStyle, label: "Linear", desc: "Chat-style rows" },
+                  { id: "bubble" as ConversationMessageStyle, label: "Bubbles", desc: "Messenger-style bubbles" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setConversationMessageStyle(opt.id)}
+                  className={cn(
+                    "flex flex-col items-start gap-1 rounded-lg border p-3 text-left text-xs transition-all",
+                    conversationMessageStyle === opt.id
+                      ? "border-[var(--primary)] bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]"
+                      : "border-[var(--border)] bg-[var(--background)]/35 hover:border-[var(--primary)]/40",
+                  )}
+                  aria-pressed={conversationMessageStyle === opt.id}
+                >
+                  <span className="font-semibold">{opt.label}</span>
+                  <span className="text-[0.625rem] leading-tight text-[var(--muted-foreground)]">{opt.desc}</span>
+                </button>
+              ))}
+            </div>
+            <div className="rounded-lg border border-[var(--border)]/60 bg-[var(--background)]/35 p-2.5 text-[0.6875rem]">
+              {conversationMessageStyle === "bubble" ? (
+                <div className="space-y-1.5">
+                  <div className="flex justify-end">
+                    <div className="mari-message-bubble texting-bubble texting-bubble-user max-w-[78%] rounded-2xl px-3 py-1.5 text-xs shadow-sm">
+                      Hey, how's it going?
+                    </div>
+                  </div>
+                  <div className="flex items-end gap-1.5 justify-start">
+                    <div className="h-5 w-5 shrink-0 rounded-full bg-[var(--accent)]" />
+                    <div className="mari-message-bubble texting-bubble texting-bubble-other max-w-[78%] rounded-2xl px-3 py-1.5 text-xs shadow-sm">
+                      Pretty good, thanks!
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-2 text-xs">
+                  <div className="h-6 w-6 shrink-0 rounded-full bg-[var(--accent)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-0.5 flex items-baseline gap-2">
+                      <span className="font-semibold">Character</span>
+                      <span className="text-[0.625rem] text-[var(--muted-foreground)]">12:45</span>
+                    </div>
+                    <div className="space-y-0.5 text-[var(--foreground)]/90">
+                      <div>Messages appear as rows,</div>
+                      <div>grouped by sender.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Text Appearance ── */}
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-1.5">
+              <Paintbrush size="0.75rem" className="text-[var(--muted-foreground)]" />
+              <span className="text-xs font-medium">Text Appearance</span>
+              <HelpTooltip text="Customize the look of chat message text. Chat Text Color sets the default font color for all non-dialogue text. Background Opacity controls the transparency of roleplay message bubbles." />
+            </div>
+
+            {/* Chat Text Color */}
+            <div className="flex flex-col gap-1">
+              <span className="text-[0.6875rem] font-medium">Chat Text Color</span>
               <div className="flex items-center gap-2">
                 <input
-                  type="range"
-                  min={0}
-                  max={5}
-                  step={0.5}
-                  value={textStrokeWidth}
-                  onChange={(e) => setTextStrokeWidth(Number(e.target.value))}
-                  className="flex-1 accent-[var(--primary)]"
-                />
-                <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-10 text-right">
-                  {textStrokeWidth}px
-                </span>
-              </div>
-            </label>
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-1.5">
-                <input
                   type="color"
-                  value={draftStrokeColor}
+                  value={draftChatFontColor}
                   onChange={(e) => {
-                    setDraftStrokeColor(e.target.value);
-                    setTextStrokeColor(e.target.value);
+                    setDraftChatFontColor(e.target.value);
+                    setChatFontColor(e.target.value);
                   }}
                   className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
                 />
+                <input
+                  type="text"
+                  value={draftChatFontColor}
+                  onChange={(e) => {
+                    setDraftChatFontColor(e.target.value);
+                    if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) setChatFontColor(e.target.value);
+                  }}
+                  onBlur={() => setDraftChatFontColor(chatFontColor || "#c3c2c2")}
+                  className="w-24 rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
+                />
               </div>
             </div>
+
+            {/* Roleplay Messages Background Opacity */}
+            <label className="flex flex-col gap-1">
+              <span className="text-[0.6875rem] font-medium">Roleplay Messages Background Opacity</span>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={chatFontOpacity}
+                  onChange={(e) => setChatFontOpacity(Number(e.target.value))}
+                  className="flex-1 accent-[var(--primary)]"
+                />
+                <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-8 text-right">
+                  {chatFontOpacity}%
+                </span>
+              </div>
+            </label>
+            <button
+              onClick={() => {
+                setChatFontColor("");
+                setDraftChatFontColor("#c3c2c2");
+                setChatFontOpacity(90);
+              }}
+              className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
+            >
+              Reset to default
+            </button>
+
+            {/* Text Stroke */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[0.6875rem] font-medium inline-flex items-center gap-1">
+                Text Outline / Stroke
+                <HelpTooltip text="Adds an outline around chat text for better readability over backgrounds. Set width to 0 to disable." />
+              </span>
+              <div className="flex items-center gap-3">
+                <label className="flex flex-col gap-1 flex-1">
+                  <span className="text-[0.625rem] text-[var(--muted-foreground)]">Width</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={5}
+                      step={0.5}
+                      value={textStrokeWidth}
+                      onChange={(e) => setTextStrokeWidth(Number(e.target.value))}
+                      className="flex-1 accent-[var(--primary)]"
+                    />
+                    <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-10 text-right">
+                      {textStrokeWidth}px
+                    </span>
+                  </div>
+                </label>
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="color"
+                      value={draftStrokeColor}
+                      onChange={(e) => {
+                        setDraftStrokeColor(e.target.value);
+                        setTextStrokeColor(e.target.value);
+                      }}
+                      className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
+                    />
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setTextStrokeWidth(0.5);
+                  setTextStrokeColor("#000000");
+                  setDraftStrokeColor("#000000");
+                }}
+                className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
+              >
+                Reset to default
+              </button>
+            </div>
           </div>
-          <button
-            onClick={() => {
-              setTextStrokeWidth(0.5);
-              setTextStrokeColor("#000000");
-              setDraftStrokeColor("#000000");
-            }}
-            className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
-          >
-            Reset to default
-          </button>
         </div>
-      </div>
+      </SettingsSection>
 
       <TrackerPanelAppearanceDrawer
         trackerPanelEnabled={trackerPanelEnabled}
@@ -2113,409 +2225,426 @@ function AppearanceSettings() {
         setTrackerTemperatureUnit={setTrackerTemperatureUnit}
       />
 
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1.5">
-          <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <span className="text-xs font-medium">Roleplay Avatars</span>
-          <HelpTooltip text="Choose how avatars sit next to roleplay messages. None hides message avatars. Small Circles keeps the current compact layout. Small Rectangles gives portraits a taller frame. Glued Side Panel embeds a larger portrait strip into the message bubble itself." />
-        </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {ROLEPLAY_AVATAR_STYLE_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              onClick={() => setRoleplayAvatarStyle(opt.id)}
-              className={cn(
-                "flex flex-col items-start gap-2 rounded-lg border p-3 text-left text-xs transition-all",
-                roleplayAvatarStyle === opt.id
-                  ? "border-[var(--primary)] bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]"
-                  : "border-[var(--border)] hover:border-[var(--primary)]/40",
-              )}
-            >
-              <div className="w-full overflow-hidden rounded-md bg-[var(--secondary)]/80 ring-1 ring-[var(--border)]/70">
-                {opt.id === "none" ? (
-                  <div className="flex h-14 items-center px-3">
-                    <div className="flex-1 rounded-2xl bg-black/25 px-3 py-2">
-                      <div className="h-1.5 w-16 rounded-full bg-white/20" />
-                      <div className="mt-1.5 h-1.5 w-24 rounded-full bg-white/12" />
-                    </div>
-                  </div>
-                ) : opt.id === "circles" ? (
-                  <div className="flex h-14 items-center px-3">
-                    <div className="relative flex-1 rounded-2xl rounded-tl-sm bg-black/25 px-3 py-2">
-                      <div className="absolute left-2 top-2 h-2.5 w-2.5 rounded-full bg-gradient-to-br from-rose-400 to-orange-300 shadow-[0_0_0_2px_rgba(255,255,255,0.16)]" />
-                      <div className="ml-4 h-1.5 w-14 rounded-full bg-white/20" />
-                      <div className="mt-1.5 ml-4 h-1.5 w-20 rounded-full bg-white/12" />
-                    </div>
-                  </div>
-                ) : opt.id === "rectangles" ? (
-                  <div className="flex h-14 items-center px-3">
-                    <div className="relative flex-1 rounded-2xl rounded-tl-sm bg-black/25 py-2 pl-8 pr-3">
-                      <div className="absolute left-2 top-2 h-4 w-4 overflow-hidden rounded bg-gradient-to-b from-rose-400/75 via-orange-300/55 to-zinc-600/80 ring-1 ring-white/20">
-                        <div className="h-full w-full bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.24),transparent_58%)]" />
-                      </div>
-                      <div className="h-1.5 w-14 rounded-full bg-white/20" />
-                      <div className="mt-1.5 h-1.5 w-20 rounded-full bg-white/12" />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex h-14 items-stretch overflow-hidden">
-                    <div className="relative w-20 overflow-hidden border-r border-white/8 bg-gradient-to-b from-rose-400/60 via-orange-300/45 to-transparent">
-                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[32%] backdrop-blur-[4px] [mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.25)_28%,rgba(0,0,0,0.8)_100%)] [-webkit-mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.25)_28%,rgba(0,0,0,0.8)_100%)]" />
-                      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0)_0%,rgba(255,255,255,0)_72%,rgba(113,113,122,0.84)_92%,rgba(113,113,122,1)_100%)]" />
-                    </div>
-                    <div className="flex-1 px-3 py-2">
-                      <div className="h-1.5 w-14 rounded-full bg-white/20" />
-                      <div className="mt-1.5 h-1.5 w-20 rounded-full bg-white/12" />
-                    </div>
-                  </div>
-                )}
-              </div>
-              <span className="font-semibold">{opt.label}</span>
-              <span className="text-[0.625rem] leading-tight text-[var(--muted-foreground)]">{opt.desc}</span>
-            </button>
-          ))}
-        </div>
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/45 p-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex h-20 w-full shrink-0 items-end justify-center gap-3 overflow-hidden rounded-md bg-black/30 ring-1 ring-[var(--border)]/70 sm:w-28">
-              {roleplayAvatarStyle === "none" ? (
-                <div className="mb-2 flex h-10 min-w-20 items-center justify-center rounded-md border border-dashed border-white/20 px-2 text-[0.625rem] font-medium text-white/35">
-                  No avatars
-                </div>
-              ) : (
-                <div
+      <SettingsSection
+        title="Character Art"
+        description="Roleplay avatars, Game mode art scale, and VN dialogue presentation."
+        icon={<Image size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-1.5">
+              <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
+              <span className="text-xs font-medium">Roleplay Avatars</span>
+              <HelpTooltip text="Choose how avatars sit next to roleplay messages. None hides message avatars. Small Circles keeps the current compact layout. Small Rectangles gives portraits a taller frame. Glued Side Panel embeds a larger portrait strip into the message bubble itself." />
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {ROLEPLAY_AVATAR_STYLE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => setRoleplayAvatarStyle(opt.id)}
                   className={cn(
-                    "mb-2 border border-white/20 bg-gradient-to-b from-rose-300/85 via-fuchsia-300/65 to-slate-900/90 shadow-lg transition-all",
-                    roleplayAvatarStyle === "circles"
-                      ? "rounded-full"
-                      : roleplayAvatarStyle === "rectangles"
-                        ? "rounded-xl"
-                        : "rounded-md",
+                    "flex flex-col items-start gap-2 rounded-lg border p-3 text-left text-xs transition-all",
+                    roleplayAvatarStyle === opt.id
+                      ? "border-[var(--primary)] bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]"
+                      : "border-[var(--border)] hover:border-[var(--primary)]/40",
                   )}
-                  style={{
-                    width: `${
-                      roleplayAvatarStyle === "panel"
-                        ? Math.min(6.5, 2.6 * roleplayAvatarScale)
-                        : Math.min(5.5, (roleplayAvatarStyle === "rectangles" ? 2.15 : 2) * roleplayAvatarScale)
-                    }rem`,
-                    height: `${
-                      roleplayAvatarStyle === "circles"
-                        ? Math.min(5.5, 2 * roleplayAvatarScale)
-                        : Math.min(6, (roleplayAvatarStyle === "rectangles" ? 2.7 : 3.4) * roleplayAvatarScale)
-                    }rem`,
-                  }}
-                />
-              )}
-              <div
-                className="mb-1 rounded-full border border-white/20 bg-gradient-to-b from-violet-200/85 via-purple-200/70 to-slate-900/95 shadow-lg transition-all"
-                style={{
-                  width: `${Math.min(2.1, 0.85 * roleplaySpriteScale)}rem`,
-                  height: `${Math.min(4.7, 3.2 * roleplaySpriteScale)}rem`,
-                }}
-              />
+                >
+                  <div className="w-full overflow-hidden rounded-md bg-[var(--secondary)]/80 ring-1 ring-[var(--border)]/70">
+                    {opt.id === "none" ? (
+                      <div className="flex h-14 items-center px-3">
+                        <div className="flex-1 rounded-2xl bg-black/25 px-3 py-2">
+                          <div className="h-1.5 w-16 rounded-full bg-white/20" />
+                          <div className="mt-1.5 h-1.5 w-24 rounded-full bg-white/12" />
+                        </div>
+                      </div>
+                    ) : opt.id === "circles" ? (
+                      <div className="flex h-14 items-center px-3">
+                        <div className="relative flex-1 rounded-2xl rounded-tl-sm bg-black/25 px-3 py-2">
+                          <div className="absolute left-2 top-2 h-2.5 w-2.5 rounded-full bg-gradient-to-br from-rose-400 to-orange-300 shadow-[0_0_0_2px_rgba(255,255,255,0.16)]" />
+                          <div className="ml-4 h-1.5 w-14 rounded-full bg-white/20" />
+                          <div className="mt-1.5 ml-4 h-1.5 w-20 rounded-full bg-white/12" />
+                        </div>
+                      </div>
+                    ) : opt.id === "rectangles" ? (
+                      <div className="flex h-14 items-center px-3">
+                        <div className="relative flex-1 rounded-2xl rounded-tl-sm bg-black/25 py-2 pl-8 pr-3">
+                          <div className="absolute left-2 top-2 h-4 w-4 overflow-hidden rounded bg-gradient-to-b from-rose-400/75 via-orange-300/55 to-zinc-600/80 ring-1 ring-white/20">
+                            <div className="h-full w-full bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.24),transparent_58%)]" />
+                          </div>
+                          <div className="h-1.5 w-14 rounded-full bg-white/20" />
+                          <div className="mt-1.5 h-1.5 w-20 rounded-full bg-white/12" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex h-14 items-stretch overflow-hidden">
+                        <div className="relative w-20 overflow-hidden border-r border-white/8 bg-gradient-to-b from-rose-400/60 via-orange-300/45 to-transparent">
+                          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[32%] backdrop-blur-[4px] [mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.25)_28%,rgba(0,0,0,0.8)_100%)] [-webkit-mask-image:linear-gradient(to_bottom,transparent_0%,rgba(0,0,0,0.25)_28%,rgba(0,0,0,0.8)_100%)]" />
+                          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0)_0%,rgba(255,255,255,0)_72%,rgba(113,113,122,0.84)_92%,rgba(113,113,122,1)_100%)]" />
+                        </div>
+                        <div className="flex-1 px-3 py-2">
+                          <div className="h-1.5 w-14 rounded-full bg-white/20" />
+                          <div className="mt-1.5 h-1.5 w-20 rounded-full bg-white/12" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <span className="font-semibold">{opt.label}</span>
+                  <span className="text-[0.625rem] leading-tight text-[var(--muted-foreground)]">{opt.desc}</span>
+                </button>
+              ))}
             </div>
-            <div className="grid min-w-0 flex-1 gap-3">
-              <label className="flex min-w-0 flex-col gap-1">
-                <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">Message avatar scale</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="range"
-                    min={0.75}
-                    max={2.5}
-                    step={0.05}
-                    value={roleplayAvatarScale}
-                    onChange={(e) => setRoleplayAvatarScale(Number(e.target.value))}
-                    className="min-w-0 flex-1 accent-[var(--primary)]"
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/45 p-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="flex h-20 w-full shrink-0 items-end justify-center gap-3 overflow-hidden rounded-md bg-black/30 p-2 ring-1 ring-[var(--border)]/70 sm:w-28">
+                  {roleplayAvatarStyle === "none" ? (
+                    <div
+                      className="flex shrink-0 items-center justify-center rounded-md border border-dashed border-white/20 px-2 text-[0.625rem] font-medium text-white/35"
+                      style={{
+                        width: toPreviewRem(roleplayAvatarPreview.width),
+                        height: toPreviewRem(roleplayAvatarPreview.height),
+                      }}
+                    >
+                      No avatars
+                    </div>
+                  ) : (
+                    <div
+                      className={cn(
+                        "shrink-0 border border-white/20 bg-gradient-to-b from-rose-300/85 via-fuchsia-300/65 to-slate-900/90 shadow-lg transition-all",
+                        roleplayAvatarStyle === "circles"
+                          ? "rounded-full"
+                          : roleplayAvatarStyle === "rectangles"
+                            ? "rounded-xl"
+                            : "rounded-md",
+                      )}
+                      style={{
+                        width: toPreviewRem(roleplayAvatarPreview.width),
+                        height: toPreviewRem(roleplayAvatarPreview.height),
+                      }}
+                    />
+                  )}
+                  <div
+                    className="shrink-0 rounded-full border border-white/20 bg-gradient-to-b from-violet-200/85 via-purple-200/70 to-slate-900/95 shadow-lg transition-all"
+                    style={{
+                      width: toPreviewRem(roleplaySpritePreview.width),
+                      height: toPreviewRem(roleplaySpritePreview.height),
+                    }}
                   />
-                  <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
-                    {Math.round(roleplayAvatarScale * 100)}%
-                  </span>
                 </div>
-              </label>
-              <label className="flex min-w-0 flex-col gap-1">
-                <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">Default sprite scale</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="range"
-                    min={0.5}
-                    max={1.75}
-                    step={0.05}
-                    value={roleplaySpriteScale}
-                    onChange={(e) => setRoleplaySpriteScale(Number(e.target.value))}
-                    className="min-w-0 flex-1 accent-[var(--primary)]"
+                <div className="grid min-w-0 flex-1 gap-3">
+                  <label className="flex min-w-0 flex-col gap-1">
+                    <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">Message avatar scale</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min={0.75}
+                        max={2.5}
+                        step={0.05}
+                        value={roleplayAvatarScale}
+                        onChange={(e) => setRoleplayAvatarScale(Number(e.target.value))}
+                        className="min-w-0 flex-1 accent-[var(--primary)]"
+                      />
+                      <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
+                        {Math.round(roleplayAvatarScale * 100)}%
+                      </span>
+                    </div>
+                  </label>
+                  <label className="flex min-w-0 flex-col gap-1">
+                    <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">Default sprite scale</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min={0.5}
+                        max={1.75}
+                        step={0.05}
+                        value={roleplaySpriteScale}
+                        onChange={(e) => setRoleplaySpriteScale(Number(e.target.value))}
+                        className="min-w-0 flex-1 accent-[var(--primary)]"
+                      />
+                      <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
+                        {Math.round(roleplaySpriteScale * 100)}%
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+              Rectangles keep the compact side slot but give portraits a bit more vertical room. The larger panel crops
+              portraits from the top on short messages and fades them back into the bubble background on taller ones.
+              Per-chat sprite sizing still overrides the default sprite scale here.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-1.5">
+              <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
+              <span className="text-xs font-medium">Game VN Art</span>
+              <HelpTooltip text="Scales Game mode dialogue portraits separately from the center full-body sprites. Oversized art is still clamped per viewport." />
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/45 p-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="flex h-20 w-full shrink-0 items-end justify-center gap-3 overflow-hidden rounded-md bg-black/30 p-2 ring-1 ring-[var(--border)]/70 sm:w-28">
+                  <div
+                    className="shrink-0 rounded-lg border border-white/20 bg-gradient-to-b from-sky-300/80 via-cyan-200/65 to-slate-800/90 shadow-lg transition-all"
+                    style={{
+                      width: toPreviewRem(gameAvatarPreview.width),
+                      height: toPreviewRem(gameAvatarPreview.height),
+                    }}
                   />
-                  <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
-                    {Math.round(roleplaySpriteScale * 100)}%
-                  </span>
+                  <div
+                    className="shrink-0 rounded-full border border-white/20 bg-gradient-to-b from-rose-200/85 via-fuchsia-200/70 to-slate-900/95 shadow-lg transition-all"
+                    style={{
+                      width: toPreviewRem(gameFullBodyPreview.width),
+                      height: toPreviewRem(gameFullBodyPreview.height),
+                    }}
+                  />
                 </div>
-              </label>
+                <div className="grid min-w-0 flex-1 gap-3">
+                  <label className="flex min-w-0 flex-col gap-1">
+                    <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">
+                      Dialogue portrait scale
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min={0.75}
+                        max={1.75}
+                        step={0.05}
+                        value={gameAvatarScale}
+                        onChange={(e) => setGameAvatarScale(Number(e.target.value))}
+                        className="min-w-0 flex-1 accent-[var(--primary)]"
+                      />
+                      <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
+                        {Math.round(gameAvatarScale * 100)}%
+                      </span>
+                    </div>
+                  </label>
+                  <label className="flex min-w-0 flex-col gap-1">
+                    <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">
+                      Full-body sprite scale
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min={0.75}
+                        max={2.75}
+                        step={0.05}
+                        value={gameFullBodySpriteScale}
+                        onChange={(e) => setGameFullBodySpriteScale(Number(e.target.value))}
+                        className="min-w-0 flex-1 accent-[var(--primary)]"
+                      />
+                      <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
+                        {Math.round(gameFullBodySpriteScale * 100)}%
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-1.5">
+              <ScrollText size="0.75rem" className="text-[var(--muted-foreground)]" />
+              <span className="text-xs font-medium">Game Dialogue Display</span>
+              <HelpTooltip text="Choose whether Game mode uses the classic VN box or shows a scrollable segment history directly above it." />
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {GAME_DIALOGUE_DISPLAY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setGameDialogueDisplayMode(opt.id)}
+                  className={cn(
+                    "flex flex-col items-start gap-1 rounded-lg border p-3 text-left text-xs transition-all",
+                    gameDialogueDisplayMode === opt.id
+                      ? "border-[var(--primary)] bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]"
+                      : "border-[var(--border)] hover:border-[var(--primary)]/40",
+                  )}
+                >
+                  <span className="font-semibold">{opt.label}</span>
+                  <span className="text-[0.625rem] leading-tight text-[var(--muted-foreground)]">{opt.desc}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
-        <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-          Rectangles keep the compact side slot but give portraits a bit more vertical room. The larger panel crops
-          portraits from the top on short messages and fades them back into the bubble background on taller ones.
-          Per-chat sprite sizing still overrides the default sprite scale here.
-        </p>
-      </div>
+      </SettingsSection>
 
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1.5">
-          <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <span className="text-xs font-medium">Game VN Art</span>
-          <HelpTooltip text="Scales Game mode dialogue portraits separately from the center full-body sprites. Oversized art is still clamped per viewport." />
-        </div>
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/45 p-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex h-20 w-full shrink-0 items-end justify-center gap-3 overflow-hidden rounded-md bg-black/30 ring-1 ring-[var(--border)]/70 sm:w-28">
-              <div
-                className="mb-1 rounded-lg border border-white/20 bg-gradient-to-b from-sky-300/80 via-cyan-200/65 to-slate-800/90 shadow-lg transition-all"
-                style={{
-                  width: `${Math.min(3.5, 2.25 * gameAvatarScale)}rem`,
-                  height: `${Math.min(3.9, 2.6 * gameAvatarScale)}rem`,
-                }}
-              />
-              <div
-                className="mb-1 rounded-full border border-white/20 bg-gradient-to-b from-rose-200/85 via-fuchsia-200/70 to-slate-900/95 shadow-lg transition-all"
-                style={{
-                  width: `${Math.min(2.2, 0.9 * gameFullBodySpriteScale)}rem`,
-                  height: `${Math.min(4.8, 3.4 * gameFullBodySpriteScale)}rem`,
-                }}
-              />
+      <SettingsSection
+        title="Motion & Backgrounds"
+        description="Atmospheric effects, Conversation gradients, and chat background images."
+        icon={<CloudRain size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-3">
+          {/* ── Effects ── */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-1.5">
+              <CloudRain size="0.75rem" className="text-[var(--muted-foreground)]" />
+              <span className="text-xs font-medium">Effects</span>
+              <HelpTooltip text="Visual effects that enhance the roleplay atmosphere. Weather particles like rain, snow, and fog appear based on the story context." />
             </div>
-            <div className="grid min-w-0 flex-1 gap-3">
-              <label className="flex min-w-0 flex-col gap-1">
-                <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">Dialogue portrait scale</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="range"
-                    min={0.75}
-                    max={1.75}
-                    step={0.05}
-                    value={gameAvatarScale}
-                    onChange={(e) => setGameAvatarScale(Number(e.target.value))}
-                    className="min-w-0 flex-1 accent-[var(--primary)]"
-                  />
-                  <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
-                    {Math.round(gameAvatarScale * 100)}%
-                  </span>
-                </div>
-              </label>
-              <label className="flex min-w-0 flex-col gap-1">
-                <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">Full-body sprite scale</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="range"
-                    min={0.75}
-                    max={2.75}
-                    step={0.05}
-                    value={gameFullBodySpriteScale}
-                    onChange={(e) => setGameFullBodySpriteScale(Number(e.target.value))}
-                    className="min-w-0 flex-1 accent-[var(--primary)]"
-                  />
-                  <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
-                    {Math.round(gameFullBodySpriteScale * 100)}%
-                  </span>
-                </div>
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1.5">
-          <ScrollText size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <span className="text-xs font-medium">Game Dialogue Display</span>
-          <HelpTooltip text="Choose whether Game mode uses the classic VN box or shows a scrollable segment history directly above it." />
-        </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {GAME_DIALOGUE_DISPLAY_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => setGameDialogueDisplayMode(opt.id)}
-              className={cn(
-                "flex flex-col items-start gap-1 rounded-lg border p-3 text-left text-xs transition-all",
-                gameDialogueDisplayMode === opt.id
-                  ? "border-[var(--primary)] bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]"
-                  : "border-[var(--border)] hover:border-[var(--primary)]/40",
-              )}
-            >
-              <span className="font-semibold">{opt.label}</span>
-              <span className="text-[0.625rem] leading-tight text-[var(--muted-foreground)]">{opt.desc}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Effects ── */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1.5">
-          <CloudRain size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <span className="text-xs font-medium">Effects</span>
-          <HelpTooltip text="Visual effects that enhance the roleplay atmosphere. Weather particles like rain, snow, and fog appear based on the story context." />
-        </div>
-        <ToggleSetting
-          label="Dynamic weather effects (rain, snow, fog, etc.)"
-          checked={weatherEffects}
-          onChange={setWeatherEffects}
-        />
-        <p className="text-[0.625rem] text-[var(--muted-foreground)] pl-6">
-          Shows animated weather particles based on in-story weather and time of day. Requires the{" "}
-          <span className="font-medium">World State</span> agent to be enabled so weather data is extracted from the
-          narrative.
-        </p>
-      </div>
-
-      {/* ── Conversation Gradient (per color-scheme) ── */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <Palette size="0.75rem" className="text-[var(--muted-foreground)]" />
-            <span className="text-xs font-medium">Conversation Theme</span>
-            <HelpTooltip text="Set a background gradient for all Conversation-mode chats, separately for dark and light color schemes." />
-          </div>
-          {/* Scheme tabs */}
-          <div className="flex rounded-lg bg-[var(--secondary)] p-0.5 text-[0.625rem]">
-            <button
-              type="button"
-              onClick={() => setActiveGradientScheme("dark")}
-              className={cn(
-                "rounded-md px-2 py-1 transition-colors",
-                activeGradientScheme === "dark"
-                  ? "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm"
-                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-              )}
-            >
-              Dark
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveGradientScheme("light")}
-              className={cn(
-                "rounded-md px-2 py-1 transition-colors",
-                activeGradientScheme === "light"
-                  ? "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm"
-                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-              )}
-            >
-              Light
-            </button>
-          </div>
-        </div>
-        {/* Preview */}
-        <div
-          className="h-16 rounded-lg ring-1 ring-[var(--border)]"
-          style={{ background: `linear-gradient(135deg, ${currentGradient.from}, ${currentGradient.to})` }}
-        />
-        <div className="grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={currentGradient.from}
-                onChange={(e) => {
-                  setConvoGradientField(activeGradientScheme, "from", e.target.value);
-                  setDraftFrom(e.target.value);
-                }}
-                className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
-              />
-              <input
-                type="text"
-                value={draftFrom}
-                onChange={(e) => {
-                  setDraftFrom(e.target.value);
-                  if (/^#[0-9a-fA-F]{6}$/.test(e.target.value))
-                    setConvoGradientField(activeGradientScheme, "from", e.target.value);
-                }}
-                onBlur={() => setDraftFrom(currentGradient.from)}
-                className="w-full rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-              />
-            </div>
-          </label>
-          <label className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={currentGradient.to}
-                onChange={(e) => {
-                  setConvoGradientField(activeGradientScheme, "to", e.target.value);
-                  setDraftTo(e.target.value);
-                }}
-                className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
-              />
-              <input
-                type="text"
-                value={draftTo}
-                onChange={(e) => {
-                  setDraftTo(e.target.value);
-                  if (/^#[0-9a-fA-F]{6}$/.test(e.target.value))
-                    setConvoGradientField(activeGradientScheme, "to", e.target.value);
-                }}
-                onBlur={() => setDraftTo(currentGradient.to)}
-                className="w-full rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-              />
-            </div>
-          </label>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            const defaults =
-              activeGradientScheme === "dark" ? { from: "#0a0a0e", to: "#1c2133" } : { from: "#f2eff7", to: "#eae6f0" };
-            setConvoGradientField(activeGradientScheme, "from", defaults.from);
-            setConvoGradientField(activeGradientScheme, "to", defaults.to);
-            setDraftFrom(defaults.from);
-            setDraftTo(defaults.to);
-          }}
-          className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
-        >
-          Reset {activeGradientScheme === "dark" ? "Dark" : "Light"} to default
-        </button>
-      </div>
-
-      {/* ── Conversation Sound ── */}
-      <ConversationSoundSetting />
-
-      {/* ── Chat Background Picker ── */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium inline-flex items-center gap-1">
-            Chat Background{" "}
-            <HelpTooltip text="Import one or more custom images, or choose from your game asset backgrounds. Supports JPG, PNG, GIF, WebP, and AVIF. Remove to use the default background." />
-          </span>
-          {chatBackground && (
-            <button
-              onClick={() => setChatBackground(null)}
-              className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[0.625rem] text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/10"
-            >
-              <X size="0.625rem" /> Remove
-            </button>
-          )}
-        </div>
-        <label className="flex flex-col gap-1 rounded-lg bg-[var(--secondary)]/45 p-3 ring-1 ring-[var(--border)]/70">
-          <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
-            Background Blur
-            <HelpTooltip text="Softens selected Roleplay and Game mode background images behind the chat UI. Set to 0px to keep backgrounds sharp." />
-          </span>
-          <div className="flex items-center gap-3">
-            <input
-              type="range"
-              min={0}
-              max={24}
-              step={1}
-              value={chatBackgroundBlur}
-              onChange={(e) => setChatBackgroundBlur(Number(e.target.value))}
-              className="min-w-0 flex-1 accent-[var(--primary)]"
+            <ToggleSetting
+              label="Dynamic weather effects (rain, snow, fog, etc.)"
+              checked={weatherEffects}
+              onChange={setWeatherEffects}
             />
-            <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
-              {chatBackgroundBlur === 0 ? "Off" : `${chatBackgroundBlur}px`}
-            </span>
+            <p className="text-[0.625rem] text-[var(--muted-foreground)] pl-6">
+              Shows animated weather particles based on in-story weather and time of day. Requires the{" "}
+              <span className="font-medium">World State</span> agent to be enabled so weather data is extracted from the
+              narrative.
+            </p>
           </div>
-        </label>
-        <BackgroundPicker selected={chatBackground} onSelect={setChatBackground} />
-      </div>
+
+          {/* ── Conversation Gradient (per color-scheme) ── */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Palette size="0.75rem" className="text-[var(--muted-foreground)]" />
+                <span className="text-xs font-medium">Conversation Theme</span>
+                <HelpTooltip text="Set a background gradient for all Conversation-mode chats, separately for dark and light color schemes." />
+              </div>
+              {/* Scheme tabs */}
+              <div className="flex rounded-lg bg-[var(--secondary)] p-0.5 text-[0.625rem]">
+                <button
+                  type="button"
+                  onClick={() => setActiveGradientScheme("dark")}
+                  className={cn(
+                    "rounded-md px-2 py-1 transition-colors",
+                    activeGradientScheme === "dark"
+                      ? "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm"
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                  )}
+                >
+                  Dark
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveGradientScheme("light")}
+                  className={cn(
+                    "rounded-md px-2 py-1 transition-colors",
+                    activeGradientScheme === "light"
+                      ? "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm"
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                  )}
+                >
+                  Light
+                </button>
+              </div>
+            </div>
+            {/* Preview */}
+            <div
+              className="h-16 rounded-lg ring-1 ring-[var(--border)]"
+              style={{ background: `linear-gradient(135deg, ${currentGradient.from}, ${currentGradient.to})` }}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={currentGradient.from}
+                    onChange={(e) => {
+                      setConvoGradientField(activeGradientScheme, "from", e.target.value);
+                      setDraftFrom(e.target.value);
+                    }}
+                    className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
+                  />
+                  <input
+                    type="text"
+                    value={draftFrom}
+                    onChange={(e) => {
+                      setDraftFrom(e.target.value);
+                      if (/^#[0-9a-fA-F]{6}$/.test(e.target.value))
+                        setConvoGradientField(activeGradientScheme, "from", e.target.value);
+                    }}
+                    onBlur={() => setDraftFrom(currentGradient.from)}
+                    className="w-full rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
+                  />
+                </div>
+              </label>
+              <label className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={currentGradient.to}
+                    onChange={(e) => {
+                      setConvoGradientField(activeGradientScheme, "to", e.target.value);
+                      setDraftTo(e.target.value);
+                    }}
+                    className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
+                  />
+                  <input
+                    type="text"
+                    value={draftTo}
+                    onChange={(e) => {
+                      setDraftTo(e.target.value);
+                      if (/^#[0-9a-fA-F]{6}$/.test(e.target.value))
+                        setConvoGradientField(activeGradientScheme, "to", e.target.value);
+                    }}
+                    onBlur={() => setDraftTo(currentGradient.to)}
+                    className="w-full rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
+                  />
+                </div>
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const defaults =
+                  activeGradientScheme === "dark"
+                    ? { from: "#0a0a0e", to: "#1c2133" }
+                    : { from: "#f2eff7", to: "#eae6f0" };
+                setConvoGradientField(activeGradientScheme, "from", defaults.from);
+                setConvoGradientField(activeGradientScheme, "to", defaults.to);
+                setDraftFrom(defaults.from);
+                setDraftTo(defaults.to);
+              }}
+              className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
+            >
+              Reset {activeGradientScheme === "dark" ? "Dark" : "Light"} to default
+            </button>
+          </div>
+
+          {/* ── Chat Background Picker ── */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium inline-flex items-center gap-1">
+                Chat Background{" "}
+                <HelpTooltip text="Import one or more custom images, or choose from your game asset backgrounds. Supports JPG, PNG, GIF, WebP, and AVIF. Remove to use the default background." />
+              </span>
+              {chatBackground && (
+                <button
+                  onClick={() => setChatBackground(null)}
+                  className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[0.625rem] text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/10"
+                >
+                  <X size="0.625rem" /> Remove
+                </button>
+              )}
+            </div>
+            <label className="flex flex-col gap-1 rounded-lg bg-[var(--secondary)]/45 p-3 ring-1 ring-[var(--border)]/70">
+              <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
+                Background Blur
+                <HelpTooltip text="Softens selected Roleplay and Game mode background images behind the chat UI. Set to 0px to keep backgrounds sharp." />
+              </span>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={0}
+                  max={24}
+                  step={1}
+                  value={chatBackgroundBlur}
+                  onChange={(e) => setChatBackgroundBlur(Number(e.target.value))}
+                  className="min-w-0 flex-1 accent-[var(--primary)]"
+                />
+                <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
+                  {chatBackgroundBlur === 0 ? "Off" : `${chatBackgroundBlur}px`}
+                </span>
+              </div>
+            </label>
+            <BackgroundPicker selected={chatBackground} onSelect={setChatBackground} />
+          </div>
+        </div>
+      </SettingsSection>
     </div>
   );
 }
@@ -3065,142 +3194,150 @@ function ThemesSettings() {
 
   // ── Theme List View ──
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
-        <Palette size="0.75rem" />
-        Create or import custom CSS themes. Themes sync across devices connected to this Marinara server, while
-        extensions stay local to this browser.
-      </div>
+    <div className="flex flex-col gap-3">
+      <SettingsIntro>
+        Create or import custom CSS themes. Themes sync across devices connected to this Marinara server.
+      </SettingsIntro>
 
-      {/* Action buttons */}
-      <div className="flex gap-2">
-        <button
-          onClick={openNewTheme}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--primary)]/30 bg-[var(--primary)]/5 p-3 text-xs text-[var(--primary)] transition-all hover:border-[var(--primary)]/50 hover:bg-[var(--primary)]/10"
-        >
-          <Plus size="0.875rem" /> Create Theme
-        </button>
-        <button
-          onClick={() => fileRef.current?.click()}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/50"
-        >
-          <Download size="0.875rem" /> Import File
-        </button>
-      </div>
-      <input ref={fileRef} type="file" accept=".css,.json" className="hidden" onChange={handleImportTheme} />
+      <SettingsSection
+        title="Theme Library"
+        description="Create, import, activate, edit, export, or remove custom CSS themes."
+        icon={<Palette size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-3">
+          {/* Action buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={openNewTheme}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--primary)]/30 bg-[var(--primary)]/5 p-3 text-xs text-[var(--primary)] transition-all hover:border-[var(--primary)]/50 hover:bg-[var(--primary)]/10"
+            >
+              <Plus size="0.875rem" /> Create Theme
+            </button>
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/50"
+            >
+              <Download size="0.875rem" /> Import File
+            </button>
+          </div>
+          <input ref={fileRef} type="file" accept=".css,.json" className="hidden" onChange={handleImportTheme} />
 
-      {/* Active theme: None option */}
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs font-medium">Installed Themes</span>
-        <button
-          onClick={() =>
-            setActiveTheme.mutate(null, {
-              onError: (err) => {
-                console.error("[ThemesSettings] Failed to reset active theme:", err);
-                toast.error("Failed to reset the active theme.");
-              },
-            })
-          }
-          className={cn(
-            "flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all",
-            activeCustomTheme === null
-              ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
-              : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-          )}
-        >
-          <Palette size="0.75rem" />
-          Default Theme
-          {activeCustomTheme === null && <Check size="0.75rem" className="ml-auto" />}
-        </button>
-
-        {/* Custom theme list */}
-        {syncedThemes.map((t) => (
-          <div
-            key={t.id}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all",
-              activeCustomTheme?.id === t.id
-                ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
-                : "bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--accent)]",
-            )}
-          >
+          {/* Active theme: None option */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium">Installed Themes</span>
             <button
               onClick={() =>
-                setActiveTheme.mutate(t.id, {
+                setActiveTheme.mutate(null, {
                   onError: (err) => {
-                    console.error("[ThemesSettings] Failed to activate theme:", err);
-                    toast.error("Failed to activate theme.");
+                    console.error("[ThemesSettings] Failed to reset active theme:", err);
+                    toast.error("Failed to reset the active theme.");
                   },
                 })
               }
-              className="flex flex-1 items-center gap-2 min-w-0"
+              className={cn(
+                "flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all",
+                activeCustomTheme === null
+                  ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
+                  : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+              )}
             >
-              <FileCode2 size="0.75rem" className="shrink-0" />
-              <span className="truncate">{t.name}</span>
-              {activeCustomTheme?.id === t.id && <Check size="0.75rem" className="shrink-0" />}
+              <Palette size="0.75rem" />
+              Default Theme
+              {activeCustomTheme === null && <Check size="0.75rem" className="ml-auto" />}
             </button>
-            <button
-              onClick={() => openEditTheme(t)}
-              className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--primary)]/10 hover:text-[var(--primary)]"
-              title="Edit theme CSS"
-            >
-              <Code size="0.6875rem" />
-            </button>
-            <button
-              onClick={() => {
-                const json = JSON.stringify({ name: t.name, css: t.css }, null, 2);
-                const blob = new Blob([json], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `${t.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-              className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-emerald-500/10 hover:text-emerald-400"
-              title="Export theme"
-            >
-              <Download size="0.6875rem" />
-            </button>
-            <button
-              onClick={() => {
-                void (async () => {
-                  try {
-                    await deleteTheme.mutateAsync(t.id);
-                    toast.success(`Theme "${t.name}" removed`);
-                  } catch (err) {
-                    console.error("[ThemesSettings] Failed to remove theme:", err);
-                    toast.error("Failed to remove theme.");
+
+            {/* Custom theme list */}
+            {syncedThemes.map((t) => (
+              <div
+                key={t.id}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all",
+                  activeCustomTheme?.id === t.id
+                    ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
+                    : "bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--accent)]",
+                )}
+              >
+                <button
+                  onClick={() =>
+                    setActiveTheme.mutate(t.id, {
+                      onError: (err) => {
+                        console.error("[ThemesSettings] Failed to activate theme:", err);
+                        toast.error("Failed to activate theme.");
+                      },
+                    })
                   }
-                })();
-              }}
-              className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
-              title="Remove theme"
-            >
-              <Trash2 size="0.6875rem" />
-            </button>
+                  className="flex flex-1 items-center gap-2 min-w-0"
+                >
+                  <FileCode2 size="0.75rem" className="shrink-0" />
+                  <span className="truncate">{t.name}</span>
+                  {activeCustomTheme?.id === t.id && <Check size="0.75rem" className="shrink-0" />}
+                </button>
+                <button
+                  onClick={() => openEditTheme(t)}
+                  className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--primary)]/10 hover:text-[var(--primary)]"
+                  title="Edit theme CSS"
+                >
+                  <Code size="0.6875rem" />
+                </button>
+                <button
+                  onClick={() => {
+                    const json = JSON.stringify({ name: t.name, css: t.css }, null, 2);
+                    const blob = new Blob([json], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `${t.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-emerald-500/10 hover:text-emerald-400"
+                  title="Export theme"
+                >
+                  <Download size="0.6875rem" />
+                </button>
+                <button
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await deleteTheme.mutateAsync(t.id);
+                        toast.success(`Theme "${t.name}" removed`);
+                      } catch (err) {
+                        console.error("[ThemesSettings] Failed to remove theme:", err);
+                        toast.error("Failed to remove theme.");
+                      }
+                    })();
+                  }}
+                  className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
+                  title="Remove theme"
+                >
+                  <Trash2 size="0.6875rem" />
+                </button>
+              </div>
+            ))}
+
+            {isLoading && syncedThemes.length === 0 && (
+              <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
+                Loading synced themes...
+              </p>
+            )}
+
+            {!isLoading && syncedThemes.length === 0 && (
+              <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
+                No synced custom themes yet. Create one or import a .css file above.
+              </p>
+            )}
           </div>
-        ))}
 
-        {isLoading && syncedThemes.length === 0 && (
-          <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">Loading synced themes...</p>
-        )}
-
-        {!isLoading && syncedThemes.length === 0 && (
-          <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-            No synced custom themes yet. Create one or import a .css file above.
-          </p>
-        )}
-      </div>
-
-      {/* Info box */}
-      <div className="rounded-lg bg-[var(--secondary)]/50 p-2.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-        <strong>Tip:</strong> CSS themes can override any CSS variable (e.g.{" "}
-        <code className="rounded bg-[var(--secondary)] px-1">--background</code>,{" "}
-        <code className="rounded bg-[var(--secondary)] px-1">--primary</code>) or add custom styles. JSON themes should
-        have <code className="rounded bg-[var(--secondary)] px-1">{`{ "name": "...", "css": "..." }`}</code> format.
-        Imported theme files sync to this Marinara server but do not auto-activate.
-      </div>
+          {/* Info box */}
+          <div className="rounded-lg bg-[var(--secondary)]/50 p-2.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+            <strong>Tip:</strong> CSS themes can override any CSS variable (e.g.{" "}
+            <code className="rounded bg-[var(--secondary)] px-1">--background</code>,{" "}
+            <code className="rounded bg-[var(--secondary)] px-1">--primary</code>) or add custom styles. JSON themes
+            should have <code className="rounded bg-[var(--secondary)] px-1">{`{ "name": "...", "css": "..." }`}</code>{" "}
+            format. Imported theme files sync to this Marinara server but do not auto-activate.
+          </div>
+        </div>
+      </SettingsSection>
     </div>
   );
 }
@@ -3260,7 +3397,7 @@ function ExtensionsSettings() {
           description: parsed.description ?? "",
           css: parsed.css ?? null,
           js: parsed.js ?? null,
-          enabled: true,
+          enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : true,
           installedAt,
         });
         toast.success(`Extension "${name}" installed`);
@@ -3294,76 +3431,107 @@ function ExtensionsSettings() {
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
-        <Puzzle size="0.75rem" />
-        Install custom extensions to add new features and styles.
-      </div>
+    <div className="flex flex-col gap-3">
+      <SettingsIntro>Install browser-local extensions to add custom behavior or styling.</SettingsIntro>
 
-      {/* Import button */}
-      <button
-        onClick={() => fileRef.current?.click()}
-        className="flex items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/50"
+      <SettingsSection
+        title="Extension Library"
+        description="Import, enable, disable, or remove installed extensions."
+        icon={<Puzzle size="0.875rem" />}
       >
-        <Download size="0.875rem" /> Import Extension (.json, .css, or .js)
-      </button>
-      <input ref={fileRef} type="file" accept=".json,.css,.js" className="hidden" onChange={handleImportExtension} />
-
-      {/* Extension list */}
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs font-medium">Installed Extensions</span>
-
-        {extensionList.map((ext) => (
-          <div
-            key={ext.id}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all",
-              ext.enabled
-                ? "bg-[var(--secondary)] text-[var(--secondary-foreground)]"
-                : "bg-[var(--secondary)]/40 text-[var(--muted-foreground)]",
-            )}
+        <div className="flex flex-col gap-3">
+          {/* Import button */}
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="flex items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/50"
           >
-            <button
-              onClick={() => updateExtension.mutate({ id: ext.id, enabled: !ext.enabled })}
-              className={cn(
-                "rounded p-0.5 transition-colors",
-                ext.enabled
-                  ? "text-emerald-400 hover:text-emerald-300"
-                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-              )}
-              title={ext.enabled ? "Disable extension" : "Enable extension"}
-            >
-              {ext.enabled ? <Power size="0.75rem" /> : <PowerOff size="0.75rem" />}
-            </button>
-            <div className="flex flex-1 flex-col min-w-0">
-              <span className="truncate font-medium">{ext.name}</span>
-              {ext.description && (
-                <span className="truncate text-[0.625rem] text-[var(--muted-foreground)]">{ext.description}</span>
-              )}
-            </div>
-            <button
-              onClick={() => deleteExtension.mutate(ext.id)}
-              className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
-              title="Remove extension"
-            >
-              <Trash2 size="0.6875rem" />
-            </button>
+            <Download size="0.875rem" /> Import Extension (.json, .css, or .js)
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,.css,.js"
+            className="hidden"
+            onChange={handleImportExtension}
+          />
+
+          {/* Extension list */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium">Installed Extensions</span>
+
+            {extensionList.map((ext) => (
+              <div
+                key={ext.id}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all",
+                  ext.enabled
+                    ? "bg-[var(--secondary)] text-[var(--secondary-foreground)]"
+                    : "bg-[var(--secondary)]/40 text-[var(--muted-foreground)]",
+                )}
+              >
+                <button
+                  onClick={() => updateExtension.mutate({ id: ext.id, enabled: !ext.enabled })}
+                  className={cn(
+                    "rounded p-0.5 transition-colors",
+                    ext.enabled
+                      ? "text-emerald-400 hover:text-emerald-300"
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                  )}
+                  title={ext.enabled ? "Disable extension" : "Enable extension"}
+                >
+                  {ext.enabled ? <Power size="0.75rem" /> : <PowerOff size="0.75rem" />}
+                </button>
+                <div className="flex flex-1 flex-col min-w-0">
+                  <span className="truncate font-medium">{ext.name}</span>
+                  {ext.description && (
+                    <span className="truncate text-[0.625rem] text-[var(--muted-foreground)]">{ext.description}</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    downloadJsonFile(
+                      {
+                        kind: "marinara.extension",
+                        version: 1,
+                        name: ext.name,
+                        description: ext.description ?? "",
+                        css: ext.css ?? null,
+                        js: ext.js ?? null,
+                        enabled: ext.enabled,
+                      },
+                      `${sanitizeExportFilenamePart(ext.name, "extension")}.json`,
+                    );
+                  }}
+                  className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-emerald-500/10 hover:text-emerald-400"
+                  title="Export extension"
+                >
+                  <Download size="0.6875rem" />
+                </button>
+                <button
+                  onClick={() => deleteExtension.mutate(ext.id)}
+                  className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
+                  title="Remove extension"
+                >
+                  <Trash2 size="0.6875rem" />
+                </button>
+              </div>
+            ))}
+
+            {!isLoading && extensionList.length === 0 && (
+              <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
+                No extensions installed. Import a .json, .css, or .js extension file above.
+              </p>
+            )}
           </div>
-        ))}
 
-        {!isLoading && extensionList.length === 0 && (
-          <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
-            No extensions installed. Import a .json, .css, or .js extension file above.
-          </p>
-        )}
-      </div>
-
-      {/* Info box */}
-      <div className="rounded-lg bg-[var(--secondary)]/50 p-2.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-        <strong>JSON format:</strong>{" "}
-        <code className="rounded bg-[var(--secondary)] px-1">{`{ "name": "...", "description": "...", "css": "..." }`}</code>
-        . Extensions can inject custom CSS and/or JavaScript to modify the UI.
-      </div>
+          {/* Info box */}
+          <div className="rounded-lg bg-[var(--secondary)]/50 p-2.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+            <strong>JSON format:</strong>{" "}
+            <code className="rounded bg-[var(--secondary)] px-1">{`{ "name": "...", "description": "...", "css": "..." }`}</code>
+            . Extensions can inject custom CSS and/or JavaScript to modify the UI.
+          </div>
+        </div>
+      </SettingsSection>
     </div>
   );
 }
@@ -3899,171 +4067,170 @@ function ImportSettings() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="text-xs text-[var(--muted-foreground)]">
-        Import data from Marinara exports, SillyTavern, or other tools. Full profile imports also restore synced custom
-        themes and profile archive assets.
-      </div>
+      <SettingsIntro>
+        Import data from Marinara exports, SillyTavern, or asset folders. Full profile imports also restore synced
+        custom themes and profile archive assets.
+      </SettingsIntro>
 
-      {/* Profile import */}
-      <label
-        className={cn(
-          "flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500/20 to-teal-500/20 px-3 py-3 text-xs font-semibold ring-1 ring-emerald-500/30 transition-all hover:ring-emerald-500/50 active:scale-[0.98]",
-          profileImportBusy && "pointer-events-none opacity-75",
-        )}
+      <SettingsSection
+        title="Profile & Marinara"
+        description="Restore full profiles or import individual Marinara files."
+        icon={<Download size="0.875rem" />}
       >
-        {profileImportBusy ? <Loader2 size="1rem" className="animate-spin" /> : <Download size="1rem" />}
-        {profileImportBusy
-          ? profileImportProgress?.status === "reading" || profileImportProgress?.status === "preview"
-            ? "Scanning Profile..."
-            : "Importing Profile..."
-          : "Import Profile (JSON/ZIP)"}
-        <input
-          type="file"
-          accept=".json,.zip,application/json,application/zip"
-          onChange={handleProfileImport}
-          disabled={profileImportBusy}
-          className="hidden"
-        />
-      </label>
+        <div className="flex flex-col gap-2.5">
+          <label
+            className={cn(
+              "flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-emerald-500/15 px-3 py-3 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-500/30 transition-all hover:bg-emerald-500/20 active:scale-[0.98] dark:text-emerald-300",
+              profileImportBusy && "pointer-events-none opacity-75",
+            )}
+          >
+            {profileImportBusy ? <Loader2 size="1rem" className="animate-spin" /> : <Download size="1rem" />}
+            {profileImportBusy
+              ? profileImportProgress?.status === "reading" || profileImportProgress?.status === "preview"
+                ? "Scanning Profile..."
+                : "Importing Profile..."
+              : "Import Profile (JSON/ZIP)"}
+            <input
+              type="file"
+              accept=".json,.zip,application/json,application/zip"
+              onChange={handleProfileImport}
+              disabled={profileImportBusy}
+              className="hidden"
+            />
+          </label>
 
-      {profileImportProgress && (
-        <div
-          role="status"
-          aria-live="polite"
-          className={cn(
-            "flex flex-col gap-2 rounded-lg border px-3 py-2 text-xs",
-            profileImportProgress.status === "error"
-              ? "border-[var(--destructive)]/40 bg-[var(--destructive)]/10 text-[var(--destructive)]"
-              : profileImportProgress.status === "success" && profileImportProgress.warnings?.length
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"
-                : profileImportProgress.status === "success"
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
-                  : "border-emerald-500/30 bg-emerald-500/10 text-[var(--foreground)]",
-          )}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              {profileImportProgress.status === "success" && profileImportProgress.warnings?.length ? (
-                <AlertTriangle size="0.875rem" className="shrink-0" />
-              ) : profileImportProgress.status === "success" ? (
-                <Check size="0.875rem" className="shrink-0" />
-              ) : profileImportProgress.status === "error" ? (
-                <AlertTriangle size="0.875rem" className="shrink-0" />
-              ) : (
-                <Loader2 size="0.875rem" className="shrink-0 animate-spin text-emerald-500" />
+          {profileImportProgress && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={cn(
+                "flex flex-col gap-2 rounded-lg border px-3 py-2 text-xs",
+                profileImportProgress.status === "error"
+                  ? "border-[var(--destructive)]/40 bg-[var(--destructive)]/10 text-[var(--destructive)]"
+                  : profileImportProgress.status === "success" && profileImportProgress.warnings?.length
+                    ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"
+                    : profileImportProgress.status === "success"
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+                      : "border-emerald-500/30 bg-emerald-500/10 text-[var(--foreground)]",
               )}
-              <span className="truncate font-medium">{profileImportProgress.label}</span>
-            </div>
-            <span className="shrink-0 text-[0.6875rem] text-[var(--muted-foreground)]">
-              {formatProfileImportDuration(profileImportProgress.elapsedSeconds)}
-            </span>
-          </div>
-
-          {profileImportProgress.status !== "error" && (
-            <>
-              <div className="h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
-                <div
-                  className={cn(
-                    "h-full rounded-full transition-all duration-300",
-                    profileImportProgress.status === "success" && profileImportProgress.warnings?.length
-                      ? "bg-amber-500"
-                      : profileImportProgress.status === "success"
-                        ? "bg-emerald-500"
-                        : "bg-emerald-400",
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  {profileImportProgress.status === "success" && profileImportProgress.warnings?.length ? (
+                    <AlertTriangle size="0.875rem" className="shrink-0" />
+                  ) : profileImportProgress.status === "success" ? (
+                    <Check size="0.875rem" className="shrink-0" />
+                  ) : profileImportProgress.status === "error" ? (
+                    <AlertTriangle size="0.875rem" className="shrink-0" />
+                  ) : (
+                    <Loader2 size="0.875rem" className="shrink-0 animate-spin text-emerald-500" />
                   )}
-                  style={{ width: `${getProfileImportPercent(profileImportProgress)}%` }}
-                />
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                <span>
-                  {profileImportProgress.completedItems}/{profileImportProgress.totalItems} items
-                </span>
-                {estimateProfileImportRemainingSeconds(profileImportProgress) !== null && (
-                  <span>
-                    ETA {formatProfileImportDuration(estimateProfileImportRemainingSeconds(profileImportProgress) ?? 0)}
-                  </span>
-                )}
-              </div>
-              {formatProfileImportStats(profileImportProgress.imported) && (
-                <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                  {profileImportProgress.status === "preview" ? "Found" : "Imported so far"}:{" "}
-                  {formatProfileImportStats(profileImportProgress.imported)}
+                  <span className="truncate font-medium">{profileImportProgress.label}</span>
                 </div>
-              )}
-              {profileImportProgress.warnings?.length ? (
-                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[0.6875rem] text-amber-700 dark:text-amber-200">
-                  <div className="font-medium">{formatProfileImportWarningSummary(profileImportProgress.warnings)}</div>
-                  {formatProfileImportWarningDetails(profileImportProgress.warnings) && (
-                    <div className="mt-0.5 break-words text-amber-700/80 dark:text-amber-100/80">
-                      {formatProfileImportWarningDetails(profileImportProgress.warnings)}
+                <span className="shrink-0 text-[0.6875rem] text-[var(--muted-foreground)]">
+                  {formatProfileImportDuration(profileImportProgress.elapsedSeconds)}
+                </span>
+              </div>
+
+              {profileImportProgress.status !== "error" && (
+                <>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all duration-300",
+                        profileImportProgress.status === "success" && profileImportProgress.warnings?.length
+                          ? "bg-amber-500"
+                          : profileImportProgress.status === "success"
+                            ? "bg-emerald-500"
+                            : "bg-emerald-400",
+                      )}
+                      style={{ width: `${getProfileImportPercent(profileImportProgress)}%` }}
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[0.6875rem] text-[var(--muted-foreground)]">
+                    <span>
+                      {profileImportProgress.completedItems}/{profileImportProgress.totalItems} items
+                    </span>
+                    {estimateProfileImportRemainingSeconds(profileImportProgress) !== null && (
+                      <span>
+                        ETA{" "}
+                        {formatProfileImportDuration(estimateProfileImportRemainingSeconds(profileImportProgress) ?? 0)}
+                      </span>
+                    )}
+                  </div>
+                  {formatProfileImportStats(profileImportProgress.imported) && (
+                    <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                      {profileImportProgress.status === "preview" ? "Found" : "Imported so far"}:{" "}
+                      {formatProfileImportStats(profileImportProgress.imported)}
                     </div>
                   )}
-                </div>
-              ) : null}
-            </>
+                  {profileImportProgress.warnings?.length ? (
+                    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[0.6875rem] text-amber-700 dark:text-amber-200">
+                      <div className="font-medium">
+                        {formatProfileImportWarningSummary(profileImportProgress.warnings)}
+                      </div>
+                      {formatProfileImportWarningDetails(profileImportProgress.warnings) && (
+                        <div className="mt-0.5 break-words text-amber-700/80 dark:text-amber-100/80">
+                          {formatProfileImportWarningDetails(profileImportProgress.warnings)}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </>
+              )}
+
+              {profileImportProgress.status === "error" && profileImportProgress.error && (
+                <div className="text-[0.6875rem]">{profileImportProgress.error}</div>
+              )}
+            </div>
           )}
 
-          {profileImportProgress.status === "error" && profileImportProgress.error && (
-            <div className="text-[0.6875rem]">{profileImportProgress.error}</div>
-          )}
+          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-3 text-xs font-semibold ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98]">
+            <Download size="1rem" />
+            Import Marinara File (.marinara / .json)
+            <input type="file" accept=".json,.marinara" onChange={handleMarinaraImport} className="hidden" />
+          </label>
         </div>
-      )}
+      </SettingsSection>
 
-      {/* Marinara import */}
-      <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-pink-500/20 to-orange-500/20 px-3 py-3 text-xs font-semibold ring-1 ring-pink-500/30 transition-all hover:ring-pink-500/50 active:scale-[0.98]">
-        <Download size="1rem" />
-        Import Marinara File (.marinara / .json)
-        <input type="file" accept=".json,.marinara" onChange={handleMarinaraImport} className="hidden" />
-      </label>
-
-      <div className="retro-divider" />
-
-      {/* Bulk ST import */}
-      <span className="text-[0.625rem] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">
-        SillyTavern Import
-      </span>
-
-      <button
-        onClick={() => openModal("st-bulk-import")}
-        className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-500/20 to-purple-500/20 px-3 py-3 text-xs font-semibold ring-1 ring-violet-500/30 transition-all hover:ring-violet-500/50 active:scale-[0.98]"
+      <SettingsSection
+        title="SillyTavern Import"
+        description="Bring over characters, chats, presets, and lorebooks from SillyTavern files."
+        icon={<FolderOpen size="0.875rem" />}
       >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="7 10 12 15 17 10" />
-          <line x1="12" y1="15" x2="12" y2="3" />
-        </svg>
-        Import from SillyTavern Folder
-      </button>
+        <div className="flex flex-col gap-2.5">
+          <button
+            onClick={() => openModal("st-bulk-import")}
+            className="flex items-center justify-center gap-2 rounded-lg bg-[var(--primary)]/12 px-3 py-3 text-xs font-semibold text-[var(--primary)] ring-1 ring-[var(--primary)]/30 transition-all hover:bg-[var(--primary)]/18 active:scale-[0.98]"
+          >
+            <Download size="1rem" />
+            Import from SillyTavern Folder
+          </button>
 
-      <div className="flex flex-col gap-2">
-        <ImportButton
-          label="Import Character (JSON/PNG)"
-          accept=".json,.png"
-          endpoint="/import/st-character"
-          mode="auto"
-        />
-        <ImportButton
-          label="Import Chat (JSONL)"
-          accept=".jsonl"
-          endpoint="/import/st-chat"
-          mode="file"
-          onImported={(data) => {
-            qc.invalidateQueries({ queryKey: chatKeys.list() });
-            if (data.chatId) setActiveChatId(data.chatId);
-          }}
-        />
-        <ImportButton label="Import Preset (JSON)" accept=".json" endpoint="/import/st-preset" mode="json" />
-        <ImportButton label="Import Lorebook (JSON)" accept=".json" endpoint="/import/st-lorebook" mode="json" />
-      </div>
+          <div className="flex flex-col gap-2">
+            <ImportButton
+              label="Import Character (JSON/PNG)"
+              accept=".json,.png"
+              endpoint="/import/st-character"
+              mode="auto"
+            />
+            <ImportButton
+              label="Import Chat (JSONL)"
+              accept=".jsonl"
+              endpoint="/import/st-chat"
+              mode="file"
+              onImported={(data) => {
+                qc.invalidateQueries({ queryKey: chatKeys.list() });
+                if (data.chatId) setActiveChatId(data.chatId);
+              }}
+            />
+            <ImportButton label="Import Preset (JSON)" accept=".json" endpoint="/import/st-preset" mode="json" />
+            <ImportButton label="Import Lorebook (JSON)" accept=".json" endpoint="/import/st-lorebook" mode="json" />
+          </div>
+        </div>
+      </SettingsSection>
+
+      <GameAssetsSettings />
     </div>
   );
 }
@@ -4496,13 +4663,15 @@ function AdvancedSettings() {
         onSelect={handleExportProfileChoice}
       />
 
-      <div className="text-xs text-[var(--muted-foreground)]">Advanced settings for power users.</div>
+      <SettingsIntro>
+        Server maintenance, generation tooling, message utilities, backups, and data removal.
+      </SettingsIntro>
 
-      <div className="flex flex-col gap-2 rounded-lg bg-[var(--secondary)]/40 p-2.5 ring-1 ring-[var(--border)]">
-        <div className="flex items-center gap-1.5">
-          <Power size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <span className="text-xs font-medium">Admin Access</span>
-        </div>
+      <SettingsSection
+        title="Admin Access"
+        description="Save the browser-side admin secret for protected maintenance actions."
+        icon={<Power size="0.875rem" />}
+      >
         <div className="flex min-w-0 flex-wrap gap-2">
           <input
             type="password"
@@ -4522,539 +4691,556 @@ function AdvancedSettings() {
             </span>
           </button>
         </div>
-      </div>
+      </SettingsSection>
 
-      {/* ── Updates ── */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1.5">
-          <RefreshCw size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <span className="text-xs font-medium">Updates</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => updateCheck.refetch()}
-            disabled={updateCheck.isFetching}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
-          >
-            {updateCheck.isFetching ? (
-              <>
-                <Loader2 size="0.8125rem" className="animate-spin" />
-                Checking…
-              </>
-            ) : (
-              <>
-                <RefreshCw size="0.8125rem" />
-                Check for Updates
-              </>
-            )}
-          </button>
-          <div className="flex flex-col text-[0.6875rem] text-[var(--muted-foreground)]">
-            <span>Release: {currentReleaseLabel}</span>
-            <span>{currentBuildLabel}</span>
-          </div>
-        </div>
-
-        {updateCheck.data && !updateCheck.data.updateAvailable && (
-          <div className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-2 ring-1 ring-[var(--border)]">
-            <Check size="0.8125rem" className="text-green-500 shrink-0" />
-            <div className="flex flex-col gap-0.5">
-              <span className="text-xs">You're on the latest release ({currentReleaseLabel})</span>
-              <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{currentBuildLabel}</span>
-            </div>
-          </div>
-        )}
-
-        {updateCheck.data?.updateAvailable && (
-          <div className="flex flex-col gap-2 rounded-lg bg-[var(--secondary)] p-2.5 ring-1 ring-[var(--border)]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium">
-                {updateCheck.data.versionUpdate
-                  ? `v${updateCheck.data.latestVersion} available`
-                  : `${commitsBehind} commit${commitsBehind !== 1 ? "s" : ""} behind ${updateCheck.data.targetRef ?? "origin/main"}`}
-              </span>
-              {updateCheck.data.versionUpdate && (
-                <a
-                  href={updateCheck.data.releaseUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-[0.625rem] text-[var(--primary)] hover:underline"
-                >
-                  Release notes <ExternalLink size="0.625rem" />
-                </a>
+      <SettingsSection
+        title="Updates"
+        description="Check this install, apply supported updates, or force-refresh the web shell."
+        icon={<RefreshCw size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => updateCheck.refetch()}
+              disabled={updateCheck.isFetching}
+              className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+            >
+              {updateCheck.isFetching ? (
+                <>
+                  <Loader2 size="0.8125rem" className="animate-spin" />
+                  Checking…
+                </>
+              ) : (
+                <>
+                  <RefreshCw size="0.8125rem" />
+                  Check for Updates
+                </>
               )}
+            </button>
+            <div className="flex flex-col text-[0.6875rem] text-[var(--muted-foreground)]">
+              <span>Release: {currentReleaseLabel}</span>
+              <span>{currentBuildLabel}</span>
             </div>
-            {updateCheck.data.versionUpdate && updateCheck.data.releaseNotes && (
-              <p className="text-[0.625rem] text-[var(--muted-foreground)] line-clamp-4 whitespace-pre-wrap">
-                {updateCheck.data.releaseNotes}
-              </p>
-            )}
-            {commitsBehind > 0 && (
-              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                Commit counts compare this build with {updateCheck.data.targetRef ?? "origin/main"} and may include
-                unreleased development commits, not just tagged releases.
-              </p>
-            )}
-            {isIosClient && (
-              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                On iPhone or iPad, this updates the Marinara server you are connected to. Reload the Home Screen app
-                after the host finishes updating.
-              </p>
-            )}
-            {updateCheck.data.applyAvailable ? (
-              <button
-                onClick={() => applyUpdate.mutate()}
-                disabled={applyUpdate.isPending}
-                className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
-              >
-                {applyUpdate.isPending ? (
-                  <>
-                    <Loader2 size="0.8125rem" className="animate-spin" />
-                    Updating…
-                  </>
-                ) : (
-                  <>
-                    <Download size="0.8125rem" />
-                    Apply Update
-                  </>
-                )}
-              </button>
-            ) : (
-              <div className="flex flex-col gap-1.5 rounded-lg bg-[var(--background)]/60 p-2 ring-1 ring-[var(--border)]">
-                <div className="flex items-start gap-1.5">
-                  <AlertTriangle size="0.8125rem" className="mt-0.5 shrink-0 text-amber-500" />
-                  <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{applyUnavailableCopy}</span>
-                </div>
+          </div>
+
+          {updateCheck.data && !updateCheck.data.updateAvailable && (
+            <div className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-2 ring-1 ring-[var(--border)]">
+              <Check size="0.8125rem" className="text-green-500 shrink-0" />
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs">You're on the latest release ({currentReleaseLabel})</span>
+                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{currentBuildLabel}</span>
+              </div>
+            </div>
+          )}
+
+          {updateCheck.data?.updateAvailable && (
+            <div className="flex flex-col gap-2 rounded-lg bg-[var(--secondary)] p-2.5 ring-1 ring-[var(--border)]">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">
+                  {updateCheck.data.versionUpdate
+                    ? `v${updateCheck.data.latestVersion} available`
+                    : `${commitsBehind} commit${commitsBehind !== 1 ? "s" : ""} behind ${updateCheck.data.targetRef ?? "origin/main"}`}
+                </span>
                 {updateCheck.data.versionUpdate && (
                   <a
                     href={updateCheck.data.releaseUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95"
+                    className="flex items-center gap-1 text-[0.625rem] text-[var(--primary)] hover:underline"
                   >
-                    <Download size="0.8125rem" />
-                    Download v{updateCheck.data.latestVersion}
+                    Release notes <ExternalLink size="0.625rem" />
                   </a>
                 )}
-                {updateCheck.data.versionUpdate && (
-                  <span className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Android APK assets are WebView shells, not standalone apps. Start Marinara in Termux first.
-                  </span>
+              </div>
+              {updateCheck.data.versionUpdate && updateCheck.data.releaseNotes && (
+                <p className="text-[0.625rem] text-[var(--muted-foreground)] line-clamp-4 whitespace-pre-wrap">
+                  {updateCheck.data.releaseNotes}
+                </p>
+              )}
+              {commitsBehind > 0 && (
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                  Commit counts compare this build with {updateCheck.data.targetRef ?? "origin/main"} and may include
+                  unreleased development commits, not just tagged releases.
+                </p>
+              )}
+              {isIosClient && (
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                  On iPhone or iPad, this updates the Marinara server you are connected to. Reload the Home Screen app
+                  after the host finishes updating.
+                </p>
+              )}
+              {updateCheck.data.applyAvailable ? (
+                <button
+                  onClick={() => applyUpdate.mutate()}
+                  disabled={applyUpdate.isPending}
+                  className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+                >
+                  {applyUpdate.isPending ? (
+                    <>
+                      <Loader2 size="0.8125rem" className="animate-spin" />
+                      Updating…
+                    </>
+                  ) : (
+                    <>
+                      <Download size="0.8125rem" />
+                      Apply Update
+                    </>
+                  )}
+                </button>
+              ) : (
+                <div className="flex flex-col gap-1.5 rounded-lg bg-[var(--background)]/60 p-2 ring-1 ring-[var(--border)]">
+                  <div className="flex items-start gap-1.5">
+                    <AlertTriangle size="0.8125rem" className="mt-0.5 shrink-0 text-amber-500" />
+                    <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{applyUnavailableCopy}</span>
+                  </div>
+                  {updateCheck.data.versionUpdate && (
+                    <a
+                      href={updateCheck.data.releaseUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95"
+                    >
+                      <Download size="0.8125rem" />
+                      Download v{updateCheck.data.latestVersion}
+                    </a>
+                  )}
+                  {updateCheck.data.versionUpdate && (
+                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      Android APK assets are WebView shells, not standalone apps. Start Marinara in Termux first.
+                    </span>
+                  )}
+                  {manualUpdateHint && (
+                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">{manualUpdateHint}</span>
+                  )}
+                  {installType === "docker" && updateCheck.data.dockerImageTag && (
+                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      Container tag:{" "}
+                      <code className="break-all rounded bg-[var(--background)] px-1 py-0.5">
+                        {updateCheck.data.dockerImageTag}
+                      </code>
+                      {updateCheck.data.dockerLiteImageTag ? (
+                        <>
+                          {" "}
+                          Lite:{" "}
+                          <code className="break-all rounded bg-[var(--background)] px-1 py-0.5">
+                            {updateCheck.data.dockerLiteImageTag}
+                          </code>
+                        </>
+                      ) : null}
+                    </span>
+                  )}
+                  {manualUpdateCommand && (
+                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      Manual update:{" "}
+                      <code className="break-all rounded bg-[var(--background)] px-1 py-0.5">
+                        {manualUpdateCommand}
+                      </code>
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {updateCheck.isError && (
+            <div className="flex items-center gap-1.5 rounded-lg bg-[var(--destructive)]/10 px-2.5 py-2 text-xs text-[var(--destructive)]">
+              <AlertTriangle size="0.8125rem" className="shrink-0" />
+              Could not check for updates. Try again later.
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => void handleForceRefreshSpa()}
+              disabled={refreshingSpa}
+              className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--background)]/70 px-3 py-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {refreshingSpa ? (
+                <>
+                  <Loader2 size="0.8125rem" className="animate-spin" />
+                  Refreshing…
+                </>
+              ) : (
+                <>
+                  <RefreshCw size="0.8125rem" />
+                  Refresh App
+                </>
+              )}
+            </button>
+            <HelpTooltip
+              side="bottom"
+              text="Manual refresh unregisters the active service worker and clears browser caches before reloading. Marinara's stored chats, settings, and other local app data stay intact."
+            />
+          </div>
+        </div>
+      </SettingsSection>
+
+      <ImageGenerationSettings />
+      <PromptOverridesEditor
+        title="Game Image Prompt Templates"
+        description="Edit the reusable templates Game Mode uses for NPC portraits, backgrounds, and scene illustrations."
+        help="These templates render before Game Mode sends recurring image-generation requests. One-off prompt review edits still only affect the current request."
+        keys={GAME_IMAGE_PROMPT_TEMPLATE_KEYS}
+        preferredKey="game.npcPortrait"
+      />
+      <PromptOverridesEditor />
+
+      <SettingsSection
+        title="Message Tools"
+        description="Quick reply actions, message metadata, and debug visibility."
+        icon={<MessageCircle size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-2.5">
+          <div
+            className={cn(
+              "overflow-hidden rounded-xl border transition-colors",
+              showQuickRepliesMenu
+                ? "border-[var(--primary)]/30 bg-[var(--secondary)]/15"
+                : "border-transparent bg-transparent hover:bg-[var(--secondary)]/30",
+            )}
+          >
+            <div className="flex min-h-9 items-stretch">
+              <div className="flex min-w-0 items-center gap-1.5 py-2 pl-1.5 pr-2">
+                <label className="flex min-w-0 cursor-pointer items-center gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={showQuickRepliesMenu}
+                    onChange={(e) => handleQuickRepliesMenuChange(e.target.checked)}
+                    className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
+                  />
+                  <span className="min-w-0 text-xs">Quick replies</span>
+                </label>
+                <span className="shrink-0" onClick={(e) => e.preventDefault()}>
+                  <HelpTooltip text="Adds alternate draft actions beside Send. One action appears directly; multiple actions open from the ellipsis." />
+                </span>
+              </div>
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!showQuickRepliesMenu) return;
+                  setQuickRepliesDrawerOpen((open) => !open);
+                }}
+                aria-disabled={!showQuickRepliesMenu}
+                aria-controls="quick-replies-actions-drawer"
+                aria-expanded={showQuickRepliesMenu && quickRepliesDrawerOpen}
+                aria-label={
+                  !showQuickRepliesMenu
+                    ? "Quick replies options disabled"
+                    : quickRepliesDrawerOpen
+                      ? "Collapse Quick replies options"
+                      : "Expand Quick replies options"
+                }
+                title={
+                  !showQuickRepliesMenu
+                    ? "Enable Quick replies to configure options"
+                    : quickRepliesDrawerOpen
+                      ? "Collapse options"
+                      : "Expand options"
+                }
+                className={cn(
+                  "flex min-w-10 flex-1 items-center justify-end py-2 pl-2 pr-2 text-[var(--muted-foreground)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]",
+                  showQuickRepliesMenu && quickRepliesDrawerOpen ? "rounded-tr-xl" : "rounded-r-xl",
+                  showQuickRepliesMenu
+                    ? "cursor-pointer hover:bg-[var(--secondary)]/35 hover:text-[var(--foreground)] active:scale-[0.99]"
+                    : "cursor-not-allowed opacity-35",
                 )}
-                {manualUpdateHint && (
-                  <span className="text-[0.625rem] text-[var(--muted-foreground)]">{manualUpdateHint}</span>
-                )}
-                {installType === "docker" && updateCheck.data.dockerImageTag && (
-                  <span className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Container tag:{" "}
-                    <code className="break-all rounded bg-[var(--background)] px-1 py-0.5">
-                      {updateCheck.data.dockerImageTag}
-                    </code>
-                    {updateCheck.data.dockerLiteImageTag ? (
-                      <>
-                        {" "}
-                        Lite:{" "}
-                        <code className="break-all rounded bg-[var(--background)] px-1 py-0.5">
-                          {updateCheck.data.dockerLiteImageTag}
-                        </code>
-                      </>
-                    ) : null}
-                  </span>
-                )}
-                {manualUpdateCommand && (
-                  <span className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Manual update:{" "}
-                    <code className="break-all rounded bg-[var(--background)] px-1 py-0.5">{manualUpdateCommand}</code>
-                  </span>
-                )}
+                tabIndex={showQuickRepliesMenu ? 0 : -1}
+              >
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg">
+                  <ChevronDown
+                    size="0.875rem"
+                    aria-hidden="true"
+                    className={cn(
+                      "transition-transform",
+                      showQuickRepliesMenu && quickRepliesDrawerOpen ? "" : "-rotate-90",
+                    )}
+                  />
+                </span>
+              </button>
+            </div>
+            {showQuickRepliesMenu && quickRepliesDrawerOpen && (
+              <div
+                id="quick-replies-actions-drawer"
+                className="grid gap-1 border-t border-[var(--border)]/60 bg-[var(--background)]/25 p-1"
+                role="group"
+                aria-label="Quick replies actions to include"
+              >
+                {[
+                  {
+                    label: "Post only",
+                    checked: showQuickReplyPostOnly,
+                    onChange: setShowQuickReplyPostOnly,
+                    description: "Add persona message without triggering a reply.",
+                    icon: FileText,
+                  },
+                  {
+                    label: "Guide reply",
+                    checked: showQuickReplyGuide,
+                    onChange: setShowQuickReplyGuide,
+                    description: "Use draft as /guided direction.",
+                    icon: WandSparkles,
+                  },
+                  {
+                    label: "Impersonate",
+                    checked: showQuickReplyImpersonate,
+                    onChange: setShowQuickReplyImpersonate,
+                    description: "Generate a persona-side user reply.",
+                    icon: UserCheck,
+                  },
+                ].map((option) => {
+                  const Icon = option.icon;
+                  return (
+                    <button
+                      type="button"
+                      key={option.label}
+                      aria-pressed={option.checked}
+                      onClick={() => option.onChange(!option.checked)}
+                      className={cn(
+                        "group flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] active:scale-[0.99]",
+                        option.checked
+                          ? "bg-[var(--primary)]/8 text-[var(--foreground)] ring-1 ring-[var(--primary)]/30"
+                          : "text-[var(--muted-foreground)] ring-1 ring-transparent hover:bg-[var(--secondary)]/45 hover:text-[var(--foreground)]",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-md ring-1 transition-colors",
+                          option.checked
+                            ? "bg-[var(--primary)]/12 text-[var(--primary)] ring-[var(--primary)]/30"
+                            : "bg-[var(--secondary)]/35 text-[var(--muted-foreground)] ring-[var(--border)]/60 group-hover:text-[var(--foreground)]",
+                        )}
+                      >
+                        <Icon size="0.8125rem" aria-hidden="true" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs font-semibold">{option.label}</span>
+                        <span className="block text-[0.65rem] leading-tight text-[var(--muted-foreground)]">
+                          {option.description}
+                        </span>
+                      </span>
+                      <span
+                        className={cn(
+                          "flex h-4 w-4 shrink-0 items-center justify-center rounded-full ring-1 transition-colors",
+                          option.checked
+                            ? "bg-[var(--primary)] text-[var(--primary-foreground)] ring-[var(--primary)]"
+                            : "bg-[var(--background)]/45 text-transparent ring-[var(--border)]/70 group-hover:text-[var(--muted-foreground)]",
+                        )}
+                        aria-hidden="true"
+                      >
+                        <Check size="0.625rem" strokeWidth={3} />
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
-        )}
+          <ToggleSetting
+            label="Group consecutive messages"
+            checked={messageGrouping}
+            onChange={setMessageGrouping}
+            help="Combines multiple messages from the same sender into a visual group, reducing clutter in the chat."
+          />
+          <ToggleSetting
+            label="Show message timestamps"
+            checked={showTimestamps}
+            onChange={setShowTimestamps}
+            help="Displays the date and time each message was sent next to it in the chat."
+          />
+          <ToggleSetting
+            label="Show model name on messages"
+            checked={showModelName}
+            onChange={setShowModelName}
+            help="Displays which AI model generated each response, shown as a small label on assistant messages."
+          />
+          <ToggleSetting
+            label="Show token usage on messages"
+            checked={showTokenUsage}
+            onChange={setShowTokenUsage}
+            help="Displays prompt and completion token counts on each AI message. Useful for monitoring context size and cost."
+          />
+          <ToggleSetting
+            label="Show message numbers"
+            checked={showMessageNumbers}
+            onChange={setShowMessageNumbers}
+            help="Displays message numbers in roleplay and conversation chats."
+          />
+          <ToggleSetting
+            label="Guide swipes/regens with chat input"
+            checked={guideGenerations}
+            onChange={setGuideGenerations}
+            help="Uses the current draft as direction when regenerating a message or manually triggering a character response."
+          />
+          <ToggleSetting
+            label="Debug mode"
+            checked={debugMode}
+            onChange={setDebugMode}
+            help="Logs the prompt and response payloads sent to the model in the server console for debugging."
+          />
+        </div>
+      </SettingsSection>
 
-        {updateCheck.isError && (
-          <div className="flex items-center gap-1.5 rounded-lg bg-[var(--destructive)]/10 px-2.5 py-2 text-xs text-[var(--destructive)]">
-            <AlertTriangle size="0.8125rem" className="shrink-0" />
-            Could not check for updates. Try again later.
-          </div>
-        )}
-
-        <div className="flex items-center gap-2">
+      <SettingsSection
+        title="Backup & Export"
+        description="Download profile exports or full backup archives for recovery and migration."
+        help="Download a full backup as a .zip archive (storage snapshots + avatars, sprites, backgrounds, gallery, fonts, knowledge sources). Import Profile can restore the zip directly. The raw folders are for manual recovery."
+        icon={<Download size="0.875rem" />}
+      >
+        <div className="flex flex-col gap-2">
           <button
-            onClick={() => void handleForceRefreshSpa()}
-            disabled={refreshingSpa}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--background)]/70 px-3 py-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={handleCreateBackup}
+            disabled={creatingBackup}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
           >
-            {refreshingSpa ? (
+            {creatingBackup ? (
               <>
                 <Loader2 size="0.8125rem" className="animate-spin" />
-                Refreshing…
+                Creating backup…
               </>
             ) : (
               <>
-                <RefreshCw size="0.8125rem" />
-                Refresh App
+                <Download size="0.8125rem" />
+                Download Backup
               </>
             )}
           </button>
-          <HelpTooltip
-            side="bottom"
-            text="Manual refresh unregisters the active service worker and clears browser caches before reloading. Marinara's stored chats, settings, and other local app data stay intact."
-          />
-        </div>
-      </div>
-
-      <PromptOverridesEditor />
-
-      <div className="retro-divider" />
-      <div
-        className={cn(
-          "overflow-hidden rounded-xl border transition-colors",
-          showQuickRepliesMenu
-            ? "border-[var(--primary)]/30 bg-[var(--secondary)]/15"
-            : "border-transparent bg-transparent hover:bg-[var(--secondary)]/30",
-        )}
-      >
-        <div className="flex min-h-9 items-stretch">
-          <div className="flex min-w-0 items-center gap-1.5 py-2 pl-1.5 pr-2">
-            <label className="flex min-w-0 cursor-pointer items-center gap-2.5">
-              <input
-                type="checkbox"
-                checked={showQuickRepliesMenu}
-                onChange={(e) => handleQuickRepliesMenuChange(e.target.checked)}
-                className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
-              />
-              <span className="min-w-0 text-xs">Quick replies</span>
-            </label>
-            <span className="shrink-0" onClick={(e) => e.preventDefault()}>
-              <HelpTooltip text="Adds alternate draft actions beside Send. One action appears directly; multiple actions open from the ellipsis." />
-            </span>
-          </div>
           <button
-            type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!showQuickRepliesMenu) return;
-              setQuickRepliesDrawerOpen((open) => !open);
-            }}
-            aria-disabled={!showQuickRepliesMenu}
-            aria-controls="quick-replies-actions-drawer"
-            aria-expanded={showQuickRepliesMenu && quickRepliesDrawerOpen}
-            aria-label={
-              !showQuickRepliesMenu
-                ? "Quick replies options disabled"
-                : quickRepliesDrawerOpen
-                  ? "Collapse Quick replies options"
-                  : "Expand Quick replies options"
-            }
-            title={
-              !showQuickRepliesMenu
-                ? "Enable Quick replies to configure options"
-                : quickRepliesDrawerOpen
-                  ? "Collapse options"
-                  : "Expand options"
-            }
-            className={cn(
-              "flex min-w-10 flex-1 items-center justify-end py-2 pl-2 pr-2 text-[var(--muted-foreground)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]",
-              showQuickRepliesMenu && quickRepliesDrawerOpen ? "rounded-tr-xl" : "rounded-r-xl",
-              showQuickRepliesMenu
-                ? "cursor-pointer hover:bg-[var(--secondary)]/35 hover:text-[var(--foreground)] active:scale-[0.99]"
-                : "cursor-not-allowed opacity-35",
+            onClick={() => setExportProfileDialogOpen(true)}
+            disabled={exportingProfile}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs font-medium ring-1 ring-[var(--border)] transition-all hover:bg-[var(--secondary)]/80 active:scale-95 disabled:opacity-50"
+          >
+            {exportingProfile ? (
+              <>
+                <Loader2 size="0.8125rem" className="animate-spin" />
+                Exporting…
+              </>
+            ) : (
+              <>
+                <Download size="0.8125rem" />
+                Export Profile
+              </>
             )}
-            tabIndex={showQuickRepliesMenu ? 0 : -1}
-          >
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg">
-              <ChevronDown
-                size="0.875rem"
-                aria-hidden="true"
-                className={cn(
-                  "transition-transform",
-                  showQuickRepliesMenu && quickRepliesDrawerOpen ? "" : "-rotate-90",
-                )}
-              />
-            </span>
           </button>
+          {backups && backups.length > 0 && (
+            <div className="flex flex-col gap-1 mt-1">
+              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Existing backups</span>
+              {backups.map((b) => (
+                <div
+                  key={b.name}
+                  className="flex items-center justify-between rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 ring-1 ring-[var(--border)]"
+                >
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[0.6875rem] font-medium truncate">{b.name}</span>
+                    <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                      {new Date(b.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => deleteBackupMutation.mutate(b.name)}
+                    className="ml-2 rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
+                  >
+                    <Trash2 size="0.75rem" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        {showQuickRepliesMenu && quickRepliesDrawerOpen && (
-          <div
-            id="quick-replies-actions-drawer"
-            className="grid gap-1 border-t border-[var(--border)]/60 bg-[var(--background)]/25 p-1"
-            role="group"
-            aria-label="Quick replies actions to include"
-          >
-            {[
-              {
-                label: "Post only",
-                checked: showQuickReplyPostOnly,
-                onChange: setShowQuickReplyPostOnly,
-                description: "Add persona message without triggering a reply.",
-                icon: FileText,
-              },
-              {
-                label: "Guide reply",
-                checked: showQuickReplyGuide,
-                onChange: setShowQuickReplyGuide,
-                description: "Use draft as /guided direction.",
-                icon: WandSparkles,
-              },
-              {
-                label: "Impersonate",
-                checked: showQuickReplyImpersonate,
-                onChange: setShowQuickReplyImpersonate,
-                description: "Generate a persona-side user reply.",
-                icon: UserCheck,
-              },
-            ].map((option) => {
-              const Icon = option.icon;
+      </SettingsSection>
+
+      <SettingsSection
+        title="Danger Zone"
+        description="Permanently clear selected categories of local data. Professor Mari is always preserved."
+        icon={<AlertTriangle size="0.875rem" />}
+        tone="danger"
+      >
+        <div className="flex flex-col gap-2">
+          <div className="grid gap-2">
+            {EXPUNGE_SCOPE_OPTIONS.map((scope) => {
+              const checked = selectedScopes.includes(scope.id);
               return (
-                <button
-                  type="button"
-                  key={option.label}
-                  aria-pressed={option.checked}
-                  onClick={() => option.onChange(!option.checked)}
+                <label
+                  key={scope.id}
                   className={cn(
-                    "group flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] active:scale-[0.99]",
-                    option.checked
-                      ? "bg-[var(--primary)]/8 text-[var(--foreground)] ring-1 ring-[var(--primary)]/30"
-                      : "text-[var(--muted-foreground)] ring-1 ring-transparent hover:bg-[var(--secondary)]/45 hover:text-[var(--foreground)]",
+                    "flex cursor-pointer items-start gap-2 rounded-lg px-2.5 py-2 ring-1 transition-colors",
+                    checked
+                      ? "bg-[var(--destructive)]/10 ring-[var(--destructive)]/25"
+                      : "bg-[var(--background)]/40 ring-[var(--border)] hover:bg-[var(--secondary)]/70",
                   )}
                 >
-                  <span
-                    className={cn(
-                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-md ring-1 transition-colors",
-                      option.checked
-                        ? "bg-[var(--primary)]/12 text-[var(--primary)] ring-[var(--primary)]/30"
-                        : "bg-[var(--secondary)]/35 text-[var(--muted-foreground)] ring-[var(--border)]/60 group-hover:text-[var(--foreground)]",
-                    )}
-                  >
-                    <Icon size="0.8125rem" aria-hidden="true" />
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={isClearing}
+                    onChange={() => toggleScope(scope.id)}
+                    className="mt-0.5 h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--destructive)]"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium text-[var(--foreground)]">{scope.label}</span>
+                    <span className="block text-[0.625rem] text-[var(--muted-foreground)]">{scope.description}</span>
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-xs font-semibold">{option.label}</span>
-                    <span className="block text-[0.65rem] leading-tight text-[var(--muted-foreground)]">
-                      {option.description}
-                    </span>
-                  </span>
-                  <span
-                    className={cn(
-                      "flex h-4 w-4 shrink-0 items-center justify-center rounded-full ring-1 transition-colors",
-                      option.checked
-                        ? "bg-[var(--primary)] text-[var(--primary-foreground)] ring-[var(--primary)]"
-                        : "bg-[var(--background)]/45 text-transparent ring-[var(--border)]/70 group-hover:text-[var(--muted-foreground)]",
-                    )}
-                    aria-hidden="true"
-                  >
-                    <Check size="0.625rem" strokeWidth={3} />
-                  </span>
-                </button>
+                </label>
               );
             })}
           </div>
-        )}
-      </div>
-      <ToggleSetting
-        label="Group consecutive messages"
-        checked={messageGrouping}
-        onChange={setMessageGrouping}
-        help="Combines multiple messages from the same sender into a visual group, reducing clutter in the chat."
-      />
-      <ToggleSetting
-        label="Show message timestamps"
-        checked={showTimestamps}
-        onChange={setShowTimestamps}
-        help="Displays the date and time each message was sent next to it in the chat."
-      />
-      <ToggleSetting
-        label="Show model name on messages"
-        checked={showModelName}
-        onChange={setShowModelName}
-        help="Displays which AI model generated each response, shown as a small label on assistant messages."
-      />
-      <ToggleSetting
-        label="Show token usage on messages"
-        checked={showTokenUsage}
-        onChange={setShowTokenUsage}
-        help="Displays prompt and completion token counts on each AI message. Useful for monitoring context size and cost."
-      />
-      <ToggleSetting
-        label="Show message numbers"
-        checked={showMessageNumbers}
-        onChange={setShowMessageNumbers}
-        help="Displays message numbers in roleplay and conversation chats."
-      />
-      <ToggleSetting
-        label="Guide swipes/regens with chat input"
-        checked={guideGenerations}
-        onChange={setGuideGenerations}
-        help="Uses the current draft as direction when regenerating a message or manually triggering a character response."
-      />
-      <ToggleSetting
-        label="Debug mode"
-        checked={debugMode}
-        onChange={setDebugMode}
-        help="Logs the prompt and response payloads sent to the model in the server console for debugging."
-      />
-
-      {/* ── Backup ── */}
-      <div className="retro-divider" />
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1.5">
-          <Download size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <span className="text-xs font-medium">Backup & Export</span>
-          <HelpTooltip text="Download a full backup as a .zip archive (storage snapshots + avatars, sprites, backgrounds, gallery, fonts, knowledge sources). Import Profile can restore the zip directly. The raw folders are for manual recovery." />
-        </div>
-        <button
-          onClick={handleCreateBackup}
-          disabled={creatingBackup}
-          className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
-        >
-          {creatingBackup ? (
-            <>
-              <Loader2 size="0.8125rem" className="animate-spin" />
-              Creating backup…
-            </>
-          ) : (
-            <>
-              <Download size="0.8125rem" />
-              Download Backup
-            </>
-          )}
-        </button>
-        <button
-          onClick={() => setExportProfileDialogOpen(true)}
-          disabled={exportingProfile}
-          className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs font-medium ring-1 ring-[var(--border)] transition-all hover:bg-[var(--secondary)]/80 active:scale-95 disabled:opacity-50"
-        >
-          {exportingProfile ? (
-            <>
-              <Loader2 size="0.8125rem" className="animate-spin" />
-              Exporting…
-            </>
-          ) : (
-            <>
-              <Download size="0.8125rem" />
-              Export Profile
-            </>
-          )}
-        </button>
-        {backups && backups.length > 0 && (
-          <div className="flex flex-col gap-1 mt-1">
-            <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Existing backups</span>
-            {backups.map((b) => (
-              <div
-                key={b.name}
-                className="flex items-center justify-between rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 ring-1 ring-[var(--border)]"
-              >
-                <div className="flex flex-col min-w-0">
-                  <span className="text-[0.6875rem] font-medium truncate">{b.name}</span>
-                  <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                    {new Date(b.createdAt).toLocaleString()}
-                  </span>
-                </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() =>
+                setSelectedScopes(isAllScopesSelected ? [] : EXPUNGE_SCOPE_OPTIONS.map((scope) => scope.id))
+              }
+              disabled={isClearing}
+              className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium transition-all hover:bg-[var(--secondary)] active:scale-95 disabled:opacity-50"
+            >
+              {isAllScopesSelected ? "Clear Selection" : "Select All"}
+            </button>
+            <button
+              onClick={() => setConfirmAction("selected")}
+              disabled={selectedScopes.length === 0 || isClearing}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)]/85 px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Trash2 size="0.8125rem" />
+              Clear Selected Data
+            </button>
+            <button
+              onClick={() => setConfirmAction("all")}
+              disabled={isClearing}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+            >
+              <Trash2 size="0.8125rem" />
+              Clear All Data
+            </button>
+          </div>
+          {confirmAction && (
+            <div className="flex flex-col gap-2 rounded-lg bg-[var(--destructive)]/12 p-2.5">
+              <div className="flex items-start gap-2 text-[0.6875rem] font-medium text-[var(--destructive)]">
+                <AlertTriangle size="0.875rem" className="mt-0.5 shrink-0" />
+                {confirmAction === "all"
+                  ? "Delete all supported data categories except Professor Mari? There is no undo."
+                  : `Delete ${selectedScopes.length} selected data categor${selectedScopes.length === 1 ? "y" : "ies"}? There is no undo.`}
+              </div>
+              <div className="flex gap-2">
                 <button
-                  onClick={() => deleteBackupMutation.mutate(b.name)}
-                  className="ml-2 rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
+                  onClick={() => setConfirmAction(null)}
+                  disabled={isClearing}
+                  className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium transition-all hover:bg-[var(--secondary)] active:scale-95 disabled:opacity-50"
                 >
-                  <Trash2 size="0.75rem" />
+                  Cancel
+                </button>
+                <button
+                  onClick={() => runExpunge(confirmAction)}
+                  disabled={isClearing}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+                >
+                  {isClearing ? <Loader2 size="0.75rem" className="animate-spin" /> : <Trash2 size="0.75rem" />}
+                  Confirm Delete
                 </button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ── Danger Zone ── */}
-      <div className="retro-divider" />
-      <div className="rounded-xl border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 p-3 flex flex-col gap-2">
-        <div className="flex items-center gap-2 text-xs font-semibold text-[var(--destructive)]">
-          <AlertTriangle size="0.875rem" />
-          Danger Zone
-        </div>
-        <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-          Permanently clear selected categories of local data. Professor Mari is always preserved, and Marinara resets
-          live caches immediately after a successful expunge so stale data does not linger on screen.
-        </p>
-        <div className="grid gap-2">
-          {EXPUNGE_SCOPE_OPTIONS.map((scope) => {
-            const checked = selectedScopes.includes(scope.id);
-            return (
-              <label
-                key={scope.id}
-                className={cn(
-                  "flex cursor-pointer items-start gap-2 rounded-lg px-2.5 py-2 ring-1 transition-colors",
-                  checked
-                    ? "bg-[var(--destructive)]/10 ring-[var(--destructive)]/25"
-                    : "bg-[var(--background)]/40 ring-[var(--border)] hover:bg-[var(--secondary)]/70",
-                )}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={isClearing}
-                  onChange={() => toggleScope(scope.id)}
-                  className="mt-0.5 h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--destructive)]"
-                />
-                <span className="min-w-0">
-                  <span className="block text-xs font-medium text-[var(--foreground)]">{scope.label}</span>
-                  <span className="block text-[0.625rem] text-[var(--muted-foreground)]">{scope.description}</span>
-                </span>
-              </label>
-            );
-          })}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setSelectedScopes(isAllScopesSelected ? [] : EXPUNGE_SCOPE_OPTIONS.map((scope) => scope.id))}
-            disabled={isClearing}
-            className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium transition-all hover:bg-[var(--secondary)] active:scale-95 disabled:opacity-50"
-          >
-            {isAllScopesSelected ? "Clear Selection" : "Select All"}
-          </button>
-          <button
-            onClick={() => setConfirmAction("selected")}
-            disabled={selectedScopes.length === 0 || isClearing}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)]/85 px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Trash2 size="0.8125rem" />
-            Clear Selected Data
-          </button>
-          <button
-            onClick={() => setConfirmAction("all")}
-            disabled={isClearing}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
-          >
-            <Trash2 size="0.8125rem" />
-            Clear All Data
-          </button>
-        </div>
-        {confirmAction && (
-          <div className="flex flex-col gap-2 rounded-lg bg-[var(--destructive)]/12 p-2.5">
-            <div className="flex items-start gap-2 text-[0.6875rem] font-medium text-[var(--destructive)]">
-              <AlertTriangle size="0.875rem" className="mt-0.5 shrink-0" />
-              {confirmAction === "all"
-                ? "Delete all supported data categories except Professor Mari? There is no undo."
-                : `Delete ${selectedScopes.length} selected data categor${selectedScopes.length === 1 ? "y" : "ies"}? There is no undo.`}
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setConfirmAction(null)}
-                disabled={isClearing}
-                className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium transition-all hover:bg-[var(--secondary)] active:scale-95 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => runExpunge(confirmAction)}
-                disabled={isClearing}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
-              >
-                {isClearing ? <Loader2 size="0.75rem" className="animate-spin" /> : <Trash2 size="0.75rem" />}
-                Confirm Delete
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </SettingsSection>
     </div>
   );
 }

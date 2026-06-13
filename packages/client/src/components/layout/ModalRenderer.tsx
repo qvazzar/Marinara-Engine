@@ -12,17 +12,11 @@ const CreateCharacterModal = lazy(() =>
 const ImportCharacterModal = lazy(() =>
   import("../modals/ImportCharacterModal").then((module) => ({ default: module.ImportCharacterModal })),
 );
-const CharacterMakerModal = lazy(() =>
-  import("../modals/CharacterMakerModal").then((module) => ({ default: module.CharacterMakerModal })),
-);
 const CreateLorebookModal = lazy(() =>
   import("../modals/CreateLorebookModal").then((module) => ({ default: module.CreateLorebookModal })),
 );
 const ImportLorebookModal = lazy(() =>
   import("../modals/ImportLorebookModal").then((module) => ({ default: module.ImportLorebookModal })),
-);
-const LorebookMakerModal = lazy(() =>
-  import("../modals/LorebookMakerModal").then((module) => ({ default: module.LorebookMakerModal })),
 );
 const CreatePresetModal = lazy(() =>
   import("../modals/CreatePresetModal").then((module) => ({ default: module.CreatePresetModal })),
@@ -38,9 +32,6 @@ const STBulkImportModal = lazy(() =>
 );
 const ImportPersonaModal = lazy(() =>
   import("../modals/ImportPersonaModal").then((module) => ({ default: module.ImportPersonaModal })),
-);
-const PersonaMakerModal = lazy(() =>
-  import("../modals/PersonaMakerModal").then((module) => ({ default: module.PersonaMakerModal })),
 );
 const CreateConnectionModal = lazy(() =>
   import("../modals/CreateConnectionModal").then((module) => ({ default: module.CreateConnectionModal })),
@@ -67,9 +58,6 @@ export function ModalRenderer() {
     case "import-character":
       content = <ImportCharacterModal open onClose={closeModal} />;
       break;
-    case "character-maker":
-      content = <CharacterMakerModal open onClose={closeModal} />;
-      break;
     case "create-lorebook":
       content = (
         <CreateLorebookModal
@@ -85,9 +73,6 @@ export function ModalRenderer() {
     case "import-lorebook":
       content = <ImportLorebookModal open onClose={closeModal} />;
       break;
-    case "lorebook-maker":
-      content = <LorebookMakerModal open onClose={closeModal} />;
-      break;
     case "create-preset":
       content = <CreatePresetModal open onClose={closeModal} />;
       break;
@@ -99,9 +84,6 @@ export function ModalRenderer() {
       break;
     case "import-persona":
       content = <ImportPersonaModal open onClose={closeModal} />;
-      break;
-    case "persona-maker":
-      content = <PersonaMakerModal open onClose={closeModal} />;
       break;
     case "create-connection":
       content = <CreateConnectionModal open onClose={closeModal} />;

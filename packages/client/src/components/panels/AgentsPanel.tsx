@@ -13,22 +13,128 @@ import {
   Radar,
   Puzzle,
   Camera,
+  Download,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useUIStore } from "../../stores/ui.store";
-import { useAgentConfigs, useDeleteAgent, useUploadAgentImage, type AgentConfigRow } from "../../hooks/use-agents";
+import {
+  useAgentConfigs,
+  useCreateAgent,
+  useDeleteAgent,
+  useUploadAgentImage,
+  type AgentConfigRow,
+} from "../../hooks/use-agents";
 import { BUILT_IN_AGENTS, type AgentCategory } from "@marinara-engine/shared";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { cn } from "../../lib/utils";
+import { downloadJsonFile, sanitizeExportFilenamePart } from "../../lib/download-json";
+
+type JsonRecord = Record<string, unknown>;
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseBooleanValue(value: unknown, fallback = true) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value === "true" || value === "1";
+  return fallback;
+}
+
+function parseAgentSettings(value: unknown): JsonRecord {
+  if (isJsonRecord(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return isJsonRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function getAgentImportEntries(parsed: unknown) {
+  if (Array.isArray(parsed)) return parsed;
+  if (!isJsonRecord(parsed)) return [];
+  if (Array.isArray(parsed.agents)) return parsed.agents;
+  return [parsed];
+}
+
+function serializeAgentConfig(agent: AgentConfigRow) {
+  const settings = parseAgentSettings(agent.settings);
+  const resultType = typeof settings.resultType === "string" ? settings.resultType : undefined;
+  return {
+    type: agent.type,
+    name: agent.name,
+    description: agent.description,
+    phase: agent.phase,
+    enabled: parseBooleanValue(agent.enabled),
+    connectionId: null,
+    imagePath: null,
+    promptTemplate: agent.promptTemplate,
+    settings,
+    ...(resultType ? { resultType } : {}),
+  };
+}
+
+function serializeAgentFolderEntry(agent: AgentConfigRow) {
+  const folderName = sanitizeExportFilenamePart(agent.type, "custom-agent");
+  return {
+    path: `Agents/${folderName}/manifest.json`,
+    manifest: {
+      kind: "marinara.agent",
+      version: 1,
+      config: serializeAgentConfig(agent),
+    },
+  };
+}
+
+function normalizeAgentImportEntry(entry: unknown) {
+  const container = isJsonRecord(entry) ? entry : null;
+  const manifest = container && isJsonRecord(container.manifest) ? container.manifest : container;
+  const source = manifest && isJsonRecord(manifest.config) ? manifest.config : manifest;
+  if (!isJsonRecord(source)) return null;
+
+  const type = typeof source.type === "string" ? source.type.trim() : "";
+  const name = typeof source.name === "string" ? source.name.trim() : "";
+  const description = typeof source.description === "string" ? source.description : "";
+  const phase =
+    source.phase === "pre_generation" || source.phase === "parallel" || source.phase === "post_processing"
+      ? source.phase
+      : "post_processing";
+  if (!type || !name) return null;
+
+  const settings = parseAgentSettings(source.settings);
+  const resultType = typeof source.resultType === "string" ? source.resultType : settings.resultType;
+
+  return {
+    type,
+    name,
+    description,
+    phase,
+    enabled: parseBooleanValue(source.enabled),
+    connectionId: typeof source.connectionId === "string" ? source.connectionId : null,
+    imagePath: null,
+    promptTemplate: typeof source.promptTemplate === "string" ? source.promptTemplate : "",
+    settings,
+    ...(typeof resultType === "string" ? { resultType } : {}),
+  };
+}
 
 export function AgentsPanel() {
   const { data: agentConfigs, isLoading } = useAgentConfigs();
+  const createAgent = useCreateAgent();
   const deleteAgent = useDeleteAgent();
   const uploadAgentImage = useUploadAgentImage();
   const openAgentDetail = useUIStore((s) => s.openAgentDetail);
   const [agentSearch, setAgentSearch] = useState("");
   const agentImageInputRef = useRef<HTMLInputElement>(null);
+  const agentImportInputRef = useRef<HTMLInputElement>(null);
   const imageTargetAgentIdRef = useRef<string | null>(null);
+  const [agentImportError, setAgentImportError] = useState<string | null>(null);
+  const [agentImportSuccess, setAgentImportSuccess] = useState<string | null>(null);
 
   // Custom agents = DB entries whose type doesn't match any built-in
   const customAgents = useMemo(
@@ -70,6 +176,69 @@ export function AgentsPanel() {
     // Create a new custom agent immediately in DB then open editor
     openAgentDetail("__new__");
   };
+
+  const handleExportAgents = useCallback(() => {
+    if (customAgents.length === 0) {
+      toast.error("No custom agents to export");
+      return;
+    }
+
+    downloadJsonFile(
+      {
+        kind: "marinara.agent-folder",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        folderName: "Agents",
+        agents: customAgents.map(serializeAgentFolderEntry),
+      },
+      "marinara-agents.json",
+    );
+    toast.success(`Exported ${customAgents.length} custom agent${customAgents.length === 1 ? "" : "s"}`);
+  }, [customAgents]);
+
+  const handleImportAgents = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      setAgentImportError(null);
+      setAgentImportSuccess(null);
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const entries = getAgentImportEntries(parsed);
+        if (entries.length === 0) throw new Error("No agents found in file");
+
+        let imported = 0;
+        const failed: string[] = [];
+        for (const entry of entries) {
+          const normalized = normalizeAgentImportEntry(entry);
+          if (!normalized) continue;
+          try {
+            await createAgent.mutateAsync(normalized);
+            imported++;
+          } catch (error) {
+            failed.push(error instanceof Error ? error.message : `Failed to import ${normalized.name}`);
+          }
+        }
+
+        if (imported === 0 && failed.length === 0) {
+          throw new Error("No valid agents found in file");
+        }
+        if (imported > 0) {
+          setAgentImportSuccess(`Imported ${imported} agent${imported === 1 ? "" : "s"}.`);
+        }
+        if (failed.length > 0) {
+          setAgentImportError(`${failed.length} agent${failed.length === 1 ? "" : "s"} failed. ${failed[0]}`);
+        }
+      } catch (error) {
+        setAgentImportError(error instanceof Error ? error.message : "Failed to import agents");
+      }
+
+      event.target.value = "";
+    },
+    [createAgent],
+  );
 
   const handlePickAgentImage = useCallback((agentIdOrType: string) => {
     imageTargetAgentIdRef.current = agentIdOrType;
@@ -126,6 +295,13 @@ export function AgentsPanel() {
         className="hidden"
         onChange={handleAgentImageSelected}
       />
+      <input
+        ref={agentImportInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={handleImportAgents}
+      />
 
       <div className="flex gap-2">
         <button
@@ -135,7 +311,29 @@ export function AgentsPanel() {
         >
           <Plus size="0.8125rem" /> <span className="md:hidden">New</span>
         </button>
+        <button
+          onClick={() => agentImportInputRef.current?.click()}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium text-[var(--secondary-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98]"
+          title="Import agents"
+        >
+          <Download size="0.8125rem" /> <span className="md:hidden">Import</span>
+        </button>
+        <button
+          onClick={handleExportAgents}
+          disabled={customAgents.length === 0}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium text-[var(--secondary-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+          title="Export custom agents"
+        >
+          <Upload size="0.8125rem" /> <span className="md:hidden">Export</span>
+        </button>
       </div>
+
+      {agentImportError && <div className="rounded-lg bg-red-500/10 px-2 py-1.5 text-xs text-red-500">{agentImportError}</div>}
+      {agentImportSuccess && (
+        <div className="rounded-lg bg-emerald-500/10 px-2 py-1.5 text-xs text-emerald-500">
+          {agentImportSuccess}
+        </div>
+      )}
 
       <div className="relative">
         <Search

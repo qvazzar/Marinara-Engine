@@ -25,6 +25,7 @@ import {
 } from "../../hooks/use-regex-scripts";
 import {
   useCustomTools,
+  useCreateCustomTool,
   useUpdateCustomTool,
   useDeleteCustomTool,
   useCustomToolCapabilities,
@@ -56,8 +57,10 @@ import {
   ChevronRight,
   FolderPlus,
   Wrench,
+  Upload,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { downloadJsonFile } from "../../lib/download-json";
 import {
   getNextUnnamedLibraryFolderName,
   useCreateLibraryFolder,
@@ -77,6 +80,154 @@ type PresetRow = {
   sectionOrder?: string | string[];
 };
 
+type JsonRecord = Record<string, unknown>;
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseBooleanValue(value: unknown, fallback = true) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value === "true" || value === "1";
+  return fallback;
+}
+
+function parseStringArray(value: unknown): string[] {
+  const parsed = (() => {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== "string") return [];
+    try {
+      const json = JSON.parse(value);
+      return Array.isArray(json) ? json : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  return parsed.filter((item): item is string => typeof item === "string");
+}
+
+function parseNullableNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parseToolParametersSchema(value: unknown): JsonRecord {
+  if (isJsonRecord(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return isJsonRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function getImportEntries(parsed: unknown, envelopeKeys: string[]) {
+  if (Array.isArray(parsed)) return parsed;
+  if (!isJsonRecord(parsed)) return [];
+  for (const key of envelopeKeys) {
+    const value = parsed[key];
+    if (Array.isArray(value)) return value;
+  }
+  return [parsed];
+}
+
+function serializeRegexScript(script: RegexScriptRow) {
+  return {
+    name: script.name,
+    enabled: parseBooleanValue(script.enabled),
+    findRegex: script.findRegex,
+    replaceString: script.replaceString,
+    trimStrings: parseStringArray(script.trimStrings),
+    placement: parseStringArray(script.placement),
+    flags: script.flags,
+    promptOnly: parseBooleanValue(script.promptOnly, false),
+    targetCharacterIds: parseStringArray(script.targetCharacterIds),
+    order: script.order,
+    minDepth: script.minDepth,
+    maxDepth: script.maxDepth,
+  };
+}
+
+function normalizeRegexImportEntry(entry: unknown) {
+  if (!isJsonRecord(entry)) return null;
+  const name = typeof entry.name === "string" ? entry.name : typeof entry.scriptName === "string" ? entry.scriptName : "";
+  let findRegex = typeof entry.findRegex === "string" ? entry.findRegex : "";
+  let flags = typeof entry.flags === "string" ? entry.flags : "gi";
+  const delimited = findRegex.match(/^\/(.+)\/([gimsuy]*)$/s);
+  if (delimited) {
+    findRegex = delimited[1] ?? "";
+    flags = delimited[2] || "g";
+  }
+  if (!name || !findRegex) return null;
+
+  const stPlacementMap: Record<number, string> = { 1: "user_input", 2: "ai_output" };
+  const rawPlacement = Array.isArray(entry.placement) ? entry.placement : [];
+  const mappedPlacement = rawPlacement
+    .map((placementValue) => (typeof placementValue === "number" ? stPlacementMap[placementValue] : placementValue))
+    .filter(
+      (placementValue): placementValue is string =>
+        placementValue === "ai_output" || placementValue === "user_input",
+    );
+
+  return {
+    name,
+    enabled: parseBooleanValue(entry.enabled, entry.disabled === undefined ? true : !parseBooleanValue(entry.disabled)),
+    findRegex,
+    replaceString: typeof entry.replaceString === "string" ? entry.replaceString : "",
+    trimStrings: parseStringArray(entry.trimStrings),
+    placement: mappedPlacement.length > 0 ? mappedPlacement : ["ai_output"],
+    flags,
+    promptOnly: parseBooleanValue(entry.promptOnly, false),
+    targetCharacterIds: parseStringArray(entry.targetCharacterIds),
+    order: typeof entry.order === "number" ? entry.order : 0,
+    minDepth: parseNullableNumber(entry.minDepth),
+    maxDepth: parseNullableNumber(entry.maxDepth),
+  };
+}
+
+function serializeCustomTool(tool: CustomToolRow) {
+  return {
+    name: tool.name,
+    description: tool.description,
+    parametersSchema: parseToolParametersSchema(tool.parametersSchema),
+    executionType: tool.executionType,
+    webhookUrl: tool.webhookUrl,
+    staticResult: tool.staticResult,
+    scriptBody: tool.scriptBody,
+    enabled: parseBooleanValue(tool.enabled),
+  };
+}
+
+function normalizeCustomToolImportEntry(entry: unknown) {
+  if (!isJsonRecord(entry)) return null;
+  const name = typeof entry.name === "string" ? entry.name.trim() : "";
+  const description = typeof entry.description === "string" ? entry.description.trim() : "";
+  if (!name || !description) return null;
+  const executionType =
+    entry.executionType === "webhook" || entry.executionType === "script" || entry.executionType === "static"
+      ? entry.executionType
+      : "static";
+
+  return {
+    name,
+    description,
+    parametersSchema: parseToolParametersSchema(entry.parametersSchema ?? entry.parameters),
+    executionType,
+    webhookUrl: executionType === "webhook" && typeof entry.webhookUrl === "string" ? entry.webhookUrl : null,
+    staticResult: executionType === "static" && typeof entry.staticResult === "string" ? entry.staticResult : null,
+    scriptBody: executionType === "script" && typeof entry.scriptBody === "string" ? entry.scriptBody : null,
+    enabled: parseBooleanValue(entry.enabled),
+  };
+}
+
 export function PresetsPanel() {
   const { data: presets, isLoading } = usePresets();
   const { data: regexScripts } = useRegexScripts();
@@ -89,6 +240,7 @@ export function PresetsPanel() {
   const createRegexScript = useCreateRegexScript();
   const updateRegex = useUpdateRegexScript();
   const reorderRegexScripts = useReorderRegexScripts();
+  const createCustomTool = useCreateCustomTool();
   const updateCustomTool = useUpdateCustomTool();
   const deleteCustomTool = useDeleteCustomTool();
   const { data: presetFolders = [] } = useLibraryFolders("presets");
@@ -110,6 +262,8 @@ export function PresetsPanel() {
   const [exportingSelected, setExportingSelected] = useState(false);
   const [regexImportError, setRegexImportError] = useState<string | null>(null);
   const [regexImportSuccess, setRegexImportSuccess] = useState<string | null>(null);
+  const [functionImportError, setFunctionImportError] = useState<string | null>(null);
+  const [functionImportSuccess, setFunctionImportSuccess] = useState<string | null>(null);
   const [draggedRegexId, setDraggedRegexId] = useState<string | null>(null);
   const [regexDragReadyId, setRegexDragReadyId] = useState<string | null>(null);
   const [expandedFolderId, setExpandedFolderId] = useState<string | null>(null);
@@ -237,6 +391,24 @@ export function PresetsPanel() {
     openToolDetail("__new__");
   }, [openToolDetail]);
 
+  const handleExportRegex = useCallback(() => {
+    if (sortedRegexScripts.length === 0) {
+      toast.error("No regexes to export");
+      return;
+    }
+
+    downloadJsonFile(
+      {
+        kind: "marinara.regex-scripts",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        regexScripts: sortedRegexScripts.map(serializeRegexScript),
+      },
+      "marinara-regexes.json",
+    );
+    toast.success(`Exported ${sortedRegexScripts.length} regex${sortedRegexScripts.length === 1 ? "" : "es"}`);
+  }, [sortedRegexScripts]);
+
   const handleImportRegex = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       setRegexImportError(null);
@@ -247,58 +419,14 @@ export function PresetsPanel() {
       try {
         const text = await file.text();
         const parsed = JSON.parse(text);
-        const entries = Array.isArray(parsed) ? parsed : [parsed];
+        const entries = getImportEntries(parsed, ["regexScripts", "regexes", "scripts"]);
         if (entries.length === 0) throw new Error("No regex scripts found in file");
 
         let imported = 0;
         for (const entry of entries) {
-          if (!entry || typeof entry !== "object") continue;
-          const obj = entry as Record<string, unknown>;
-          const name =
-            typeof obj.name === "string" ? obj.name : typeof obj.scriptName === "string" ? obj.scriptName : "";
-          let findRegex = typeof obj.findRegex === "string" ? obj.findRegex : "";
-          let flags = typeof obj.flags === "string" ? obj.flags : "gi";
-          const delimited = findRegex.match(/^\/(.+)\/([gimsuy]*)$/s);
-          if (delimited) {
-            findRegex = delimited[1] ?? "";
-            flags = delimited[2] || "g";
-          }
-          if (!name || !findRegex) continue;
-
-          const stPlacementMap: Record<number, string> = { 1: "user_input", 2: "ai_output" };
-          let placement: string[] = ["ai_output"];
-          if (Array.isArray(obj.placement)) {
-            const mapped = obj.placement
-              .map((placementValue) =>
-                typeof placementValue === "number" ? stPlacementMap[placementValue] : placementValue,
-              )
-              .filter(
-                (placementValue): placementValue is string =>
-                  placementValue === "ai_output" || placementValue === "user_input",
-              );
-            if (mapped.length > 0) placement = mapped;
-          }
-
-          let enabled = true;
-          if (typeof obj.enabled === "boolean") enabled = obj.enabled;
-          else if (typeof obj.enabled === "string") enabled = obj.enabled !== "false";
-          else if (typeof obj.disabled === "boolean") enabled = !obj.disabled;
-
-          await createRegexScript.mutateAsync({
-            name,
-            enabled,
-            findRegex,
-            replaceString: typeof obj.replaceString === "string" ? obj.replaceString : "",
-            trimStrings: Array.isArray(obj.trimStrings)
-              ? obj.trimStrings.filter((value): value is string => typeof value === "string")
-              : [],
-            placement,
-            flags,
-            promptOnly: typeof obj.promptOnly === "boolean" ? obj.promptOnly : false,
-            order: typeof obj.order === "number" ? obj.order : 0,
-            minDepth: typeof obj.minDepth === "number" ? obj.minDepth : null,
-            maxDepth: typeof obj.maxDepth === "number" ? obj.maxDepth : null,
-          });
+          const normalized = normalizeRegexImportEntry(entry);
+          if (!normalized) continue;
+          await createRegexScript.mutateAsync(normalized);
           imported++;
         }
 
@@ -310,6 +438,69 @@ export function PresetsPanel() {
       event.target.value = "";
     },
     [createRegexScript],
+  );
+
+  const handleExportFunctions = useCallback(() => {
+    if (customToolRows.length === 0) {
+      toast.error("No functions to export");
+      return;
+    }
+
+    downloadJsonFile(
+      {
+        kind: "marinara.function-calls",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        functions: customToolRows.map(serializeCustomTool),
+      },
+      "marinara-functions.json",
+    );
+    toast.success(`Exported ${customToolRows.length} function${customToolRows.length === 1 ? "" : "s"}`);
+  }, [customToolRows]);
+
+  const handleImportFunctions = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      setFunctionImportError(null);
+      setFunctionImportSuccess(null);
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const entries = getImportEntries(parsed, ["functions", "customTools", "tools"]);
+        if (entries.length === 0) throw new Error("No functions found in file");
+
+        let imported = 0;
+        const failed: string[] = [];
+        for (const entry of entries) {
+          const normalized = normalizeCustomToolImportEntry(entry);
+          if (!normalized) continue;
+          try {
+            await createCustomTool.mutateAsync(normalized);
+            imported++;
+          } catch (error) {
+            failed.push(error instanceof Error ? error.message : `Failed to import ${normalized.name}`);
+          }
+        }
+
+        if (imported === 0 && failed.length === 0) {
+          throw new Error("No valid functions found in file");
+        }
+
+        if (imported > 0) {
+          setFunctionImportSuccess(`Imported ${imported} function${imported === 1 ? "" : "s"}.`);
+        }
+        if (failed.length > 0) {
+          setFunctionImportError(`${failed.length} function${failed.length === 1 ? "" : "s"} failed. ${failed[0]}`);
+        }
+      } catch (error) {
+        setFunctionImportError(error instanceof Error ? error.message : "Failed to import functions");
+      }
+
+      event.target.value = "";
+    },
+    [createCustomTool],
   );
 
   const handleRegexDrop = useCallback(
@@ -876,6 +1067,7 @@ export function PresetsPanel() {
       <RegexSection
         handleCreateRegex={handleCreateRegex}
         handleImportRegex={handleImportRegex}
+        handleExportRegex={handleExportRegex}
         regexImportError={regexImportError}
         regexImportSuccess={regexImportSuccess}
         sortedRegexScripts={sortedRegexScripts}
@@ -893,6 +1085,10 @@ export function PresetsPanel() {
         customToolRows={customToolRows}
         customToolCapabilities={customToolCapabilities}
         handleCreateFunction={handleCreateFunction}
+        handleImportFunctions={handleImportFunctions}
+        handleExportFunctions={handleExportFunctions}
+        functionImportError={functionImportError}
+        functionImportSuccess={functionImportSuccess}
         openToolDetail={openToolDetail}
         updateCustomTool={updateCustomTool}
         deleteCustomTool={deleteCustomTool}
@@ -919,6 +1115,7 @@ export function PresetsPanel() {
 function RegexSection({
   handleCreateRegex,
   handleImportRegex,
+  handleExportRegex,
   regexImportError,
   regexImportSuccess,
   sortedRegexScripts,
@@ -933,6 +1130,7 @@ function RegexSection({
 }: {
   handleCreateRegex: () => void;
   handleImportRegex: (event: ChangeEvent<HTMLInputElement>) => void;
+  handleExportRegex: () => void;
   regexImportError: string | null;
   regexImportSuccess: string | null;
   sortedRegexScripts: RegexScriptRow[];
@@ -965,6 +1163,14 @@ function RegexSection({
             <input type="file" accept="application/json" className="hidden" onChange={handleImportRegex} />
             <Download size="0.8125rem" />
           </label>
+          <button
+            onClick={handleExportRegex}
+            disabled={sortedRegexScripts.length === 0}
+            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-purple-400/10 hover:text-purple-400 disabled:cursor-not-allowed disabled:opacity-35"
+            title="Export regexes to JSON"
+          >
+            <Upload size="0.8125rem" />
+          </button>
         </div>
       }
     >
@@ -1097,6 +1303,10 @@ function FunctionsSection({
   customToolRows,
   customToolCapabilities,
   handleCreateFunction,
+  handleImportFunctions,
+  handleExportFunctions,
+  functionImportError,
+  functionImportSuccess,
   openToolDetail,
   updateCustomTool,
   deleteCustomTool,
@@ -1104,6 +1314,10 @@ function FunctionsSection({
   customToolRows: CustomToolRow[];
   customToolCapabilities?: CustomToolCapabilities;
   handleCreateFunction: () => void;
+  handleImportFunctions: (event: ChangeEvent<HTMLInputElement>) => void;
+  handleExportFunctions: () => void;
+  functionImportError: string | null;
+  functionImportSuccess: string | null;
   openToolDetail: (id: string) => void;
   updateCustomTool: ReturnType<typeof useUpdateCustomTool>;
   deleteCustomTool: ReturnType<typeof useDeleteCustomTool>;
@@ -1113,18 +1327,37 @@ function FunctionsSection({
       title="Functions"
       icon={<Wrench size="0.8125rem" />}
       action={
-        <button
-          onClick={handleCreateFunction}
-          className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-purple-400/10 hover:text-purple-400"
-          title="Create function"
-        >
-          <Plus size="0.8125rem" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleCreateFunction}
+            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-purple-400/10 hover:text-purple-400"
+            title="Create function"
+          >
+            <Plus size="0.8125rem" />
+          </button>
+          <label
+            className="inline-flex cursor-pointer items-center justify-center rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-purple-400/10 hover:text-purple-400"
+            title="Import functions from JSON"
+          >
+            <input type="file" accept="application/json,.json" className="hidden" onChange={handleImportFunctions} />
+            <Download size="0.8125rem" />
+          </label>
+          <button
+            onClick={handleExportFunctions}
+            disabled={customToolRows.length === 0}
+            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-purple-400/10 hover:text-purple-400 disabled:cursor-not-allowed disabled:opacity-35"
+            title="Export functions to JSON"
+          >
+            <Upload size="0.8125rem" />
+          </button>
+        </div>
       }
     >
       <div className="mb-1.5 px-1 text-[0.625rem] text-[var(--muted-foreground)]">
         Custom function calls available from Chat Settings.
       </div>
+      {functionImportError && <div className="mb-1 px-1 text-xs text-red-500">{functionImportError}</div>}
+      {functionImportSuccess && <div className="mb-1 px-1 text-xs text-green-500">{functionImportSuccess}</div>}
       {customToolRows.length === 0 ? (
         <p className="px-1 py-2 text-[0.625rem] text-[var(--muted-foreground)]">No functions yet.</p>
       ) : (

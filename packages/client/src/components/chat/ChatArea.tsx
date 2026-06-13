@@ -1711,7 +1711,7 @@ export function ChatArea() {
             {/* Recent Chats */}
             <RecentChats />
 
-            <HomeProfessorMariChat />
+            <HomeProfessorMariChat pageActive={isPageActive} />
 
             <div
               className={cn(

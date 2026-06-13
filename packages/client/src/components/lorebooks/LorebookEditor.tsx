@@ -86,6 +86,7 @@ import { LorebookEntryRow } from "./LorebookEntryRow";
 import { LorebookFolderRow } from "./LorebookFolderRow";
 import { ExpandableTextarea, estimateTokens } from "./LorebookFormFields";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
+import { EditorTabRail } from "../ui/EditorTabRail";
 
 // ──────────────────────────────────────────────
 // Folder collapse state lives in localStorage — purely a UI preference, not
@@ -1138,32 +1139,12 @@ export function LorebookEditor() {
 
       {/* Body: Side-tabs + Content */}
       <div className="flex flex-1 overflow-hidden @max-5xl:flex-col">
-        {/* Tab Rail */}
-        <nav className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[var(--border)] p-2 @max-5xl:w-full @max-5xl:flex-row @max-5xl:overflow-x-auto @max-5xl:border-r-0 @max-5xl:border-b @max-5xl:p-1.5">
-          {TABS.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium transition-all text-left @max-5xl:whitespace-nowrap @max-5xl:px-2.5 @max-5xl:py-1.5",
-                  activeTab === tab.id
-                    ? "bg-gradient-to-r from-amber-400/15 to-orange-500/15 text-amber-400 ring-1 ring-amber-400/20"
-                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                )}
-              >
-                <Icon size="0.875rem" />
-                {tab.label}
-                {tab.id === "entries" && (
-                  <span className="ml-auto rounded-full bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] @max-5xl:ml-1">
-                    {entries.length}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        <EditorTabRail
+          tabs={TABS}
+          activeId={activeTab}
+          onChange={setActiveTab}
+          getBadge={(tabId) => (tabId === "entries" ? entries.length : null)}
+        />
 
         {/* Tab Content */}
         <div className="flex-1 overflow-y-auto p-6 @max-5xl:p-4">

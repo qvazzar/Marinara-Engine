@@ -27,8 +27,10 @@ import {
   Plus,
   Minus,
   Users,
+  Download,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { downloadJsonFile, sanitizeExportFilenamePart } from "../../lib/download-json";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { applyRegexReplacement, resolveMacros, type MacroContext, type RegexPlacement } from "@marinara-engine/shared";
 
@@ -364,6 +366,29 @@ export function RegexScriptEditor() {
     markDirty();
   };
 
+  const handleExport = () => {
+    downloadJsonFile(
+      {
+        kind: "marinara.regex-script",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        name: localName,
+        enabled: localEnabled,
+        findRegex: localFindRegex,
+        replaceString: localReplaceString,
+        trimStrings: localTrimStrings,
+        placement: localPlacement,
+        flags: localFlags,
+        promptOnly: localCharacterScopeEnabled ? true : localPromptOnly,
+        targetCharacterIds: localCharacterScopeEnabled ? localTargetCharacterIds : [],
+        order: localOrder,
+        minDepth: localMinDepth,
+        maxDepth: localMaxDepth,
+      },
+      `${sanitizeExportFilenamePart(localName, "regex-script")}.json`,
+    );
+  };
+
   // ── Loading / not found ──
   if (!regexDetailId || (!dbRow && !isNew)) {
     return (
@@ -427,6 +452,12 @@ export function RegexScriptEditor() {
             ) : (
               <ToggleLeft size="1.125rem" className="text-[var(--muted-foreground)]" />
             )}
+          </button>
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-[0.98]"
+          >
+            <Download size="0.8125rem" /> Export
           </button>
           {dbRow && (
             <button

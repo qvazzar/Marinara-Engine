@@ -77,7 +77,7 @@ export const createLorebookSchema = z.object({
   enabled: z.boolean().default(true),
   scope: lorebookScopeSchema.default({ mode: "all", chatIds: [] }),
   tags: z.array(z.string()).default([]),
-  generatedBy: z.enum(["user", "agent", "import", "lorebook-maker"]).nullable().default(null),
+  generatedBy: z.enum(["user", "agent", "import"]).nullable().default(null),
   sourceAgentId: z.string().nullable().default(null),
 });
 
@@ -101,7 +101,7 @@ export const updateLorebookSchema = z
     enabled: z.boolean().optional(),
     scope: lorebookScopeSchema.optional(),
     tags: z.array(z.string()).optional(),
-    generatedBy: z.enum(["user", "agent", "import", "lorebook-maker"]).nullable().optional(),
+    generatedBy: z.enum(["user", "agent", "import"]).nullable().optional(),
     sourceAgentId: z.string().nullable().optional(),
   })
   .superRefine((value, ctx) => {

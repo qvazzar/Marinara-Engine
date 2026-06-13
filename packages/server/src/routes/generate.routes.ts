@@ -25,6 +25,7 @@ import {
   buildQuestJournalData,
   compactQuestProgressForContext,
   isClaudeAdaptiveOnlyNoSamplingModel,
+  isAgentAvailableInChatMode,
   normalizeThinkingTagPairs,
   supportsXhighReasoningEffort,
 } from "@marinara-engine/shared";
@@ -41,6 +42,7 @@ import type {
   PlayerStats,
   LorebookEntryTimingState,
   ChatSummaryEntry,
+  ChatMode,
   ThinkingTagPair,
 } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
@@ -115,6 +117,7 @@ import {
   type UpdatePersonaCommand,
   type CreateLorebookCommand,
   type UpdateLorebookCommand,
+  type CreatePresetCommand,
   type CreateChatCommand,
   type NavigateCommand,
   type FetchCommand,
@@ -870,6 +873,7 @@ function parseRuntimeAgentSettings(settings: unknown): Record<string, unknown> {
 export function buildRuntimeAgentSectionEligibleTypesForTest(input: {
   enableAgents: boolean;
   activeAgentIds: string[];
+  chatMode?: ChatMode;
   configuredAgents?: Array<{ type: string; phase: string; settings?: unknown }>;
 }): Set<RuntimeAgentSectionType> {
   const eligible = new Set<RuntimeAgentSectionType>();
@@ -879,6 +883,7 @@ export function buildRuntimeAgentSectionEligibleTypesForTest(input: {
 
   for (const agent of BUILT_IN_AGENTS) {
     if (!activeAgentIds.has(agent.id)) continue;
+    if (input.chatMode && !isAgentAvailableInChatMode(input.chatMode, agent.id)) continue;
     if (agent.phase !== "pre_generation" || agent.id === "html") continue;
     if (
       resolveAgentResultType({ type: agent.id, settings: getDefaultBuiltInAgentSettings(agent.id) }) !==
@@ -891,6 +896,7 @@ export function buildRuntimeAgentSectionEligibleTypesForTest(input: {
 
   for (const agent of input.configuredAgents ?? []) {
     if (!activeAgentIds.has(agent.type)) continue;
+    if (input.chatMode && !isAgentAvailableInChatMode(input.chatMode, agent.type)) continue;
     if (agent.phase !== "pre_generation" || agent.type === "html") continue;
     const settings = parseRuntimeAgentSettings(agent.settings);
     if (resolveAgentResultType({ type: agent.type, settings }) !== "context_injection") continue;
@@ -1438,6 +1444,88 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function normalizeAssistantPresetIdentifier(value: string | undefined, fallbackIndex: number, used: Set<string>): string {
+  const base =
+    value
+      ?.trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 80) || `mari_section_${fallbackIndex + 1}`;
+  let candidate = base;
+  let suffix = 2;
+  while (used.has(candidate)) {
+    candidate = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
+function normalizeAssistantPresetVariableName(value: string, fallbackIndex: number, used: Set<string>): string {
+  const base =
+    value
+      .trim()
+      .replace(/[^\w]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 96) || `choice_${fallbackIndex + 1}`;
+  let candidate = /^\w+$/.test(base) ? base : `choice_${fallbackIndex + 1}`;
+  let suffix = 2;
+  while (used.has(candidate)) {
+    candidate = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
+function normalizeAssistantPresetOptionId(value: string | undefined, fallbackIndex: number, used: Set<string>): string {
+  const base =
+    value
+      ?.trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 64) || `option_${fallbackIndex + 1}`;
+  let candidate = base;
+  let suffix = 2;
+  while (used.has(candidate)) {
+    candidate = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
+function truncateMariFetchedText(value: unknown, maxLength = 4000): string {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}\n...[truncated ${text.length - maxLength} chars]`;
+}
+
+function parseMariJsonRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseMariJsonArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function pruneEmptyPromptWrappers(messages: Array<{ content: string }>): void {
   for (let i = messages.length - 1; i >= 0; i--) {
     const content = messages[i]!.content.trim();
@@ -1788,7 +1876,7 @@ export async function generateRoutes(app: FastifyInstance) {
     if (!chat) {
       return reply.status(404).send({ error: "Chat not found" });
     }
-    const requestChatMode = (chat.mode as string) ?? "roleplay";
+    const requestChatMode = (chat.mode as ChatMode) ?? "roleplay";
     let conversationGenerationStartedAt: number | null = null;
     let conversationAssistantSaved = false;
     const activeGenerations = (app as any).activeGenerations as Map<
@@ -2304,8 +2392,8 @@ export async function generateRoutes(app: FastifyInstance) {
         );
         let effectiveMaxContext = minContextLimit(connectionMaxContext, knownModelContext);
 
-        // Determine whether agents are enabled for this chat (needed by assembler + agent pipeline)
-        // Conversation mode chats never run roleplay agents — force agents off.
+        // Determine whether agents are enabled for this chat (needed by assembler + agent pipeline).
+        // Mode policy filters which agents may run for conversation, roleplay, visual novel, and game chats.
         logger.info("[generate] chatId=%s, chatMode=%s", input.chatId, chatMode);
         const gameSpotifyMusicEnabled = chatMode === "game" && chatMeta.gameUseSpotifyMusic === true;
         const chatEnableAgents = shouldEnableAgentsForGeneration({
@@ -2317,9 +2405,9 @@ export async function generateRoutes(app: FastifyInstance) {
         const persistedChatActiveAgentIds: string[] = Array.isArray(chatMeta.activeAgentIds)
           ? (chatMeta.activeAgentIds as string[])
           : [];
-        const chatActiveAgentIds: string[] = filterGameInternalAgentIds(chatMode, persistedChatActiveAgentIds).filter(
-          (agentId) => !(gameSpotifyMusicEnabled && agentId === "spotify"),
-        );
+        const chatActiveAgentIds: string[] = filterGameInternalAgentIds(chatMode, persistedChatActiveAgentIds)
+          .filter((agentId) => isAgentAvailableInChatMode(chatMode, agentId))
+          .filter((agentId) => !(gameSpotifyMusicEnabled && agentId === "spotify"));
         const hasPerChatAgentList = chatActiveAgentIds.length > 0;
         const perChatAgentSet = new Set(chatActiveAgentIds);
         const chatSummaryAgentActive = chatEnableAgents && perChatAgentSet.has("chat-summary");
@@ -2328,6 +2416,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const runtimeSectionEligibleAgentTypes = buildRuntimeAgentSectionEligibleTypesForTest({
           enableAgents: chatEnableAgents,
           activeAgentIds: chatActiveAgentIds,
+          chatMode,
           configuredAgents: configuredPromptAgents.map((agent) => ({
             type: agent.type,
             phase: agent.phase,
@@ -3349,6 +3438,7 @@ export async function generateRoutes(app: FastifyInstance) {
               const allPersonasList = await chars.listPersonas();
               const allLorebooks = await lorebooksStore.list();
               const allChats = await chats.list();
+              const allPresets = await presets.list();
 
               const charNames = allChars
                 .filter((c: any) => c.id !== PROFESSOR_MARI_ID)
@@ -3364,6 +3454,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 .slice(0, 50)
                 .map((c: any) => c.name)
                 .filter(Boolean);
+              const presetNames = (allPresets as any[]).map((preset: any) => preset.name).filter(Boolean);
 
               const namesSections: string[] = [];
               if (charNames.length > 0)
@@ -3376,6 +3467,8 @@ export async function generateRoutes(app: FastifyInstance) {
                 );
               if (chatNames.length > 0)
                 namesSections.push(`<available_names type="chat">\n${chatNames.join(", ")}\n</available_names>`);
+              if (presetNames.length > 0)
+                namesSections.push(`<available_names type="preset">\n${presetNames.join(", ")}\n</available_names>`);
 
               if (namesSections.length > 0) {
                 conversationSystemPrompt += "\n\n" + namesSections.join("\n\n");
@@ -11318,6 +11411,123 @@ export async function generateRoutes(app: FastifyInstance) {
                   }
                 }
 
+                if (command.type === "create_preset") {
+                  const presetCmd = command as CreatePresetCommand;
+                  try {
+                    const created = await presets.create({
+                      name: presetCmd.name,
+                      description: presetCmd.description ?? "",
+                      wrapFormat: presetCmd.wrapFormat ?? "xml",
+                      isDefault: false,
+                      author: presetCmd.author ?? "Professor Mari",
+                    });
+
+                    if (created) {
+                      const createdPreset = created as unknown as { id: string };
+                      const groupIds = new Map<string, string>();
+                      const groupKey = (name: string) => name.trim().toLowerCase();
+
+                      const ensureGroup = async (name: string, order?: number, enabled?: boolean): Promise<string | null> => {
+                        const trimmed = name.trim();
+                        if (!trimmed) return null;
+                        const key = groupKey(trimmed);
+                        const existing = groupIds.get(key);
+                        if (existing) return existing;
+                        const group = await presets.createGroup({
+                          presetId: createdPreset.id,
+                          name: trimmed,
+                          order: order ?? (groupIds.size + 1) * 100,
+                          enabled: enabled ?? true,
+                        });
+                        if (!group) return null;
+                        groupIds.set(key, group.id);
+                        return group.id;
+                      };
+
+                      for (const group of presetCmd.groups ?? []) {
+                        await ensureGroup(group.name, group.order, group.enabled);
+                      }
+
+                      for (const group of presetCmd.groups ?? []) {
+                        if (!group.parentGroupName) continue;
+                        const childId = groupIds.get(groupKey(group.name));
+                        const parentId = await ensureGroup(group.parentGroupName);
+                        if (childId && parentId) {
+                          await presets.updateGroup(childId, { parentGroupId: parentId });
+                        }
+                      }
+
+                      const usedIdentifiers = new Set<string>();
+                      let sectionCount = 0;
+                      for (const [index, section] of (presetCmd.sections ?? []).entries()) {
+                        const groupId = section.groupName ? await ensureGroup(section.groupName) : null;
+                        await presets.createSection({
+                          presetId: createdPreset.id,
+                          identifier: normalizeAssistantPresetIdentifier(section.identifier ?? section.name, index, usedIdentifiers),
+                          name: section.name,
+                          content: section.content ?? "",
+                          role: section.role ?? "system",
+                          enabled: section.enabled ?? true,
+                          isMarker: false,
+                          groupId,
+                          markerConfig: null,
+                          injectionPosition: section.injectionPosition ?? "ordered",
+                          injectionDepth: Math.max(0, section.injectionDepth ?? 0),
+                          injectionOrder: section.injectionOrder ?? (index + 1) * 100,
+                          forbidOverrides: section.forbidOverrides ?? false,
+                        });
+                        sectionCount += 1;
+                      }
+
+                      const usedVariableNames = new Set<string>();
+                      let choiceBlockCount = 0;
+                      for (const [index, choiceBlock] of (presetCmd.choiceBlocks ?? []).entries()) {
+                        const optionIds = new Set<string>();
+                        await presets.createChoiceBlock({
+                          presetId: createdPreset.id,
+                          variableName: normalizeAssistantPresetVariableName(
+                            choiceBlock.variableName,
+                            index,
+                            usedVariableNames,
+                          ),
+                          question: choiceBlock.question,
+                          options: choiceBlock.options.map((option, optionIndex) => ({
+                            id: normalizeAssistantPresetOptionId(option.id ?? option.label, optionIndex, optionIds),
+                            label: option.label,
+                            value: option.value,
+                          })),
+                          multiSelect: choiceBlock.multiSelect ?? false,
+                          separator: choiceBlock.separator ?? ", ",
+                          randomPick: choiceBlock.randomPick ?? false,
+                        });
+                        choiceBlockCount += 1;
+                      }
+
+                      reply.raw.write(
+                        `data: ${JSON.stringify({
+                          type: "assistant_action",
+                          data: {
+                            action: "preset_created",
+                            id: createdPreset.id,
+                            name: presetCmd.name,
+                            sectionCount,
+                            choiceBlockCount,
+                          },
+                        })}\n\n`,
+                      );
+                      logger.info(
+                        '[commands] Assistant created preset: "%s" (%s), sections=%d choiceBlocks=%d',
+                        presetCmd.name,
+                        createdPreset.id,
+                        sectionCount,
+                        choiceBlockCount,
+                      );
+                    }
+                  } catch (err) {
+                    logger.error(err, "[commands] Create preset failed");
+                  }
+                }
+
                 if (command.type === "create_chat") {
                   const ctCmd = command as CreateChatCommand;
                   try {
@@ -11460,17 +11670,72 @@ export async function generateRoutes(app: FastifyInstance) {
                     } else if (fetchCmd.fetchType === "preset") {
                       const allPresetsList = await presets.list();
                       const found = (allPresetsList as any[]).find(
-                        (p: any) => p.name?.toLowerCase() === fetchCmd.name.toLowerCase(),
+                        (p: any) => p.id === fetchCmd.name || p.name?.toLowerCase() === fetchCmd.name.toLowerCase(),
                       );
                       if (found) {
                         const sections = await presets.listSections(found.id);
+                        const groups = await presets.listGroups(found.id);
+                        const choiceBlocks = await presets.listChoiceBlocksForPreset(found.id);
+                        const groupById = new Map((groups as any[]).map((group: any) => [group.id, group]));
+                        const parameters = parseMariJsonRecord(found.parameters);
+                        const defaultChoices = parseMariJsonRecord(found.defaultChoices);
                         const parts = [`Preset: ${found.name}`];
+                        parts.push(`ID: ${found.id}`);
                         if (found.description) parts.push(`Description: ${found.description}`);
+                        if (found.author) parts.push(`Author: ${found.author}`);
+                        parts.push(`Wrap Format: ${found.wrapFormat ?? "xml"}`);
+                        parts.push(`Default Preset: ${String(found.isDefault) === "true" ? "yes" : "no"}`);
+                        if (Object.keys(parameters).length > 0) {
+                          parts.push(`Generation Parameters: ${truncateMariFetchedText(JSON.stringify(parameters), 1200)}`);
+                        }
+                        if (Object.keys(defaultChoices).length > 0) {
+                          parts.push(`Default Choices: ${truncateMariFetchedText(JSON.stringify(defaultChoices), 1200)}`);
+                        }
+                        if ((groups as any[]).length > 0) {
+                          parts.push(`Groups (${(groups as any[]).length}):`);
+                          for (const group of groups as any[]) {
+                            const parent = group.parentGroupId ? groupById.get(group.parentGroupId) : null;
+                            parts.push(
+                              `  - ${group.name} (enabled=${String(group.enabled) === "true" ? "true" : "false"}, order=${group.order}, parent=${parent?.name ?? "none"})`,
+                            );
+                          }
+                        }
                         parts.push(`Sections (${sections.length}):`);
                         for (const sec of sections) {
+                          const group = sec.groupId ? groupById.get(sec.groupId) : null;
                           parts.push(
-                            `  [${sec.role}] ${sec.name ?? "Untitled"}: ${(sec.content as string).slice(0, 200)}`,
+                            [
+                              `\n  Section: ${sec.name ?? "Untitled"}`,
+                              `  Identifier: ${sec.identifier}`,
+                              `  Role: ${sec.role}`,
+                              `  Enabled: ${String(sec.enabled) === "true" ? "true" : "false"}`,
+                              `  Group: ${group?.name ?? "none"}`,
+                              `  Injection: ${sec.injectionPosition} depth=${sec.injectionDepth} order=${sec.injectionOrder}`,
+                              `  Forbid Overrides: ${String(sec.forbidOverrides) === "true" ? "true" : "false"}`,
+                              `  Content:\n${truncateMariFetchedText(sec.content, 3000)}`,
+                            ].join("\n"),
                           );
+                        }
+                        if ((choiceBlocks as any[]).length > 0) {
+                          parts.push(`Choice Blocks (${(choiceBlocks as any[]).length}):`);
+                          for (const block of choiceBlocks as any[]) {
+                            const options = parseMariJsonArray(block.options)
+                              .map((option) => {
+                                const data = parseMariJsonRecord(option);
+                                return `${data.label ?? "Option"} => ${truncateMariFetchedText(data.value, 500)}`;
+                              })
+                              .join(" | ");
+                            parts.push(
+                              [
+                                `\n  Variable: ${block.variableName}`,
+                                `  Question: ${block.question}`,
+                                `  Multi Select: ${String(block.multiSelect) === "true" ? "true" : "false"}`,
+                                `  Random Pick: ${String(block.randomPick) === "true" ? "true" : "false"}`,
+                                `  Separator: ${block.separator ?? ", "}`,
+                                `  Options: ${options}`,
+                              ].join("\n"),
+                            );
+                          }
                         }
                         fetchedContent = parts.join("\n");
                       }

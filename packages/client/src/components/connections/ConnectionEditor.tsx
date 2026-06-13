@@ -48,6 +48,7 @@ import { cn } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { HelpTooltip } from "../ui/HelpTooltip";
+import { SettingsCheckbox, SettingsSwitch } from "../panels/settings/SettingControls";
 import {
   GenerationParametersFields,
   ROLEPLAY_PARAMETER_DEFAULTS,
@@ -1602,22 +1603,14 @@ export function ConnectionEditor() {
               icon={<Zap size="0.875rem" className="text-purple-400" />}
               help="Default generation settings for chats that use this connection. Individual chats can still override these in Chat Settings."
             >
-              <label className="flex cursor-pointer items-center gap-3 rounded-xl p-2 transition-colors hover:bg-[var(--secondary)]/50">
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={localDefaultParametersEnabled}
-                    onChange={(e) => {
-                      setLocalDefaultParametersEnabled(e.target.checked);
-                      markDirty();
-                    }}
-                    className="peer sr-only"
-                  />
-                  <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-purple-400/70" />
-                  <div className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
-                </div>
-                <span className="text-sm">Use custom defaults for this connection</span>
-              </label>
+              <SettingsSwitch
+                label="Use custom defaults for this connection"
+                checked={localDefaultParametersEnabled}
+                onChange={(checked) => {
+                  setLocalDefaultParametersEnabled(checked);
+                  markDirty();
+                }}
+              />
 
               {localDefaultParametersEnabled ? (
                 <div className="rounded-xl bg-[var(--secondary)]/40 p-3 ring-1 ring-[var(--border)]">
@@ -1649,22 +1642,14 @@ export function ConnectionEditor() {
                   : "For OpenRouter Claude models, sends the cache_control flag needed for Anthropic prompt caching. Most non-Claude OpenRouter models cache automatically and do not need this toggle."
               }
             >
-              <label className="flex items-center gap-3 cursor-pointer rounded-xl p-2 transition-colors hover:bg-[var(--secondary)]/50">
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={localEnableCaching}
-                    onChange={(e) => {
-                      setLocalEnableCaching(e.target.checked);
-                      markDirty();
-                    }}
-                    className="peer sr-only"
-                  />
-                  <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-amber-400/70" />
-                  <div className="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
-                </div>
-                <span className="text-sm">Enable prompt caching</span>
-              </label>
+              <SettingsSwitch
+                label="Enable prompt caching"
+                checked={localEnableCaching}
+                onChange={(checked) => {
+                  setLocalEnableCaching(checked);
+                  markDirty();
+                }}
+              />
               <p className="text-[0.625rem] text-[var(--muted-foreground)] px-2">
                 {localProvider === "anthropic"
                   ? "Caches the system prompt explicitly and uses automatic caching for conversation history. Read tokens cost 90% less than regular input tokens. Cache writes cost 25% more on first use."
@@ -1704,26 +1689,19 @@ export function ConnectionEditor() {
                 : "When enabled, all agents that don't have a specific connection override will use this connection instead of the chat's active connection."
             }
           >
-            <label className="flex items-center gap-3 cursor-pointer select-none px-2 py-1">
-              <div className="relative">
-                <input
-                  type="checkbox"
-                  checked={localDefaultForAgents}
-                  onChange={(e) => {
-                    setLocalDefaultForAgents(e.target.checked);
-                    markDirty();
-                  }}
-                  className="peer sr-only"
-                />
-                <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-sky-400/70" />
-                <div className="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
-              </div>
-              <span className="text-sm">
-                {isImageGenerationProvider
+            <SettingsSwitch
+              label={
+                isImageGenerationProvider
                   ? "Use as default Illustrator agent connection"
-                  : "Use as default agent connection"}
-              </span>
-            </label>
+                  : "Use as default agent connection"
+              }
+              checked={localDefaultForAgents}
+              onChange={(checked) => {
+                setLocalDefaultForAgents(checked);
+                markDirty();
+              }}
+              className="px-2 py-1"
+            />
             {isImageGenerationProvider && (
               <p className="px-2 text-[0.625rem] text-[var(--muted-foreground)]">
                 Only one image generation connection should be marked as the default for the Illustrator agent.
@@ -1758,7 +1736,7 @@ export function ConnectionEditor() {
                     setLocalClaudeFastMode(next);
                     markDirty();
                   }}
-                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-amber-400"
+                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-[var(--primary)]"
                 />
                 <div className="min-w-0 flex-1 text-[0.6875rem] leading-relaxed">
                   <div className="font-medium text-[var(--foreground)]">Use Claude Code fast-mode routing</div>
@@ -2429,15 +2407,13 @@ function ImageGenerationDefaultsPanel({
                     onChange={(scheduler) => updateAutomatic1111({ scheduler })}
                   />
                 </div>
-                <label className="flex cursor-pointer items-center gap-3 rounded-lg bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]">
-                  <input
-                    type="checkbox"
-                    checked={automatic1111.restoreFaces}
-                    onChange={(event) => updateAutomatic1111({ restoreFaces: event.target.checked })}
-                    className="h-4 w-4 accent-sky-400"
-                  />
-                  <span className="text-xs text-[var(--foreground)]">Restore faces</span>
-                </label>
+                <SettingsCheckbox
+                  label="Restore faces"
+                  checked={automatic1111.restoreFaces}
+                  onChange={(checked) => updateAutomatic1111({ restoreFaces: checked })}
+                  className="bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]"
+                  labelClassName="text-[var(--foreground)]"
+                />
               </>
             ) : service === "comfyui" ? (
               <>
@@ -2467,23 +2443,14 @@ function ImageGenerationDefaultsPanel({
                     onChange={(scheduler) => updateComfyUi({ scheduler })}
                   />
                 </div>
-                <label className="flex cursor-pointer items-start gap-3 rounded-lg bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]">
-                  <input
-                    type="checkbox"
-                    checked={comfyui.uploadPlaceholderOnMissingReference}
-                    onChange={(event) => updateComfyUi({ uploadPlaceholderOnMissingReference: event.target.checked })}
-                    className="mt-0.5 h-4 w-4 accent-sky-400"
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-xs text-[var(--foreground)]">
-                      Upload a 1x1 placeholder when no reference image is provided
-                    </span>
-                    <span className="mt-0.5 block text-[0.55rem] text-[var(--muted-foreground)]">
-                      Custom workflows using %reference_image% or %reference_image_name% receive a tiny PNG instead of
-                      the raw placeholder text.
-                    </span>
-                  </span>
-                </label>
+                <SettingsCheckbox
+                  label="Upload a 1x1 placeholder when no reference image is provided"
+                  description="Custom workflows using %reference_image% or %reference_image_name% receive a tiny PNG instead of the raw placeholder text."
+                  checked={comfyui.uploadPlaceholderOnMissingReference}
+                  onChange={(checked) => updateComfyUi({ uploadPlaceholderOnMissingReference: checked })}
+                  className="bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]"
+                  labelClassName="text-[var(--foreground)]"
+                />
                 <p className="text-[0.55rem] text-[var(--muted-foreground)]">
                   Custom ComfyUI workflows can use %steps%, %cfg%, %sampler%, %scheduler%, %denoise%, %clip_skip%,
                   %reference_image% / %reference_image_01%-%reference_image_04%, and %reference_image_name% /

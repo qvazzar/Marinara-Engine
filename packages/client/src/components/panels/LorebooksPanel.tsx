@@ -8,7 +8,6 @@ import {
   Plus,
   Download,
   Check,
-  Sparkles,
   BookOpen,
   Search,
   UserRound,
@@ -583,13 +582,6 @@ export function LorebooksPanel() {
           title="Import"
         >
           <Download size="0.8125rem" /> <span className="md:hidden">Import</span>
-        </button>
-        <button
-          onClick={() => openModal("lorebook-maker")}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium text-[var(--secondary-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98]"
-          title="AI Maker"
-        >
-          <Sparkles size="0.8125rem" /> <span className="md:hidden">Maker</span>
         </button>
         <button
           onClick={() => {

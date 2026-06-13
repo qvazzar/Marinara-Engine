@@ -530,6 +530,7 @@ export function ChatSidebar() {
     handleNewChat(activeTab);
   }, [handleNewChat, activeTab]);
   const activeModeConfig = MODE_CONFIG[activeTab] ?? MODE_CONFIG.conversation;
+  const activeModeHasChats = modeChats.length > 0;
 
   // ── Folder handlers ──
   const handleCreateFolder = useCallback(() => {
@@ -1182,31 +1183,33 @@ export function ChatSidebar() {
         )}
 
         <div className="stagger-children flex flex-col gap-0.5">
-          <div className="flex items-center gap-1">
-            <button
-              onClick={handleCreateFolder}
-              className="flex flex-1 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[0.6875rem] text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]"
-            >
-              <FolderPlus size="0.75rem" />
-              New Folder
-            </button>
-            {displayChats.length > 0 && (
+          {activeModeHasChats && (
+            <div className="flex items-center gap-1">
               <button
-                onClick={() => (multiSelectMode ? exitMultiSelect() : setMultiSelectMode(true))}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[0.6875rem] transition-all",
-                  multiSelectMode
-                    ? "bg-[var(--primary)]/15 text-[var(--primary)]"
-                    : "text-[var(--muted-foreground)] hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]",
-                )}
+                onClick={handleCreateFolder}
+                className="flex flex-1 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[0.6875rem] text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]"
               >
-                <CheckSquare size="0.75rem" />
-                {multiSelectMode ? "Cancel" : "Select"}
+                <FolderPlus size="0.75rem" />
+                New Folder
               </button>
-            )}
-          </div>
+              {displayChats.length > 0 && (
+                <button
+                  onClick={() => (multiSelectMode ? exitMultiSelect() : setMultiSelectMode(true))}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[0.6875rem] transition-all",
+                    multiSelectMode
+                      ? "bg-[var(--primary)]/15 text-[var(--primary)]"
+                      : "text-[var(--muted-foreground)] hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]",
+                  )}
+                >
+                  <CheckSquare size="0.75rem" />
+                  {multiSelectMode ? "Cancel" : "Select"}
+                </button>
+              )}
+            </div>
+          )}
 
-          {modeFolders.length > 0 && (
+          {modeFolders.length > 0 && activeModeHasChats && (
             <p className="px-2.5 pb-1 text-[0.625rem] leading-snug text-[var(--muted-foreground)]/70">
               Drag and drop chats to folders
             </p>

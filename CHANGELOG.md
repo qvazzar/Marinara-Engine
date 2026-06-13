@@ -4,6 +4,15 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+### Changed
+
+- Moved AI-assisted character, persona, lorebook, preset creation, and preset review workflows to Professor Mari.
+
+### Removed
+
+- Removed the deprecated standalone character, persona, and lorebook maker modals and their dedicated generation routes.
+- Removed the Preset editor's standalone review tab and dedicated preset-review route.
+
 ## [1.6.1]
 
 ### Added
@@ -681,7 +690,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Changed
 
-- **Personas Panel Redesign** — Search, sort, active/inactive filter, plus New, Import, and AI Maker action buttons.
+- **Personas Panel Redesign** — Search, sort, active/inactive filter, plus New and Import action buttons.
 - **Quick Switcher Vertical Alignment** — Desktop quick switchers anchor to the input box container's top border.
 - **Conversation Edit Simplification** — Removed keyboard shortcuts from message editing; explicit cancel/save buttons only.
 - **Blank Line Collapsing** — Runs of 3+ consecutive newlines collapsed to a double newline.

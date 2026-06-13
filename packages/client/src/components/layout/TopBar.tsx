@@ -2,6 +2,7 @@
 // Layout: Top Bar (polished, with hover glow)
 // ──────────────────────────────────────────────
 import { MessageSquareText, Home, Settings, Link, BookOpen, Users, Sparkles, FileText, User, Bot } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useAgentStore } from "../../stores/agent.store";
@@ -16,6 +17,10 @@ const RIGHT_PANEL_BUTTONS = [
   { panel: "personas" as const, icon: User, label: "Personas", color: "from-emerald-400 to-teal-500" },
 ] as const;
 
+const SPOTIFY_TOPBAR_MIN_WIDTH = 320;
+const SPOTIFY_TOPBAR_MIN_WIDTH_WITH_VOLUME = 416;
+const SPOTIFY_TOPBAR_LAYOUT_BUFFER = 32;
+
 export function TopBar() {
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const toggleRightPanel = useUIStore((s) => s.toggleRightPanel);
@@ -24,12 +29,64 @@ export function TopBar() {
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
   const closeAllDetails = useUIStore((s) => s.closeAllDetails);
   const failedAgentCount = useAgentStore((s) => s.failedAgentTypes.length);
+  const headerRef = useRef<HTMLElement | null>(null);
+  const leftControlsRef = useRef<HTMLDivElement | null>(null);
+  const rightNavRef = useRef<HTMLElement | null>(null);
+  const [spotifyDesktopViewport, setSpotifyDesktopViewport] = useState(false);
+  const [spotifyUseFloatingFallback, setSpotifyUseFloatingFallback] = useState(false);
 
   const isBotBrowserActive = rightPanelOpen && rightPanel === "bot-browser";
   const isCharactersPanelActive = rightPanelOpen && rightPanel === "characters";
 
+  useEffect(() => {
+    const header = headerRef.current;
+    const leftControls = leftControlsRef.current;
+    const rightNav = rightNavRef.current;
+    if (!header || !leftControls || !rightNav) return;
+
+    const measureSpotifyFit = () => {
+      const desktop = window.matchMedia("(min-width: 768px)").matches;
+      setSpotifyDesktopViewport(desktop);
+
+      if (!desktop) {
+        setSpotifyUseFloatingFallback(false);
+        return;
+      }
+
+      const headerWidth = header.getBoundingClientRect().width;
+      const leftControlsWidth = leftControls.getBoundingClientRect().width;
+      const rightNavWidth = rightNav.getBoundingClientRect().width;
+      const minPlayerWidth = window.matchMedia("(min-width: 1024px)").matches
+        ? SPOTIFY_TOPBAR_MIN_WIDTH_WITH_VOLUME
+        : SPOTIFY_TOPBAR_MIN_WIDTH;
+
+      setSpotifyUseFloatingFallback(
+        headerWidth < leftControlsWidth + rightNavWidth + minPlayerWidth + SPOTIFY_TOPBAR_LAYOUT_BUFFER,
+      );
+    };
+
+    measureSpotifyFit();
+
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            measureSpotifyFit();
+          });
+    observer?.observe(header);
+    observer?.observe(leftControls);
+    observer?.observe(rightNav);
+    window.addEventListener("resize", measureSpotifyFit);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measureSpotifyFit);
+    };
+  }, []);
+
   return (
     <header
+      ref={headerRef}
       data-component="TopBar"
       className="mari-topbar relative z-10 flex h-12 flex-shrink-0 items-center justify-between bg-[var(--card)]/80 px-3 backdrop-blur-sm"
     >
@@ -38,33 +95,36 @@ export function TopBar() {
 
       {/* Left section: window controls + chat info */}
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <button
-          onClick={toggleSidebar}
-          data-tour="sidebar-toggle"
-          className="rounded-lg p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--primary)] active:scale-95"
-          title="Chats"
-        >
-          <MessageSquareText size="0.9375rem" />
-        </button>
+        <div ref={leftControlsRef} className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={toggleSidebar}
+            data-tour="sidebar-toggle"
+            className="rounded-lg p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--primary)] active:scale-95"
+            title="Chats"
+          >
+            <MessageSquareText size="0.9375rem" />
+          </button>
 
-        <button
-          onClick={() => {
-            setActiveChatId(null);
-            closeAllDetails();
-          }}
-          className="rounded-lg p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--primary)] active:scale-95"
-          title="Home"
-        >
-          <Home size="0.9375rem" />
-        </button>
-        <SpotifyMiniPlayer />
+          <button
+            onClick={() => {
+              setActiveChatId(null);
+              closeAllDetails();
+            }}
+            className="rounded-lg p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--primary)] active:scale-95"
+            title="Home"
+          >
+            <Home size="0.9375rem" />
+          </button>
+        </div>
+        {spotifyDesktopViewport && <SpotifyMiniPlayer forceFloating={spotifyUseFloatingFallback} />}
       </div>
 
       {/* Right section - Panel toggles */}
       <nav
+        ref={rightNavRef}
         data-tour="panel-buttons"
         aria-label="Panel navigation"
-        className="flex min-w-0 flex-1 items-center justify-end gap-0.5 rounded-xl p-1 max-sm:gap-0 max-sm:p-0.5"
+        className="flex shrink-0 items-center justify-end gap-0.5 rounded-xl p-1 max-sm:gap-0 max-sm:p-0.5"
       >
         {/* Browser */}
         <button

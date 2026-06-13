@@ -26,8 +26,10 @@ import {
   Trash2,
   Plus,
   Minus,
+  Download,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { downloadJsonFile, sanitizeExportFilenamePart } from "../../lib/download-json";
 import { HelpTooltip } from "../ui/HelpTooltip";
 
 const EXEC_TYPES = [
@@ -201,6 +203,33 @@ export function ToolEditor() {
     scriptToolsEnabled,
   ]);
 
+  const handleExport = useCallback(() => {
+    downloadJsonFile(
+      {
+        kind: "marinara.function-call",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        name: localName,
+        description: localDesc,
+        parametersSchema: buildParamsSchema(),
+        executionType: localExecType,
+        webhookUrl: localExecType === "webhook" ? localWebhookUrl || null : null,
+        staticResult: localExecType === "static" ? localStaticResult || null : null,
+        scriptBody: localExecType === "script" ? localScriptBody || null : null,
+        enabled: true,
+      },
+      `${sanitizeExportFilenamePart(localName, "function")}.json`,
+    );
+  }, [
+    localName,
+    localDesc,
+    localExecType,
+    localWebhookUrl,
+    localStaticResult,
+    localScriptBody,
+    buildParamsSchema,
+  ]);
+
   const handleDelete = async () => {
     if (!dbTool) return;
     if (
@@ -265,6 +294,14 @@ export function ToolEditor() {
             </span>
           )}
           {dirty && !saveError && <span className="mr-2 text-[0.625rem] font-medium text-amber-400">Unsaved</span>}
+          {dbTool && (
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-[0.98]"
+            >
+              <Download size="0.8125rem" /> Export
+            </button>
+          )}
           {dbTool && (
             <button
               onClick={handleDelete}

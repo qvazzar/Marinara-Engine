@@ -19,7 +19,7 @@ const MARI_AVATAR_URL = "/sprites/mari/Mari_profile.png";
 const MARI_CHIBI_URL = "/sprites/mari/chibi-professor-mari.png";
 const MARI_CONNECTION_STORAGE_KEY = "marinara:home-professor-mari-connection-id";
 const MARI_WELCOME =
-  "Howdy, welcome to Marinara Engine!\n\nFeeling a little lost? It is not a skill issue yet, I am here to help. Ask me about the app, your setup, or what to do next.";
+  "Howdy, welcome to Marinara Engine!\n\nFeeling a little lost? It is not a skill issue yet, I am here to help! Ask me about the app, your setup, or what to do next.\n\nNeed something made? I can create character cards, personas, lorebooks, chats, and presets!";
 
 function readStoredConnectionId() {
   try {
@@ -132,7 +132,7 @@ function ProfessorMariPixelScene({ active }: { active: boolean }) {
   );
 }
 
-export function HomeProfessorMariChat() {
+export function HomeProfessorMariChat({ pageActive = true }: { pageActive?: boolean }) {
   const qc = useQueryClient();
   const { data: connectionsRaw, isLoading: connectionsLoading } = useConnections();
   const { generate } = useGenerate();
@@ -321,7 +321,10 @@ export function HomeProfessorMariChat() {
   };
 
   return (
-    <section className="w-full max-w-3xl rounded-xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 mt-10 sm:mt-0">
+    <section
+      className="home-professor-mari-chat mt-10 w-full max-w-3xl rounded-xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 sm:mt-0"
+      data-paused={pageActive ? "false" : "true"}
+    >
       <div className="grid gap-2.5 p-2 sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)] sm:p-2.5">
         <div className="flex min-w-0 flex-col items-center justify-start gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5">
           <div className="w-full max-w-[14rem] [--mari-professor-sprite-bottom:5%]">

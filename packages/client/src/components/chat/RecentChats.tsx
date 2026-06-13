@@ -66,15 +66,17 @@ export function RecentChats() {
           No chats yet
         </p>
       ) : (
-        <div className="flex w-full items-center justify-start gap-1.5 overflow-x-auto">
-          {recentChats.map((chat) => (
-            <RecentChatChip
-              key={chat.id}
-              chat={chat}
-              charLookup={charLookup}
-              onClick={() => setActiveChatId(chat.id)}
-            />
-          ))}
+        <div className="w-full overflow-x-auto">
+          <div className="mx-auto flex w-max items-center justify-center gap-1.5 px-1">
+            {recentChats.map((chat) => (
+              <RecentChatChip
+                key={chat.id}
+                chat={chat}
+                charLookup={charLookup}
+                onClick={() => setActiveChatId(chat.id)}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -109,7 +111,7 @@ function RecentChatChip({
     <button
       onClick={onClick}
       className={cn(
-        "group relative flex max-w-[8rem] items-center gap-1.5 rounded-lg border border-[var(--border)]/50 bg-[var(--card)]/50 px-2 py-1.5",
+        "group relative flex max-w-[8rem] shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)]/50 bg-[var(--card)]/50 px-2 py-1.5",
         "transition-all duration-150 hover:border-[var(--primary)]/40 hover:bg-[var(--card)] hover:shadow-sm",
         "cursor-pointer",
       )}

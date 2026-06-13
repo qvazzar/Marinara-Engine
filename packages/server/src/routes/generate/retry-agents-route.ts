@@ -6,9 +6,11 @@ import {
   DEFAULT_AGENT_TOOLS,
   applyQuestUpdatesToPlayerStats,
   getDefaultBuiltInAgentSettings,
+  isAgentAvailableInChatMode,
   stripMacroComments,
   type AgentContext,
   type AgentResult,
+  type ChatMode,
   type GameMap,
 } from "@marinara-engine/shared";
 import { eq } from "drizzle-orm";
@@ -606,7 +608,12 @@ async function resolveRetryAgents(args: {
   agentsStore: ReturnType<typeof createAgentsStorage>;
 }): Promise<ResolvedRetryAgents> {
   const { agentTypes, chat, conns, agentsStore } = args;
-  const agentTypeSet = new Set(filterGameInternalAgentIds((chat as any).mode, agentTypes));
+  const chatMode = ((chat as { mode?: ChatMode }).mode ?? "roleplay") as ChatMode;
+  const agentTypeSet = new Set(
+    filterGameInternalAgentIds(chatMode, agentTypes).filter((agentType) =>
+      isAgentAvailableInChatMode(chatMode, agentType),
+    ),
+  );
   const configs = await agentsStore.list();
   const enabledConfigs = configs.filter((config: any) => agentTypeSet.has(config.type));
   const resolvedTypeSet = new Set(enabledConfigs.map((config: any) => config.type));

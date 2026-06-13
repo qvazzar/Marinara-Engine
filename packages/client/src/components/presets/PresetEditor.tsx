@@ -1,6 +1,6 @@
 // ──────────────────────────────────────────────
 // Full-Page Preset Editor
-// Tabs: Overview · Sections · Parameters · Review
+// Tabs: Overview · Sections
 // ──────────────────────────────────────────────
 import { useState, useCallback, useEffect, useMemo, useRef, type FC, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -64,6 +64,7 @@ import { api } from "../../lib/api-client";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
 import { SUPPORTED_MACROS, type WrapFormat, type MarkerType } from "@marinara-engine/shared";
 import { useQuoteFormatter } from "../../hooks/use-quote-formatter";
+import { EditorTabRail } from "../ui/EditorTabRail";
 
 /** Intercept Tab in a textarea to insert 2 spaces instead of changing focus. */
 function handleTextareaTab(
@@ -90,7 +91,6 @@ function handleTextareaTab(
 const TABS = [
   { id: "overview", label: "Overview", icon: FileText },
   { id: "sections", label: "Sections", icon: Layers },
-  { id: "review", label: "AI Review", icon: Sparkles },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -425,27 +425,7 @@ export function PresetEditor() {
 
       {/* ── Body: Tab rail + Content ── */}
       <div className="flex flex-1 overflow-hidden @max-5xl:flex-col">
-        {/* Tab rail */}
-        <nav className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[var(--border)] p-2 @max-5xl:w-full @max-5xl:flex-row @max-5xl:overflow-x-auto @max-5xl:border-r-0 @max-5xl:border-b @max-5xl:p-1.5">
-          {TABS.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "flex items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium transition-all @max-5xl:whitespace-nowrap @max-5xl:px-2.5 @max-5xl:py-1.5",
-                  activeTab === tab.id
-                    ? "bg-gradient-to-r from-purple-400/15 to-violet-500/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/20"
-                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                )}
-              >
-                <Icon size="0.875rem" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </nav>
+        <EditorTabRail tabs={TABS} activeId={activeTab} onChange={setActiveTab} />
 
         {/* Content area */}
         <div className="flex-1 overflow-y-auto p-6 @max-5xl:p-4">
@@ -501,9 +481,6 @@ export function PresetEditor() {
                 parentChatHasLorebook={parentChatHasLorebook}
               />
             )}
-
-            {/* ── Review Tab ── */}
-            {activeTab === "review" && <ReviewTab presetId={presetDetailId} />}
           </div>
         </div>
       </div>
@@ -2374,91 +2351,6 @@ function SectionNameInput({ value, onCommit }: { value: string; onCommit: (v: st
 }
 
 // ═══════════════════════════════════════════════
-//  Review Tab (placeholder — wires to prompt reviewer)
-// ═══════════════════════════════════════════════
-
-function ReviewTab({ presetId }: { presetId: string }) {
-  const [reviewing, setReviewing] = useState(false);
-  const [reviewOutput, setReviewOutput] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const enableStreaming = useUIStore((s) => s.enableStreaming);
-
-  const startReview = async (connectionId: string) => {
-    setReviewing(true);
-    setReviewOutput("");
-    setError(null);
-
-    try {
-      const res = await fetch("/api/prompt-reviewer/review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          presetId,
-          connectionId,
-          streaming: enableStreaming,
-          focusAreas: ["clarity", "consistency", "coverage", "token_efficiency"],
-        }),
-      });
-
-      if (!res.ok) throw new Error("Failed to start review");
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No stream");
-
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        const lines = text.split("\n");
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(line.slice(6));
-            if (event.type === "token") {
-              setReviewOutput((prev) => prev + event.data);
-            } else if (event.type === "error") {
-              setError(event.data);
-            }
-          } catch {
-            /* skip */
-          }
-        }
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Review failed");
-    } finally {
-      setReviewing(false);
-    }
-  };
-
-  return (
-    <>
-      <FieldGroup label="AI Prompt Review">
-        <p className="mb-3 text-xs text-[var(--muted-foreground)]">
-          Have an AI analyze your prompt preset for clarity, consistency, coverage, and efficiency. This requires an
-          active API connection.
-        </p>
-        <ConnectionSelector
-          onSelect={(connId) => startReview(connId)}
-          disabled={reviewing}
-          label={reviewing ? "Reviewing…" : "Start Review"}
-        />
-      </FieldGroup>
-
-      {error && (
-        <div className="rounded-xl bg-[var(--destructive)]/10 p-3 text-xs text-[var(--destructive)]">{error}</div>
-      )}
-
-      {reviewOutput && (
-        <div className="rounded-xl bg-[var(--secondary)] p-4 ring-1 ring-[var(--border)]">
-          <pre className="whitespace-pre-wrap text-xs text-[var(--foreground)]">{reviewOutput}</pre>
-        </div>
-      )}
-    </>
-  );
-}
-
-// ═══════════════════════════════════════════════
 //  Shared UI Components
 // ═══════════════════════════════════════════════
 
@@ -2479,52 +2371,6 @@ function StatCard({ label, value }: { label: string; value: number }) {
     <div className="flex flex-1 flex-col items-center rounded-xl bg-[var(--secondary)] p-3 ring-1 ring-[var(--border)]">
       <span className="text-xl font-bold text-[var(--foreground)]">{value}</span>
       <span className="text-[0.625rem] text-[var(--muted-foreground)]">{label}</span>
-    </div>
-  );
-}
-
-/** Simple connection selector — queries the connections API */
-function ConnectionSelector({
-  onSelect,
-  disabled,
-  label,
-}: {
-  onSelect: (connectionId: string) => void;
-  disabled: boolean;
-  label: string;
-}) {
-  const [connId, setConnId] = useState("");
-
-  // Quick inline fetch of connections
-  const [connections, setConnections] = useState<Array<{ id: string; name: string }>>([]);
-  useEffect(() => {
-    fetch("/api/connections")
-      .then((r) => r.json())
-      .then((data) => setConnections(data))
-      .catch(() => {});
-  }, []);
-
-  return (
-    <div className="flex gap-2">
-      <select
-        value={connId}
-        onChange={(e) => setConnId(e.target.value)}
-        className="flex-1 rounded-xl bg-[var(--secondary)] px-2.5 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none"
-      >
-        <option value="">Select connection…</option>
-        {connections.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-          </option>
-        ))}
-      </select>
-      <button
-        disabled={disabled || !connId}
-        onClick={() => onSelect(connId)}
-        className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-purple-400 to-violet-500 px-4 py-2 text-xs font-medium text-white shadow-md transition-all hover:shadow-lg active:scale-[0.98] disabled:opacity-50"
-      >
-        <Sparkles size="0.8125rem" /> {label}
-      </button>
     </div>
   );
 }

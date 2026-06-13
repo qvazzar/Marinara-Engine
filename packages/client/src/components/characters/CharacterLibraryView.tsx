@@ -8,7 +8,6 @@ import {
   Pencil,
   Plus,
   Search,
-  Sparkles,
   Star,
   User,
 } from "lucide-react";
@@ -383,13 +382,6 @@ export function CharacterLibraryView() {
             >
               <Download size="0.8125rem" />
               Import
-            </button>
-            <button
-              onClick={() => openModal("character-maker")}
-              className="inline-flex min-w-[6.35rem] shrink-0 items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-pink-400 to-rose-500 px-2.5 py-1.5 text-[0.8125rem] font-medium text-white shadow-lg shadow-pink-500/15 transition-all hover:shadow-pink-500/25 sm:min-w-[8rem] sm:px-3 sm:py-2 sm:text-sm"
-            >
-              <Sparkles size="0.8125rem" />
-              AI Maker
             </button>
           </div>
         </div>

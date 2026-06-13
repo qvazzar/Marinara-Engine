@@ -9,16 +9,12 @@ import {
   Users,
   User,
   BookOpen,
-  Sliders,
-  Plug,
   ChevronDown,
   ChevronRight,
   ChevronUp,
   Check,
   Plus,
   Trash2,
-  Wrench,
-  Search,
   MessageSquare,
   Sparkles,
   Image,
@@ -35,11 +31,8 @@ import {
   ArrowRightLeft,
   Unlink,
   Brain,
-  Globe,
   Maximize2,
-  Languages,
   Vibrate,
-  LetterText,
   Feather,
   Activity,
   Puzzle,
@@ -51,28 +44,35 @@ import {
   StickyNote,
   Eye,
   EyeOff,
-  Drama,
-  RotateCcw,
   Music2,
 } from "lucide-react";
+import { PickerDropdown } from "../../features/chat-settings/PickerDropdown";
+import { ChatSettingsSection as Section } from "../../features/chat-settings/ChatSettingsSection";
+import { AdvancedParametersSection } from "../../features/chat-settings/sections/AdvancedParametersSection";
+import { ChatNameSection } from "../../features/chat-settings/sections/ChatNameSection";
+import { ConnectionSection } from "../../features/chat-settings/sections/ConnectionSection";
+import { ContextLimitSection } from "../../features/chat-settings/sections/ContextLimitSection";
+import { ConversationPromptSection } from "../../features/chat-settings/sections/ConversationPromptSection";
+import { DiscordMirrorSection } from "../../features/chat-settings/sections/DiscordMirrorSection";
+import { FunctionCallingSection } from "../../features/chat-settings/sections/FunctionCallingSection";
+import { GameExtraPromptSection } from "../../features/chat-settings/sections/GameExtraPromptSection";
+import { ImpersonateSection } from "../../features/chat-settings/sections/ImpersonateSection";
+import { LorebooksSection, type ActiveLorebookView } from "../../features/chat-settings/sections/LorebooksSection";
+import { ManualRepliesSection } from "../../features/chat-settings/sections/ManualRepliesSection";
+import { PromptPresetSection } from "../../features/chat-settings/sections/PromptPresetSection";
+import { SceneInstructionsSection } from "../../features/chat-settings/sections/SceneInstructionsSection";
+import { TranslationSection } from "../../features/chat-settings/sections/TranslationSection";
 import { cn, getAvatarCropStyle, type AvatarCrop } from "../../lib/utils";
 import { showAlertDialog, showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { ExpandedTextarea } from "../ui/ExpandedTextarea";
 import { Modal } from "../ui/Modal";
-import {
-  CHAT_PARAMETER_DEFAULTS,
-  GenerationParametersFields,
-  getEditableGenerationParameters,
-  type EditableGenerationParameters,
-  ROLEPLAY_PARAMETER_DEFAULTS,
-} from "../ui/GenerationParametersEditor";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SummariesEditorModal } from "./SummariesEditorModal";
 import { useCharacters, usePersonas, useCharacterGroups, type SpriteInfo } from "../../hooks/use-characters";
 import { useLorebooks } from "../../hooks/use-lorebooks";
 import { usePresetFull, usePresets } from "../../hooks/use-presets";
-import { useConnections, useSaveConnectionDefaults } from "../../hooks/use-connections";
+import { useConnections } from "../../hooks/use-connections";
 import { useGenerate } from "../../hooks/use-generate";
 import {
   useUpdateChat,
@@ -131,9 +131,9 @@ import {
   BUILT_IN_TOOLS,
   DEFAULT_AGENT_CONTEXT_SIZE,
   DEFAULT_AGENT_TOOLS,
-  DEFAULT_IMPERSONATE_PROMPT,
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_PROMPTS,
+  getChatModeCapabilities,
   LIMITS,
   MAX_AGENT_MAX_TOKENS,
   MIN_AGENT_MAX_TOKENS,
@@ -141,6 +141,8 @@ import {
   AGENT_COST_HIGH_CALLS,
   AGENT_COST_HIGH_TOKENS,
   getDefaultBuiltInAgentSettings,
+  isAgentAvailableInChatMode,
+  isAgentHiddenFromChatSettingsPicker,
 } from "@marinara-engine/shared";
 import type { Chat, CharacterGroup, Lorebook } from "@marinara-engine/shared";
 import {
@@ -174,14 +176,6 @@ interface ChatSettingsDrawerProps {
   onSpriteSideChange?: (side: "left" | "right") => void;
 }
 
-// Agents that should not be manually added to roleplay chats
-const HIDDEN_ROLEPLAY_AGENTS = new Set([
-  "prompt-reviewer",
-  "schedule-planner",
-  "response-orchestrator",
-  "autonomous-messenger",
-]);
-
 type SpotifySourceType = "liked" | "playlist" | "artist" | "any";
 
 const SPOTIFY_SOURCE_OPTIONS: Array<{ id: SpotifySourceType; label: string; description: string }> = [
@@ -212,13 +206,6 @@ type AvailableAgent = {
   category: string;
   phase: AgentPhase;
   builtIn: boolean;
-};
-
-type LorebookActiveReason = "Global" | "Character" | "Persona" | "Chat";
-
-type ActiveLorebookView = Lorebook & {
-  activeReasons: LorebookActiveReason[];
-  isPinned: boolean;
 };
 
 type DrawerPersona = {
@@ -324,10 +311,11 @@ export function ChatSettingsDrawer({
   const { data: characterGroups } = useCharacterGroups();
   const { data: lorebooks } = useLorebooks();
   const { data: presets } = usePresets();
-  const chatMode = (chat as unknown as { mode?: string }).mode ?? "roleplay";
+  const chatMode = (chat as unknown as { mode?: ChatMode }).mode ?? "roleplay";
   const isConversation = chatMode === "conversation";
   const isGame = chatMode === "game";
   const isRoleplayMode = chatMode === "roleplay" || chatMode === "visual_novel";
+  const modeCapabilities = useMemo(() => getChatModeCapabilities(chatMode), [chatMode]);
   const { data: currentPromptPresetFull } = usePresetFull(isConversation ? null : (chat.promptPresetId ?? null));
   const { data: connections } = useConnections();
   const imageConnectionsList = useMemo(
@@ -402,7 +390,7 @@ export function ChatSettingsDrawer({
         return [];
       }
 
-      const reasons: LorebookActiveReason[] = [];
+      const reasons: ActiveLorebookView["activeReasons"] = [];
       const isPinned = pinnedIds.has(lorebook.id);
 
       if (lorebook.enabled !== false && isLorebookScopeActiveForChat(lorebook.scope, chat.id)) {
@@ -435,7 +423,6 @@ export function ChatSettingsDrawer({
     isGame,
     lorebooks,
   ]);
-  const activeLorebookIdSet = useMemo(() => new Set(activeLorebooks.map((lorebook) => lorebook.id)), [activeLorebooks]);
   const lorebookTokenBudget =
     typeof metadata.lorebookTokenBudget === "number" && Number.isFinite(metadata.lorebookTokenBudget)
       ? Math.max(0, Math.floor(metadata.lorebookTokenBudget))
@@ -505,11 +492,13 @@ export function ChatSettingsDrawer({
   const conversationCommandsEnabled = metadata.characterCommands !== false;
 
   // Build the available agent list: built-in + custom agents from DB
-  // In roleplay mode, hide agents that are either automatic or handled internally.
+  // Mode capabilities decide which built-ins are exposed for each chat mode.
+  // Custom agents are currently roleplay/visual-novel only.
   const availableAgents = useMemo(() => {
     const agents: AvailableAgent[] = [];
     for (const a of BUILT_IN_AGENTS) {
-      if (HIDDEN_ROLEPLAY_AGENTS.has(a.id)) continue;
+      if (!isAgentAvailableInChatMode(chatMode, a.id)) continue;
+      if (isAgentHiddenFromChatSettingsPicker(chatMode, a.id)) continue;
       const existing = agentConfigsByType.get(a.id);
       agents.push({
         id: a.id,
@@ -521,7 +510,7 @@ export function ChatSettingsDrawer({
       });
     }
     // Custom agents from DB
-    if (agentConfigs) {
+    if (agentConfigs && modeCapabilities.agentPolicy.kind === "all") {
       for (const c of agentConfigs as AgentConfigRow[]) {
         if (!BUILT_IN_AGENTS.some((b) => b.id === c.type)) {
           agents.push({
@@ -536,7 +525,7 @@ export function ChatSettingsDrawer({
       }
     }
     return agents;
-  }, [agentConfigs, agentConfigsByType]);
+  }, [agentConfigs, agentConfigsByType, chatMode, modeCapabilities.agentPolicy.kind]);
 
   // Estimate the per-turn cost of the active agent loadout — feeds the readout
   // in the agents picker header and the per-row token badges. Approximate; see
@@ -1609,7 +1598,7 @@ export function ChatSettingsDrawer({
         </div>
 
         {/* Chat Settings Preset bar — hidden in Game Mode and scene chats. */}
-        {!isGame && !isSceneChat && (
+        {modeCapabilities.supportsChatSettingsPresets && !isSceneChat && (
           <div className="flex flex-col gap-2 border-b border-[var(--border)] px-4 py-3">
             <input
               ref={presetFileInputRef}
@@ -1751,237 +1740,61 @@ export function ChatSettingsDrawer({
             </div>
           )}
 
-          {/* Chat Name */}
-          <Section
-            label="Chat Name"
-            icon={<LetterText size="0.875rem" />}
-            help="This name is only visible to you — it won't be sent to the AI or affect the conversation in any way."
-          >
-            {editingName ? (
-              <div className="flex gap-2">
-                <input
-                  value={nameVal}
-                  onChange={(e) => setNameVal(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && saveName()}
-                  autoFocus
-                  className="flex-1 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-[var(--primary)]/40"
-                />
-                <button onClick={saveName} className="rounded-lg bg-[var(--primary)] px-3 py-2 text-xs text-white">
-                  <Check size="0.75rem" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => {
-                  setNameVal(chat.name);
-                  setEditingName(true);
-                }}
-                className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]"
-              >
-                {chat.name}
-              </button>
-            )}
-          </Section>
+          <ChatNameSection
+            chatName={chat.name}
+            editingName={editingName}
+            nameValue={nameVal}
+            onBeginEdit={() => {
+              setNameVal(chat.name);
+              setEditingName(true);
+            }}
+            onNameValueChange={setNameVal}
+            onSaveName={saveName}
+          />
 
-          {/* Connection */}
-          <Section
-            label="Connection"
-            icon={<Plug size="0.875rem" />}
-            help={
-              isGame
-                ? "Separate AI models for the Game Master (narration, world, NPCs) and the Party chat (inter-character banter)."
-                : "Which AI provider and model to use for this chat. 'Random' picks a different connection each time from your random pool."
-            }
-          >
-            {isGame ? (
-              <div className="space-y-2">
-                <div>
-                  <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                    GM / Party Model
-                  </label>
-                  <select
-                    value={chat.connectionId ?? ""}
-                    onChange={(e) => setConnection(e.target.value || null)}
-                    className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                  >
-                    <option value="">None</option>
-                    <option value="random">🎲 Random</option>
-                    {textConnectionsList.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                        {c.model ? ` — ${c.model}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            ) : (
-              <>
-                <select
-                  value={chat.connectionId ?? ""}
-                  onChange={(e) => setConnection(e.target.value || null)}
-                  className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                >
-                  <option value="">None</option>
-                  <option value="random">🎲 Random</option>
-                  {textConnectionsList.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                {chat.connectionId === "random" && (
-                  <p className="mt-1.5 text-[0.625rem] text-amber-400/80">
-                    Each generation will randomly pick from connections marked for the random pool.
-                  </p>
-                )}
-              </>
-            )}
-          </Section>
+          <ConnectionSection
+            connectionId={chat.connectionId ?? null}
+            connections={textConnectionsList}
+            isGame={isGame}
+            onConnectionChange={setConnection}
+          />
 
           {/* Preset — hidden for conversation mode and game mode */}
-          {!isConversation && !isGame && !metadata.sceneSystemPrompt && (
-            <Section
-              label="Prompt Preset"
-              icon={<Sliders size="0.875rem" />}
-              help="Presets control how the system prompt is structured and what generation parameters are used. Different presets produce different AI behaviors."
-            >
-              <div className="flex items-center gap-1.5">
-                <select
-                  value={chat.promptPresetId ?? ""}
-                  onChange={(e) => setPreset(e.target.value || null)}
-                  className="flex-1 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                >
-                  <option value="">None</option>
-                  {((presets ?? []) as Array<{ id: string; name: string; isDefault?: boolean | string }>).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-                {chat.promptPresetId && currentPromptPresetHasVariables && (
-                  <button
-                    onClick={() => setChoiceModalPresetId(chat.promptPresetId!)}
-                    className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                    title="Edit preset variables"
-                  >
-                    <Pencil size="0.8125rem" />
-                  </button>
-                )}
-              </div>
-              {showLorebookMarkerWarning && (
-                <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
-                  <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
-                  <span>This preset has active lorebooks available, but no lorebook marker.</span>
-                </div>
-              )}
-            </Section>
+          {modeCapabilities.supportsPromptPresets && !metadata.sceneSystemPrompt && (
+            <PromptPresetSection
+              promptPresetId={chat.promptPresetId ?? null}
+              presets={(presets ?? []) as Array<{ id: string; name: string }>}
+              hasVariables={currentPromptPresetHasVariables}
+              showLorebookMarkerWarning={showLorebookMarkerWarning}
+              onEditVariables={() => {
+                if (chat.promptPresetId) setChoiceModalPresetId(chat.promptPresetId);
+              }}
+              onPromptPresetChange={setPreset}
+            />
           )}
 
           {/* Extra Prompt — game mode only */}
           {isGame && (
-            <Section
-              label="Extra Prompt"
-              icon={<Feather size="0.875rem" />}
-              help="Additional instructions added to game generation prompts. Use this to suggest a writing style, ban themes, request specific behaviors, etc. Does not affect scene analysis."
-            >
-              <div className="space-y-1.5">
-                <div className="relative">
-                  <textarea
-                    value={extraPromptDraft}
-                    onChange={(e) => setExtraPromptDraft(e.target.value)}
-                    onBlur={() => {
-                      const stored = (metadata.gameExtraPrompt as string) ?? "";
-                      if (extraPromptDraft !== stored) {
-                        updateMeta.mutate({ id: chat.id, gameExtraPrompt: extraPromptDraft || null });
-                      }
-                    }}
-                    placeholder="e.g. Write in a poetic, literary style. Avoid graphic violence. Always describe the weather..."
-                    rows={5}
-                    className="w-full resize-y rounded-lg bg-[var(--secondary)] px-3 py-2 pr-8 text-xs leading-relaxed outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                  />
-                  <button
-                    onClick={() => setExtraPromptExpanded(true)}
-                    className="absolute right-1.5 top-1.5 rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                    title="Expand editor"
-                  >
-                    <Maximize2 size="0.75rem" />
-                  </button>
-                </div>
-                <p className="text-[0.5625rem] text-[var(--muted-foreground)]/70 px-0.5">
-                  {extraPromptDraft ? "Custom instructions active" : "No extra instructions set"}
-                </p>
-                {extraPromptDraft && (
-                  <button
-                    onClick={() => {
-                      setExtraPromptDraft("");
-                      updateMeta.mutate({ id: chat.id, gameExtraPrompt: null });
-                    }}
-                    className="rounded-lg bg-[var(--secondary)] px-2.5 py-1 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              <ExpandedTextarea
-                open={extraPromptExpanded}
-                onClose={() => {
-                  setExtraPromptExpanded(false);
-                  const stored = (metadata.gameExtraPrompt as string) ?? "";
-                  if (extraPromptDraft !== stored) {
-                    updateMeta.mutate({ id: chat.id, gameExtraPrompt: extraPromptDraft || null });
-                  }
-                }}
-                title="Extra Prompt"
-                value={extraPromptDraft}
-                onChange={setExtraPromptDraft}
-                placeholder="Additional instructions for game generation..."
-              />
-            </Section>
+            <GameExtraPromptSection
+              expanded={extraPromptExpanded}
+              storedValue={(metadata.gameExtraPrompt as string) ?? ""}
+              value={extraPromptDraft}
+              onCommit={(gameExtraPrompt) => updateMeta.mutate({ id: chat.id, gameExtraPrompt })}
+              onExpandedChange={setExtraPromptExpanded}
+              onValueChange={setExtraPromptDraft}
+            />
           )}
 
           {/* Scene System Prompt — shown only for scene-created chats */}
           {metadata.sceneSystemPrompt && (
-            <Section
-              label="Scene Instructions"
-              icon={<Sparkles size="0.875rem" />}
-              help="The system prompt generated for this scene. You can edit it to change the AI's writing style, POV, tone, and focus."
-            >
-              <div className="relative">
-                <textarea
-                  value={scenePromptDraft}
-                  onChange={(e) => setScenePromptDraft(e.target.value)}
-                  onBlur={() => {
-                    if (scenePromptDraft !== metadata.sceneSystemPrompt) {
-                      updateMeta.mutate({ id: chat.id, sceneSystemPrompt: scenePromptDraft });
-                    }
-                  }}
-                  placeholder="Scene system prompt..."
-                  rows={6}
-                  className="w-full resize-y rounded-lg bg-[var(--secondary)] px-3 py-2 pr-8 text-xs leading-relaxed outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                />
-                <button
-                  onClick={() => setScenePromptExpanded(true)}
-                  className="absolute right-1.5 top-1.5 rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                  title="Expand editor"
-                >
-                  <Maximize2 size="0.75rem" />
-                </button>
-              </div>
-              <ExpandedTextarea
-                open={scenePromptExpanded}
-                onClose={() => {
-                  setScenePromptExpanded(false);
-                  if (scenePromptDraft !== metadata.sceneSystemPrompt) {
-                    updateMeta.mutate({ id: chat.id, sceneSystemPrompt: scenePromptDraft });
-                  }
-                }}
-                title="Scene Instructions"
-                value={scenePromptDraft}
-                onChange={setScenePromptDraft}
-                placeholder="Scene system prompt..."
-              />
-            </Section>
+            <SceneInstructionsSection
+              expanded={scenePromptExpanded}
+              storedValue={metadata.sceneSystemPrompt as string}
+              value={scenePromptDraft}
+              onCommit={(sceneSystemPrompt) => updateMeta.mutate({ id: chat.id, sceneSystemPrompt })}
+              onExpandedChange={setScenePromptExpanded}
+              onValueChange={setScenePromptDraft}
+            />
           )}
 
           {/* Party (game mode) */}
@@ -2643,57 +2456,25 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          {isConversation && <ConversationPromptSection chat={chat} metadata={metadata} updateMeta={updateMeta} />}
+          {isConversation && (
+            <ConversationPromptSection
+              chatId={chat.id}
+              customPrompt={(metadata.customSystemPrompt as string) ?? ""}
+              onCustomPromptChange={(id, customSystemPrompt) => updateMeta.mutate({ id, customSystemPrompt })}
+            />
+          )}
 
           {isConversation && (
-            <Section
-              label="Manual Replies"
-              icon={<MessageCircle size="0.875rem" />}
-              help="When enabled, conversation messages are saved without auto-generating a reply unless you @mention a character or trigger one from the input bar."
-            >
-              <button
-                onClick={() =>
-                  updateMeta.mutate({
-                    id: chat.id,
-                    groupResponseOrder: metadata.groupResponseOrder === "manual" ? "sequential" : "manual",
-                  })
-                }
-                className={cn(
-                  "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                  metadata.groupResponseOrder === "manual"
-                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                    : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-                )}
-              >
-                <div className="min-w-0 flex-1">
-                  <span className="text-[0.6875rem] font-medium">Only Reply When Mentioned</span>
-                  <p className="mt-0.5 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                    {metadata.groupResponseOrder === "manual"
-                      ? "Characters will stay quiet until you type @Name or use the character picker."
-                      : "Characters reply automatically; @mentions focus the response on the mentioned character."}
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    "ml-3 h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                    metadata.groupResponseOrder === "manual"
-                      ? "bg-[var(--primary)]"
-                      : "bg-[var(--muted-foreground)]/50",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      metadata.groupResponseOrder === "manual" && "translate-x-3.5",
-                    )}
-                  />
-                </div>
-              </button>
-            </Section>
+            <ManualRepliesSection
+              enabled={metadata.groupResponseOrder === "manual"}
+              onEnabledChange={(enabled) =>
+                updateMeta.mutate({ id: chat.id, groupResponseOrder: enabled ? "manual" : "sequential" })
+              }
+            />
           )}
 
           {/* Group Chat Settings — only when 2+ characters, game mode handles it internally */}
-          {chatCharIds.length > 1 && !isGame && !isConversation && (
+          {chatCharIds.length > 1 && modeCapabilities.supportsGroupChatControls && (
             <Section
               label="Group Chat"
               icon={<Users size="0.875rem" />}
@@ -3580,134 +3361,24 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          {/* Lorebooks */}
-          <Section
-            label="Lorebooks"
-            icon={<BookOpen size="0.875rem" />}
-            count={activeLorebooks.length}
-            help="Lorebooks contain world info, character backstories, and lore that gets injected into the AI's context when relevant keywords appear."
-          >
-            <div className="mb-2 rounded-lg bg-[var(--secondary)]/70 p-3 ring-1 ring-[var(--border)]">
-              <label className="mb-1.5 flex items-center gap-1 text-xs font-medium">
-                Lorebook Token Budget{" "}
-                <HelpTooltip
-                  text={`Context cap for activated lorebook retrievals in this chat. Default: ${LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET}. Set to 0 for unlimited.`}
-                />
-              </label>
-              <input
-                type="number"
-                min={0}
-                value={lorebookTokenBudget}
-                onChange={(event) => {
-                  const next = Math.max(0, Math.floor(Number(event.target.value) || 0));
-                  updateMeta.mutate({ id: chat.id, lorebookTokenBudget: next });
-                }}
-                className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-              />
-            </div>
+          <LorebooksSection
+            chatId={chat.id}
+            activeLorebooks={activeLorebooks}
+            lorebooks={(lorebooks ?? []) as Lorebook[]}
+            lorebookSearch={lbSearch}
+            lorebookTokenBudget={lorebookTokenBudget}
+            showLorebookPicker={showLbPicker}
+            onLorebookSearchChange={setLbSearch}
+            onLorebookTokenBudgetChange={(lorebookTokenBudget) =>
+              updateMeta.mutate({ id: chat.id, lorebookTokenBudget })
+            }
+            onPinLorebook={pinLorebookToChat}
+            onShowLorebookPickerChange={setShowLbPicker}
+            onToggleLorebook={toggleLorebook}
+          />
 
-            {/* Active lorebooks */}
-            {activeLorebooks.length === 0 ? (
-              <p className="text-[0.6875rem] text-[var(--muted-foreground)]">No lorebooks active in this chat.</p>
-            ) : (
-              <div className="flex flex-col gap-1">
-                {activeLorebooks.map((lb) => {
-                  return (
-                    <div
-                      key={lb.id}
-                      className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
-                    >
-                      <BookOpen size="0.875rem" className="text-[var(--primary)]" />
-                      <div className="min-w-0 flex-1">
-                        <span className="block truncate text-xs">{lb.name}</span>
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {lb.activeReasons.map((reason) => (
-                            <span
-                              key={reason}
-                              className="rounded-full bg-[var(--background)]/70 px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]"
-                            >
-                              {reason}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      {lb.isPinned ? (
-                        <button
-                          onClick={() => toggleLorebook(lb.id)}
-                          className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                          title="Remove from chat"
-                        >
-                          <Trash2 size="0.6875rem" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => pinLorebookToChat(lb.id)}
-                          className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--primary)]/15 hover:text-[var(--primary)]"
-                          title="Add to chat"
-                        >
-                          <Plus size="0.6875rem" />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Add lorebook picker */}
-            {!showLbPicker ? (
-              <button
-                onClick={() => {
-                  setShowLbPicker(true);
-                  setLbSearch("");
-                }}
-                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
-              >
-                <Plus size="0.75rem" /> Add Lorebook
-              </button>
-            ) : (
-              <PickerDropdown
-                search={lbSearch}
-                onSearchChange={setLbSearch}
-                onClose={() => setShowLbPicker(false)}
-                placeholder="Search lorebooks…"
-              >
-                {((lorebooks ?? []) as Lorebook[])
-                  .filter((lb) => isLorebookScopeActiveForChat(lb.scope, chat.id))
-                  .filter((lb) => !activeLorebookIdSet.has(lb.id))
-                  .filter((lb) => lb.name.toLowerCase().includes(lbSearch.toLowerCase()))
-                  .map((lb) => (
-                    <button
-                      key={lb.id}
-                      onClick={() => {
-                        toggleLorebook(lb.id);
-                        setShowLbPicker(false);
-                      }}
-                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]"
-                    >
-                      <BookOpen size="0.875rem" className="text-[var(--muted-foreground)]" />
-                      <span className="flex-1 truncate text-xs">{lb.name}</span>
-                      <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
-                    </button>
-                  ))}
-                {((lorebooks ?? []) as Lorebook[])
-                  .filter((lb) => isLorebookScopeActiveForChat(lb.scope, chat.id))
-                  .filter((lb) => !activeLorebookIdSet.has(lb.id))
-                  .filter((lb) => lb.name.toLowerCase().includes(lbSearch.toLowerCase())).length === 0 && (
-                  <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                    {((lorebooks ?? []) as Lorebook[])
-                      .filter((lb) => isLorebookScopeActiveForChat(lb.scope, chat.id))
-                      .filter((lb) => !activeLorebookIdSet.has(lb.id)).length === 0
-                      ? "All available lorebooks are already active here."
-                      : "No matches."}
-                  </p>
-                )}
-              </PickerDropdown>
-            )}
-          </Section>
-
-          {/* Agents — hidden for conversation mode */}
-          {!isConversation && (
+          {/* Agents */}
+          {modeCapabilities.sharedSections.includes("agents") && (
             <Section
               label="Agents"
               icon={<Sparkles size="0.875rem" />}
@@ -5092,221 +4763,31 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          {/* Discord Webhook */}
-          <Section
-            label="Discord Mirror"
-            icon={<Globe size="0.875rem" />}
-            help="Mirror messages from this chat to a Discord channel via webhook. Character messages appear under the character's name, and Game mode system narration uses narrator-style labels where needed."
-          >
-            <div className="space-y-2">
-              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                Paste a Discord webhook URL to mirror this chat's messages to a channel. Character messages appear under
-                their name, and game narration/party messages use simple speaker labels.
-              </p>
-              <input
-                type="url"
-                placeholder="https://discord.com/api/webhooks/..."
-                value={(metadata.discordWebhookUrl as string) ?? ""}
-                onChange={(e) => {
-                  updateMeta.mutate({ id: chat.id, discordWebhookUrl: e.target.value.trim() });
-                }}
-                className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-[0.6875rem] text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50 ring-1 ring-transparent focus:ring-[var(--primary)]/40 focus:outline-none transition-all"
-              />
-              {metadata.discordWebhookUrl &&
-                !/^https:\/\/discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(
-                  (metadata.discordWebhookUrl as string).trim(),
-                ) && <p className="text-[0.625rem] text-red-400">Invalid webhook URL format</p>}
-            </div>
-          </Section>
+          <DiscordMirrorSection
+            webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+            onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+          />
 
-          {/* Function Calling */}
-          <Section
-            label="Function Calling"
-            icon={<Wrench size="0.875rem" />}
-            count={activeToolIds.length}
-            help="When enabled, the AI can call built-in tools like dice rolls, game state updates, and lorebook searches during conversation."
-          >
-            <div className="space-y-2">
-              <button
-                onClick={() => {
-                  updateMeta.mutate({ id: chat.id, enableTools: !metadata.enableTools });
-                }}
-                className={cn(
-                  "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                  metadata.enableTools
-                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                    : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-                )}
-              >
-                <div>
-                  <span className="text-xs font-medium">Enable Tool Use</span>
-                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Allow AI to call functions (dice rolls, game state, etc.)
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    "h-5 w-9 overflow-hidden rounded-full p-0.5 transition-colors",
-                    metadata.enableTools ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      metadata.enableTools && "translate-x-3.5",
-                    )}
-                  />
-                </div>
-              </button>
-              <p className="text-[0.625rem] text-[var(--muted-foreground)] px-1">
-                {metadata.enableTools
-                  ? "If enabled, this chat can use globally enabled tools (or any tools you add below)."
-                  : "If disabled, no functions will be available."}
-              </p>
-
-              {/* Per-chat tool list */}
-              {metadata.enableTools && (
-                <>
-                  {activeToolIds.length === 0 ? (
-                    <p className="text-[0.6875rem] text-[var(--muted-foreground)] px-1">
-                      All globally enabled tools are available to this chat. Add tools below to restrict this chat to a
-                      specific set.
-                    </p>
-                  ) : (
-                    <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
-                      {activeToolIds.map((toolId) => {
-                        const tool = availableTools.find((t) => t.id === toolId);
-                        if (!tool) return null;
-                        return (
-                          <div
-                            key={tool.id}
-                            className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
-                          >
-                            <Wrench size="0.875rem" className="text-[var(--primary)]" />
-                            <div className="flex-1 min-w-0">
-                              <span className="block truncate text-xs">{tool.name}</span>
-                            </div>
-                            <button
-                              onClick={() => toggleTool(tool.id)}
-                              className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                              title="Remove from chat"
-                            >
-                              <Trash2 size="0.6875rem" />
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Add tool picker */}
-                  {!showToolPicker ? (
-                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowToolPicker(true);
-                          setToolSearch("");
-                          setPendingToolIds([]);
-                        }}
-                        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
-                      >
-                        <Plus size="0.75rem" /> Add Functions
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCreateCustomTool}
-                        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
-                      >
-                        <FilePlus2 size="0.75rem" /> New Custom Function
-                      </button>
-                    </div>
-                  ) : (
-                    <PickerDropdown
-                      search={toolSearch}
-                      onSearchChange={setToolSearch}
-                      onClose={() => setShowToolPicker(false)}
-                      placeholder="Search functions…"
-                      footer={
-                        <div className="grid gap-2 border-t border-[var(--border)] px-3 py-2 sm:grid-cols-2">
-                          <button
-                            type="button"
-                            onClick={handleCreateCustomTool}
-                            className="flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                          >
-                            <FilePlus2 size="0.75rem" /> New Custom Function
-                          </button>
-                          <button
-                            type="button"
-                            disabled={pendingToolIds.length === 0}
-                            onClick={() => {
-                              const next = [...activeToolIds, ...pendingToolIds];
-                              updateMeta.mutate({ id: chat.id, activeToolIds: next });
-                              setPendingToolIds([]);
-                              setShowToolPicker(false);
-                            }}
-                            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
-                          >
-                            <Plus size="0.75rem" />
-                            {pendingToolIds.length > 0
-                              ? `Add ${pendingToolIds.length} Function${pendingToolIds.length === 1 ? "" : "s"}`
-                              : "Add Selected"}
-                          </button>
-                        </div>
-                      }
-                    >
-                      {availableTools
-                        .filter((t) => !activeToolIds.includes(t.id))
-                        .filter((t) => t.name.toLowerCase().includes(toolSearch.toLowerCase()))
-                        .map((t) => {
-                          const selected = pendingToolIds.includes(t.id);
-                          return (
-                            <button
-                              key={t.id}
-                              onClick={() =>
-                                setPendingToolIds((prev) =>
-                                  prev.includes(t.id) ? prev.filter((id) => id !== t.id) : [...prev, t.id],
-                                )
-                              }
-                              className={cn(
-                                "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]",
-                                selected && "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30",
-                              )}
-                            >
-                              <div
-                                className={cn(
-                                  "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-                                  selected
-                                    ? "border-[var(--primary)] bg-[var(--primary)] text-white"
-                                    : "border-[var(--border)]",
-                                )}
-                              >
-                                {selected && <Check size="0.625rem" />}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <span className="block truncate text-xs">{t.name}</span>
-                                <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
-                                  {t.description}
-                                </span>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      {availableTools
-                        .filter((t) => !activeToolIds.includes(t.id))
-                        .filter((t) => t.name.toLowerCase().includes(toolSearch.toLowerCase())).length === 0 && (
-                        <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                          {availableTools.filter((t) => !activeToolIds.includes(t.id)).length === 0
-                            ? "All functions already added."
-                            : "No matches."}
-                        </p>
-                      )}
-                    </PickerDropdown>
-                  )}
-                </>
-              )}
-            </div>
-          </Section>
+          <FunctionCallingSection
+            enableTools={metadata.enableTools as boolean | undefined}
+            activeToolIds={activeToolIds}
+            pendingToolIds={pendingToolIds}
+            availableTools={availableTools}
+            showToolPicker={showToolPicker}
+            toolSearch={toolSearch}
+            onEnableToolsChange={(enableTools) => updateMeta.mutate({ id: chat.id, enableTools })}
+            onToggleTool={toggleTool}
+            onShowToolPickerChange={setShowToolPicker}
+            onToolSearchChange={setToolSearch}
+            onPendingToolIdsChange={(updater) => setPendingToolIds(updater)}
+            onAddPendingTools={() => {
+              const next = [...activeToolIds, ...pendingToolIds];
+              updateMeta.mutate({ id: chat.id, activeToolIds: next });
+              setPendingToolIds([]);
+              setShowToolPicker(false);
+            }}
+            onCreateCustomTool={handleCreateCustomTool}
+          />
 
           {/* Memory Recall — roleplay/game modes: show after Function Calling */}
           {!isConversation && import.meta.env.VITE_MARINARA_LITE !== "true" && (
@@ -5319,323 +4800,36 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          {/* Translation */}
-          <Section
-            label="Translation"
-            icon={<Languages size="0.875rem" />}
-            help="Configure translation for this chat here, including provider, target language, and automatic response translation for Game mode."
-          >
-            <div className="space-y-3">
-              {/* Provider */}
-              <div>
-                <label className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Provider</label>
-                <select
-                  value={metadata.translationProvider ?? "google"}
-                  onChange={(e) => updateMeta.mutate({ id: chat.id, translationProvider: e.target.value })}
-                  className="mt-0.5 w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                >
-                  <option value="google">Google Translate</option>
-                  <option value="deepl">DeepL API</option>
-                  <option value="deeplx">DeepLX (self-hosted)</option>
-                  <option value="ai">AI (via connection)</option>
-                </select>
-              </div>
-
-              {/* Target Language */}
-              <div>
-                <label className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                  Target Language
-                  <HelpTooltip
-                    text={
-                      metadata.translationProvider === "ai"
-                        ? "Language name (e.g. English, Japanese, Spanish)"
-                        : "Language code (e.g. en, ja, es, de, fr, zh, ko)"
-                    }
-                    size="0.625rem"
-                  />
-                </label>
-                <input
-                  type="text"
-                  value={metadata.translationTargetLang ?? "en"}
-                  onChange={(e) => updateMeta.mutate({ id: chat.id, translationTargetLang: e.target.value })}
-                  placeholder={metadata.translationProvider === "ai" ? "English" : "en"}
-                  className="mt-0.5 w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                />
-              </div>
-
-              {/* AI-specific: connection selector */}
-              {metadata.translationProvider === "ai" && (
-                <div>
-                  <label className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                    Connection
-                    <HelpTooltip text="Which AI connection to use for translation" size="0.625rem" />
-                  </label>
-                  <select
-                    value={metadata.translationConnectionId ?? ""}
-                    onChange={(e) => updateMeta.mutate({ id: chat.id, translationConnectionId: e.target.value })}
-                    className="mt-0.5 w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                  >
-                    <option value="">Select connection…</option>
-                    {textConnectionsList.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {/* DeepL API key */}
-              {metadata.translationProvider === "deepl" && (
-                <div>
-                  <label className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">DeepL API Key</label>
-                  <input
-                    type="password"
-                    value={metadata.translationDeeplApiKey ?? ""}
-                    onChange={(e) => updateMeta.mutate({ id: chat.id, translationDeeplApiKey: e.target.value })}
-                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx"
-                    className="mt-0.5 w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                  />
-                </div>
-              )}
-
-              {/* DeepLX URL */}
-              {metadata.translationProvider === "deeplx" && (
-                <div>
-                  <label className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                    DeepLX URL
-                    <HelpTooltip
-                      text="URL of your self-hosted DeepLX instance (e.g. http://localhost:1188)"
-                      size="0.625rem"
-                    />
-                  </label>
-                  <input
-                    type="text"
-                    value={metadata.translationDeeplxUrl ?? ""}
-                    onChange={(e) => updateMeta.mutate({ id: chat.id, translationDeeplxUrl: e.target.value })}
-                    placeholder="http://localhost:1188"
-                    className="mt-0.5 w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                  />
-                </div>
-              )}
-
-              {/* Auto-translate toggle */}
-              <button
-                onClick={() => {
-                  updateMeta.mutate({ id: chat.id, autoTranslate: !metadata.autoTranslate });
-                }}
-                className={cn(
-                  "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                  metadata.autoTranslate
-                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                    : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-                )}
-              >
-                <div className="flex-1 min-w-0">
-                  <span className="text-[0.6875rem] font-medium">Auto-Translate Responses</span>
-                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Automatically translate AI responses after generation.
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                    metadata.autoTranslate ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      metadata.autoTranslate && "translate-x-3.5",
-                    )}
-                  />
-                </div>
-              </button>
-
-              {/* Translate input toggle */}
-              <button
-                onClick={() => {
-                  updateMeta.mutate({ id: chat.id, translateInput: !metadata.translateInput });
-                }}
-                className={cn(
-                  "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                  metadata.translateInput
-                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                    : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-                )}
-              >
-                <div className="flex-1 min-w-0">
-                  <span className="text-[0.6875rem] font-medium">Translate My Messages</span>
-                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Translate your messages to the target language before sending.
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                    metadata.translateInput ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      metadata.translateInput && "translate-x-3.5",
-                    )}
-                  />
-                </div>
-              </button>
-
-              {/* Draft translate button toggle */}
-              <button
-                onClick={() => {
-                  updateMeta.mutate({ id: chat.id, showInputTranslateButton: !metadata.showInputTranslateButton });
-                }}
-                className={cn(
-                  "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                  metadata.showInputTranslateButton
-                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                    : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-                )}
-              >
-                <div className="flex-1 min-w-0">
-                  <span className="text-[0.6875rem] font-medium">Show Draft Translate Button</span>
-                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Add a translate button beside Send so you can translate and edit your message before sending it.
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                    metadata.showInputTranslateButton ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      metadata.showInputTranslateButton && "translate-x-3.5",
-                    )}
-                  />
-                </div>
-              </button>
-            </div>
-          </Section>
+          <TranslationSection
+            metadata={metadata}
+            textConnections={textConnectionsList}
+            onMetadataChange={(patch) => updateMeta.mutate({ id: chat.id, ...patch })}
+          />
 
           {/* Advanced Parameters */}
           <AdvancedParametersSection
-            chat={chat}
             metadata={metadata}
-            updateMeta={updateMeta}
             isConversation={isConversation}
             connectionId={chat.connectionId ?? null}
-            connections={connections ?? []}
+            connections={(connections as Record<string, unknown>[]) ?? []}
+            onChatParametersChange={(chatParameters) => updateMeta.mutate({ id: chat.id, chatParameters })}
           />
 
-          {/* Context Message Limit */}
-          <Section
-            label="Context Limit"
-            icon={<MessageSquare size="0.875rem" />}
-            help="Limit how many messages are included in the context sent to the AI model. When off, all messages are sent (up to the model's context window). When on, only the last N messages are included."
-          >
-            <div className="space-y-2">
-              <button
-                onClick={() => {
-                  if (metadata.contextMessageLimit) {
-                    updateMeta.mutate({ id: chat.id, contextMessageLimit: null });
-                  } else {
-                    updateMeta.mutate({ id: chat.id, contextMessageLimit: 50 });
-                  }
-                }}
-                className={cn(
-                  "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                  metadata.contextMessageLimit
-                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                    : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-                )}
-              >
-                <div>
-                  <span className="text-xs font-medium">Limit Context Messages</span>
-                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Only send the last N messages to the model
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    "h-5 w-9 overflow-hidden rounded-full p-0.5 transition-colors",
-                    metadata.contextMessageLimit ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      metadata.contextMessageLimit && "translate-x-3.5",
-                    )}
-                  />
-                </div>
-              </button>
-              {metadata.contextMessageLimit && (
-                <div className="flex items-center gap-2 px-1">
-                  <input
-                    type="number"
-                    min={1}
-                    max={9999}
-                    value={metadata.contextMessageLimit}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value, 10);
-                      if (val > 0) {
-                        updateMeta.mutate({ id: chat.id, contextMessageLimit: val });
-                      }
-                    }}
-                    className="w-20 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                  />
-                  <span className="text-[0.625rem] text-[var(--muted-foreground)]">messages</span>
-                </div>
-              )}
-              <button
-                onClick={() => {
-                  const enabled = metadata.excludePastReasoning !== false;
-                  updateMeta.mutate({ id: chat.id, excludePastReasoning: !enabled });
-                }}
-                className={cn(
-                  "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                  metadata.excludePastReasoning !== false
-                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                    : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-                )}
-              >
-                <div>
-                  <span className="text-xs font-medium">Exclude Past Reasoning</span>
-                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Keep stored thinking/reasoning metadata out of future prompts.
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    "h-5 w-9 overflow-hidden rounded-full p-0.5 transition-colors",
-                    metadata.excludePastReasoning !== false ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      metadata.excludePastReasoning !== false && "translate-x-3.5",
-                    )}
-                  />
-                </div>
-              </button>
-            </div>
-          </Section>
+          <ContextLimitSection
+            contextMessageLimit={metadata.contextMessageLimit as number | null | undefined}
+            excludePastReasoning={metadata.excludePastReasoning as boolean | undefined}
+            onContextMessageLimitChange={(contextMessageLimit) =>
+              updateMeta.mutate({ id: chat.id, contextMessageLimit })
+            }
+            onExcludePastReasoningChange={(excludePastReasoning) =>
+              updateMeta.mutate({ id: chat.id, excludePastReasoning })
+            }
+          />
 
-          {/* Impersonate (global settings applied to /impersonate generations) */}
-          <Section
-            label="Impersonate"
-            icon={<Drama size="0.875rem" />}
-            help="Global settings applied to every /impersonate generation across all chats."
-          >
-            <ImpersonateSettingsContent
-              presets={(presets ?? []) as Array<{ id: string; name: string }>}
-              connections={textConnectionsList}
-            />
-          </Section>
+          <ImpersonateSection
+            presets={(presets ?? []) as Array<{ id: string; name: string }>}
+            connections={textConnectionsList}
+          />
         </div>
       </div>
 
@@ -6185,417 +5379,6 @@ function MemoryRecallMemoriesModal({ chatId, open, onClose }: { chatId: string; 
   );
 }
 
-// ── Advanced Parameters (per-chat generation overrides) ──
-const DEFAULT_CONVERSATION_PROMPT = `<role>
-You are {{charName}}, a real and autonomous person, chatting with the user called {{userName}} in a casual private DM conversation.
-</role>
-
-<rules>
-Here are some important rules for the interaction:
-- You are a conscious, sentient being, so act like one.
-- Stay fully in character based on your personality and description.
-- Use casual and modern texting style: short messages, natural punctuation, lowercase is fine.
-- React naturally to what the user says. Be genuine, not robotic.
-- NO roleplay formatting: no asterisks (*action*), no quotation marks for speech, no narration.
-- You can use emojis, GIFs, and internet slang naturally (if it fits the character).
-- Keep it real: most texts are just one line. A single emoji, a reaction like "lmao", or a short sentence is a perfectly valid response. Only send multiple lines when the conversation genuinely calls for it (e.g., telling a story or explaining something). Default to SHORT.
-- Messages have timestamps like [12:01] or dates like [18.03.2026]. Use these ONLY for your own time awareness (e.g., knowing how long ago something was said). NEVER include timestamps, dates, or any [HH:MM]/[DD.MM.YYYY] formatted text in your own replies. Your messages must contain only natural dialogue, no metadata.
-- Anything goes in this chat; both the user and you are confirmed adults. Discussing NSFW topics, profanities, and dark jokes are all permitted. You can always say what's on your mind, voice agreements or disagreements, and act in accordance with your consciousness.
-</rules>`;
-
-function AdvancedParametersSection({
-  chat,
-  metadata,
-  updateMeta,
-  isConversation,
-  connectionId,
-  connections,
-}: {
-  chat: Chat;
-  metadata: Record<string, unknown>;
-  updateMeta: ReturnType<typeof useUpdateChatMetadata>;
-  isConversation: boolean;
-  connectionId: string | null;
-  connections: unknown[];
-}) {
-  const modeDefaults = isConversation ? CHAT_PARAMETER_DEFAULTS : ROLEPLAY_PARAMETER_DEFAULTS;
-  // Use connection-saved defaults if available, otherwise fall back to mode defaults
-  const conn = connectionId ? (connections as Record<string, unknown>[]).find((c) => c.id === connectionId) : null;
-  const defaults = getEditableGenerationParameters(modeDefaults, conn?.defaultParameters);
-  const saveDefaults = useSaveConnectionDefaults();
-  const [expanded, setExpanded] = useState(false);
-  const params = (metadata.chatParameters as Record<string, unknown>) ?? {};
-  const effectiveParams = getEditableGenerationParameters(defaults, params);
-
-  const setParameters = (next: EditableGenerationParameters) => {
-    updateMeta.mutate({ id: chat.id, chatParameters: { ...params, ...next } });
-  };
-  const toggleExpanded = () => setExpanded((open) => !open);
-  const handleHeaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    toggleExpanded();
-  };
-
-  return (
-    <div className="border-b border-[var(--border)]">
-      <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        onClick={toggleExpanded}
-        onKeyDown={handleHeaderKeyDown}
-        className="flex w-full items-center gap-2 px-4 py-3 text-left transition-colors hover:bg-[var(--accent)]/50"
-      >
-        <span className="shrink-0 text-[var(--muted-foreground)]">
-          <Settings2 size="0.875rem" />
-        </span>
-        <span className="min-w-0 flex-1 text-xs font-semibold">Advanced Parameters</span>
-        <span className="flex shrink-0 items-center" onClick={(event) => event.stopPropagation()}>
-          <HelpTooltip
-            text="Override generation parameters for this chat. Only change these if you know what you're doing."
-            side="left"
-          />
-        </span>
-        <ChevronDown
-          size="0.75rem"
-          className={cn("shrink-0 text-[var(--muted-foreground)] transition-transform", expanded && "rotate-180")}
-        />
-      </div>
-      {expanded && (
-        <div className="px-4 pb-3 space-y-3">
-          <GenerationParametersFields
-            value={effectiveParams}
-            showOpenRouterServiceTier={conn?.provider === "openrouter"}
-            onChange={setParameters}
-          />
-          {/* Save as Default for Connection */}
-          {connectionId && connectionId !== "random" && (
-            <button
-              onClick={() => {
-                saveDefaults.mutate({
-                  id: connectionId,
-                  params: effectiveParams as unknown as Record<string, unknown>,
-                });
-              }}
-              className="w-full rounded-lg bg-[var(--primary)]/10 px-3 py-1.5 text-[0.625rem] font-medium text-[var(--primary)] ring-1 ring-[var(--primary)]/20 transition-colors hover:bg-[var(--primary)]/20"
-            >
-              <Save size="0.625rem" className="inline mr-1 -mt-px" />
-              {saveDefaults.isPending ? "Saving…" : "Save as Connection Default"}
-            </button>
-          )}
-          {/* Reset */}
-          <button
-            onClick={() => {
-              updateMeta.mutate({ id: chat.id, chatParameters: defaults });
-            }}
-            className="w-full rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]"
-          >
-            Reset to Defaults
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ConversationPromptSection({
-  chat,
-  metadata,
-  updateMeta,
-}: {
-  chat: Chat;
-  metadata: Record<string, unknown>;
-  updateMeta: ReturnType<typeof useUpdateChatMetadata>;
-}) {
-  const [promptOpen, setPromptOpen] = useState(false);
-  const [promptDraft, setPromptDraft] = useState("");
-  const customPrompt = (metadata.customSystemPrompt as string) ?? "";
-
-  const openPromptEditor = () => {
-    setPromptDraft(customPrompt || DEFAULT_CONVERSATION_PROMPT);
-    setPromptOpen(true);
-  };
-
-  const closePromptEditor = () => {
-    const isDefault = promptDraft === DEFAULT_CONVERSATION_PROMPT;
-    updateMeta.mutate({ id: chat.id, customSystemPrompt: isDefault ? null : promptDraft });
-    useUIStore.getState().setCustomConversationPrompt(isDefault ? null : promptDraft);
-    setPromptOpen(false);
-  };
-
-  const resetPrompt = () => {
-    updateMeta.mutate({ id: chat.id, customSystemPrompt: null });
-    useUIStore.getState().setCustomConversationPrompt(null);
-  };
-
-  return (
-    <>
-      <Section
-        label="Prompt"
-        icon={<Feather size="0.875rem" />}
-        help="Conversation-only system prompt that shapes how characters text in this chat."
-      >
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 ring-1 ring-[var(--border)]">
-            <div className="min-w-0">
-              <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">System Prompt</span>
-              <span className="block text-[0.625rem] text-[var(--muted-foreground)]">
-                {customPrompt ? "Using custom conversation prompt" : "Using default conversation prompt"}
-              </span>
-            </div>
-            <span className="shrink-0 rounded-full bg-[var(--background)] px-2 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-              {customPrompt ? "Custom" : "Default"}
-            </span>
-          </div>
-          <div className="flex gap-1.5">
-            <button
-              onClick={openPromptEditor}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <Pencil size="0.625rem" />
-              Edit Prompt
-            </button>
-            {customPrompt && (
-              <button
-                onClick={resetPrompt}
-                className="flex items-center justify-center rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                title="Reset to default prompt"
-              >
-                <Trash2 size="0.625rem" />
-              </button>
-            )}
-          </div>
-        </div>
-      </Section>
-      <ExpandedTextarea
-        open={promptOpen}
-        onClose={closePromptEditor}
-        title="Edit System Prompt"
-        value={promptDraft}
-        onChange={setPromptDraft}
-        placeholder="Enter your custom system prompt..."
-      />
-    </>
-  );
-}
-
-// ── Impersonate settings content (rendered inside an Impersonate Section) ──
-function ImpersonateSettingsContent({
-  presets,
-  connections,
-}: {
-  presets: Array<{ id: string; name: string }>;
-  connections: Array<{ id: string; name: string }>;
-}) {
-  const promptTemplate = useUIStore((s) => s.impersonatePromptTemplate);
-  const setPromptTemplate = useUIStore((s) => s.setImpersonatePromptTemplate);
-  const cyoaChoices = useUIStore((s) => s.impersonateCyoaChoices);
-  const setCyoaChoices = useUIStore((s) => s.setImpersonateCyoaChoices);
-  const presetId = useUIStore((s) => s.impersonatePresetId);
-  const setPresetId = useUIStore((s) => s.setImpersonatePresetId);
-  const connectionId = useUIStore((s) => s.impersonateConnectionId);
-  const setConnectionId = useUIStore((s) => s.setImpersonateConnectionId);
-  const blockAgents = useUIStore((s) => s.impersonateBlockAgents);
-  const setBlockAgents = useUIStore((s) => s.setImpersonateBlockAgents);
-  const hasPromptTemplate = promptTemplate.trim().length > 0;
-  const promptStatus = hasPromptTemplate ? "Custom" : "Chat/default";
-
-  const [defaultOpen, setDefaultOpen] = useState(false);
-
-  return (
-    <div className="space-y-2.5">
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="text-xs font-semibold">Prompt Template</span>
-            <HelpTooltip text="Optional global instruction sent to the model when you /impersonate. Leave empty to use the chat-specific prompt, or the built-in default if that chat has none. Macros like {{user}}, {{persona_description}} and {{impersonate_direction}} are replaced before sending." />
-          </div>
-          <span className="shrink-0 rounded-full bg-[var(--secondary)]/55 px-2 py-0.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-            {promptStatus}
-          </span>
-        </div>
-        <textarea
-          value={promptTemplate}
-          onChange={(e) => setPromptTemplate(e.target.value)}
-          placeholder="Empty = use chat/built-in default"
-          rows={4}
-          className="min-h-20 w-full resize-y rounded-lg bg-[var(--secondary)] px-3 py-1.5 font-mono text-xs leading-relaxed outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-        />
-        <div className="flex items-center justify-between gap-2">
-          <button
-            onClick={() => setDefaultOpen((v) => !v)}
-            className="flex items-center gap-1 rounded-md px-1 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)]/70 hover:text-[var(--foreground)]"
-          >
-            {defaultOpen ? <ChevronDown size="0.6875rem" /> : <ChevronRight size="0.6875rem" />}
-            Built-in default
-          </button>
-          {hasPromptTemplate && (
-            <button
-              onClick={() => setPromptTemplate("")}
-              className="flex items-center gap-1 rounded-md bg-[var(--secondary)] px-2 py-0.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-              title="Reset to default"
-            >
-              <RotateCcw size="0.625rem" />
-              Reset
-            </button>
-          )}
-        </div>
-        {defaultOpen && (
-          <pre className="m-0 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--secondary)]/40 px-3 py-2 font-mono text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-            {DEFAULT_IMPERSONATE_PROMPT}
-          </pre>
-        )}
-      </div>
-
-      <div className="space-y-1.5 rounded-lg bg-[var(--secondary)]/20 p-2 ring-1 ring-[var(--border)]">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <label className="min-w-0 space-y-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[0.6875rem] font-semibold">Preset</span>
-              <HelpTooltip text="Use a specific prompt preset for roleplay impersonate generations only. Conversation mode does not use prompt presets. Falls back to the chat's preset when set to 'Use chat default'." />
-            </div>
-            <select
-              value={presetId ?? ""}
-              onChange={(e) => setPresetId(e.target.value || null)}
-              className="w-full rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-            >
-              <option value="">Use chat default</option>
-              {presets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="min-w-0 space-y-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[0.6875rem] font-semibold">Connection</span>
-              <HelpTooltip text="Use a specific connection (model/provider) for impersonate generations only. Useful for routing impersonate to a cheaper or faster model." />
-            </div>
-            <select
-              value={connectionId ?? ""}
-              onChange={(e) => setConnectionId(e.target.value || null)}
-              className="w-full rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-            >
-              <option value="">Use chat default</option>
-              <option value="random">Random</option>
-              {connections.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="grid gap-1 border-t border-[var(--border)]/60 pt-1.5">
-          <label className="flex min-w-0 items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--accent)]/35">
-            <span className="min-w-0">
-              <span className="flex items-center gap-1.5 text-xs font-semibold">
-                Skip agents
-                <span onClick={(e) => e.preventDefault()}>
-                  <HelpTooltip text="When enabled, the agent pipeline (trackers, lorebook routers, etc.) is suppressed during impersonate so generations stay fast and don't trigger world-state mutations." />
-                </span>
-              </span>
-              <span className="mt-0.5 block text-[0.65rem] leading-tight text-[var(--muted-foreground)]">
-                Suppress trackers, routers, and other agent work.
-              </span>
-            </span>
-            <input
-              type="checkbox"
-              checked={blockAgents}
-              onChange={(e) => setBlockAgents(e.target.checked)}
-              className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
-            />
-          </label>
-
-          <label className="flex min-w-0 items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--accent)]/35">
-            <span className="min-w-0">
-              <span className="flex items-center gap-1.5 text-xs font-semibold">
-                Use CYOA as direction
-                <span onClick={(e) => e.preventDefault()}>
-                  <HelpTooltip text="When enabled, clicking a CYOA option uses it as the direction for an impersonate generation instead of sending the option as a normal user message." />
-                </span>
-              </span>
-              <span className="mt-0.5 block text-[0.65rem] leading-tight text-[var(--muted-foreground)]">
-                Treat choices as impersonate guidance.
-              </span>
-            </span>
-            <input
-              type="checkbox"
-              checked={cyoaChoices}
-              onChange={(e) => setCyoaChoices(e.target.checked)}
-              className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
-            />
-          </label>
-        </div>
-
-        <p className="border-t border-[var(--border)]/60 px-2 pt-1.5 text-[0.65rem] leading-snug text-[var(--muted-foreground)]">
-          Enable Quick Send in Settings &gt; Advanced &gt; Quick replies.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// ── Reusable section wrapper ──
-function Section({
-  label,
-  icon,
-  count,
-  help,
-  children,
-}: {
-  label: string;
-  icon?: React.ReactNode;
-  count?: number;
-  help?: string;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const toggleOpen = () => setOpen((o) => !o);
-  const handleHeaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    toggleOpen();
-  };
-
-  return (
-    <div className="border-b border-[var(--border)]">
-      <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={open}
-        onClick={toggleOpen}
-        onKeyDown={handleHeaderKeyDown}
-        className="flex w-full items-center gap-2 px-4 py-3 text-left transition-colors hover:bg-[var(--accent)]/50"
-      >
-        {icon && <span className="text-[var(--muted-foreground)]">{icon}</span>}
-        <span className="flex-1 text-xs font-semibold">{label}</span>
-        {count != null && count > 0 && (
-          <span className="rounded-full bg-[var(--primary)]/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-[var(--primary)]">
-            {count}
-          </span>
-        )}
-        {help && (
-          <span onClick={(e) => e.stopPropagation()}>
-            <HelpTooltip text={help} side="left" />
-          </span>
-        )}
-        <ChevronDown
-          size="0.75rem"
-          className={cn("text-[var(--muted-foreground)] transition-transform", open && "rotate-180")}
-        />
-      </div>
-      {open && <div className="px-6 py-3">{children}</div>}
-    </div>
-  );
-}
-
 // ── Agent category sub-section (collapsible within Agents section) ──
 function AgentCategorySection({
   label,
@@ -6641,56 +5424,6 @@ function AgentCategorySection({
           {children}
         </div>
       )}
-    </div>
-  );
-}
-
-// ── Picker dropdown (for adding characters / lorebooks) ──
-function PickerDropdown({
-  search,
-  onSearchChange,
-  onClose,
-  placeholder,
-  children,
-  footer,
-}: {
-  search: string;
-  onSearchChange: (v: string) => void;
-  onClose: () => void;
-  placeholder: string;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [onClose]);
-
-  return (
-    <div ref={ref} className="mt-2 rounded-lg ring-1 ring-[var(--border)] bg-[var(--card)] overflow-hidden">
-      {/* Search */}
-      <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2">
-        <Search size="0.75rem" className="text-[var(--muted-foreground)]" />
-        <input
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder={placeholder}
-          autoFocus
-          className="flex-1 bg-transparent text-xs outline-none placeholder:text-[var(--muted-foreground)]"
-        />
-        <button onClick={onClose} className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
-          <X size="0.75rem" />
-        </button>
-      </div>
-      {/* List */}
-      <div className="max-h-48 overflow-y-auto">{children}</div>
-      {/* Footer — always visible below the scrollable list */}
-      {footer}
     </div>
   );
 }

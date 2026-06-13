@@ -287,6 +287,7 @@ import {
 import { characterKeys } from "./use-characters";
 import { connectionKeys } from "./use-connections";
 import { lorebookKeys } from "./use-lorebooks";
+import { presetKeys } from "./use-presets";
 import { playNotificationPing } from "../lib/notification-sound";
 import { stripGmTagsKeepReadables } from "../lib/game-tag-parser";
 import type { APIConnection, Chat, GameMap, Message } from "@marinara-engine/shared";
@@ -1761,6 +1762,12 @@ export function useGenerate() {
                   icon: "📚",
                 });
                 qc.invalidateQueries({ queryKey: lorebookKeys.all });
+              } else if (actionData.action === "preset_created") {
+                const sectionCount = Number(actionData.sectionCount ?? 0);
+                toast(`Created preset: ${actionData.name}${sectionCount > 0 ? ` (${sectionCount} sections)` : ""}`, {
+                  icon: "🧩",
+                });
+                qc.invalidateQueries({ queryKey: presetKeys.all });
               } else if (actionData.action === "chat_created") {
                 toast(`Started ${actionData.mode} chat with ${actionData.characterName}`, { icon: "💬" });
                 qc.invalidateQueries({ queryKey: ["chats"] });

@@ -273,7 +273,13 @@ function isSpotifyRestrictionError(error: unknown): boolean {
   return /restriction\s+violated/i.test(message);
 }
 
-export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
+export function SpotifyMiniPlayer({
+  mobile = false,
+  forceFloating = false,
+}: {
+  mobile?: boolean;
+  forceFloating?: boolean;
+}) {
   const qc = useQueryClient();
   const enabled = useUIStore((s) => s.spotifyPlayerEnabled);
   const openRightPanel = useUIStore((s) => s.openRightPanel);
@@ -298,6 +304,8 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
     originX: number;
     originY: number;
   } | null>(null);
+  const floating = mobile || forceFloating;
+  const wasForceFloatingRef = useRef(false);
 
   const playerQuery = useQuery({
     queryKey: spotifyKeys.player,
@@ -347,6 +355,11 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
   const volumeControlUnsupported =
     !!controlDevice &&
     (typeof deviceVolume !== "number" || (!!volumeDeviceKey && volumeUnsupportedDeviceKey === volumeDeviceKey));
+
+  useEffect(() => {
+    if (forceFloating && !wasForceFloatingRef.current) setCollapsed(true);
+    wasForceFloatingRef.current = forceFloating;
+  }, [forceFloating, setCollapsed]);
 
   useEffect(() => {
     if (!controlDevice) {
@@ -675,7 +688,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
 
   const startDrag = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!mobile) return;
+      if (!floating) return;
       dragRef.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -685,7 +698,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
       };
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [mobile, mobilePosition.x, mobilePosition.y],
+    [floating, mobilePosition.x, mobilePosition.y],
   );
 
   const moveDrag = useCallback(
@@ -708,9 +721,9 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
       if (!drag || drag.pointerId !== event.pointerId) return;
       const moved = Math.abs(event.clientX - drag.startX) + Math.abs(event.clientY - drag.startY);
       dragRef.current = null;
-      if (moved < 6 && mobile && collapsed) setCollapsed(false);
+      if (moved < 6 && floating && collapsed) setCollapsed(false);
     },
-    [collapsed, mobile, setCollapsed],
+    [collapsed, floating, setCollapsed],
   );
 
   const title = item?.name ?? (playerQuery.isError ? "Spotify not connected" : "Spotify");
@@ -942,10 +955,10 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
 
   if (!enabled) return null;
 
-  if (mobile) {
+  if (floating) {
     return (
       <div
-        className="fixed z-[60] md:hidden"
+        className={cn("fixed z-[60]", mobile && "md:hidden")}
         style={mobileWidgetStyle}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
@@ -1003,8 +1016,26 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
 
 export function SpotifyMobileWidget() {
   const enabled = useUIStore((s) => s.spotifyPlayerEnabled);
+  const isMobileViewport = useMediaQuery("(max-width: 767px)");
 
-  if (!enabled) return null;
+  if (!enabled || !isMobileViewport) return null;
 
   return <SpotifyMiniPlayer mobile />;
+}
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() =>
+    typeof window === "undefined" ? false : window.matchMedia(query).matches,
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+
+  return matches;
 }

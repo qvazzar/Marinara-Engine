@@ -2291,34 +2291,9 @@ summary[class*="cursor-pointer"],
     font-size: 0.625rem;
   }
 
-  .char-editor-body {
-    flex-direction: column !important;
-  }
-  .char-editor-tab-rail {
-    width: 100% !important;
-    flex-direction: row !important;
-    overflow-x: auto !important;
-    border-right: none !important;
-    border-bottom: 1px solid var(--border) !important;
-    padding: 0.25rem !important;
-  }
-  .char-editor-tab-rail button {
-    white-space: nowrap;
-  }
-  .char-editor-content {
-    padding: 1em !important;
-  }
-
   .quick-start-cards {
     flex-wrap: wrap;
     justify-content: center;
-  }
-
-  .agent-editor-body {
-    padding: 1em !important;
-  }
-  .agent-editor-body .phase-grid {
-    grid-template-columns: 1fr !important;
   }
 
   .chat-input-container {
@@ -3287,6 +3262,12 @@ summary[class*="cursor-pointer"],
   display: grid;
   place-items: end center;
   isolation: isolate;
+}
+
+.home-professor-mari-chat[data-paused="true"] *,
+.home-professor-mari-chat[data-paused="true"] *::before,
+.home-professor-mari-chat[data-paused="true"] *::after {
+  animation-play-state: paused !important;
 }
 
 .mari-professor-pixel-scene::before {

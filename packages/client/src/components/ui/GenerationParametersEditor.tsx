@@ -25,6 +25,7 @@ const REASONING_LEVELS = [null, "low", "medium", "high", "xhigh", "maximum"] as 
 const VERBOSITY_LEVELS = [null, "low", "medium", "high"] as const;
 const OPENROUTER_SERVICE_TIERS = [null, "flex", "priority"] as const;
 const MAX_GENERATION_OUTPUT_TOKENS = 128000;
+const THINKING_TAG_CONTENT_PLACEHOLDER = "{{thinking}}";
 
 export const CHAT_PARAMETER_DEFAULTS: EditableGenerationParameters = {
   temperature: 1,
@@ -210,7 +211,7 @@ export function GenerationParametersFields({
             onChange={(e) => set("assistantPrefill", e.target.value)}
             rows={3}
             className="mt-1 w-full resize-y rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/60 focus:outline-none focus:ring-[var(--ring)]"
-            placeholder="e.g. <thinking>\n"
+            placeholder="<thinking>"
           />
         </div>
         <ThinkingTagsInput
@@ -339,7 +340,7 @@ function ThinkingTagsInput({
       <span className="inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
         Thinking Tags
         <HelpTooltip
-          text="Optional custom opening and closing markers for models that inline reasoning. Built-in think, thinking, thought, pipe, channel, and bracket pairs are already recognized."
+          text="{{thinking}} marks the hidden reasoning slot and will be replaced by any content between the specified tags. Built-in think, thinking, thought, pipe, channel, and bracket pairs are already recognized."
           size="0.625rem"
         />
       </span>
@@ -362,13 +363,14 @@ function ThinkingTagsInput({
         rows={2}
         spellCheck={false}
         className="mt-1 w-full resize-y rounded-lg bg-[var(--secondary)] px-3 py-2 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/60 focus:outline-none focus:ring-[var(--ring)]"
-        placeholder={focused ? "" : "[THINK] => [/THINK]"}
+        placeholder={focused ? "" : `<thinking>${THINKING_TAG_CONTENT_PLACEHOLDER}</thinking>`}
       />
       {error ? (
         <p className="mt-1 text-[0.5625rem] text-amber-500">{error}</p>
       ) : (
         <p className="mt-1 text-[0.5625rem] text-[var(--muted-foreground)]/70">
-          One pair per line: opening marker =&gt; closing marker.
+          One wrapper per line. {THINKING_TAG_CONTENT_PLACEHOLDER} will be replaced by any content between the
+          specified tags.
         </p>
       )}
     </div>
@@ -377,7 +379,7 @@ function ThinkingTagsInput({
 
 function stringifyThinkingTags(value: ThinkingTagPair[] | null | undefined): string {
   const normalized = normalizeThinkingTagPairs(value);
-  return normalized.map((pair) => `${pair.open} => ${pair.close}`).join("\n");
+  return normalized.map((pair) => `${pair.open}${THINKING_TAG_CONTENT_PLACEHOLDER}${pair.close}`).join("\n");
 }
 
 function parseThinkingTagsDraft(draft: string): { ok: true; value: ThinkingTagPair[] } | { ok: false; error: string } {
@@ -389,14 +391,17 @@ function parseThinkingTagsDraft(draft: string): { ok: true; value: ThinkingTagPa
 
   const pairs: ThinkingTagPair[] = [];
   for (const line of lines) {
-    const separatorIndex = line.indexOf("=>");
+    const separatorIndex = line.indexOf(THINKING_TAG_CONTENT_PLACEHOLDER);
     if (separatorIndex < 0) {
-      return { ok: false, error: "Use opening marker => closing marker on each line." };
+      return { ok: false, error: `Use ${THINKING_TAG_CONTENT_PLACEHOLDER} between opening and closing tags.` };
+    }
+    if (line.indexOf(THINKING_TAG_CONTENT_PLACEHOLDER, separatorIndex + THINKING_TAG_CONTENT_PLACEHOLDER.length) >= 0) {
+      return { ok: false, error: `Use ${THINKING_TAG_CONTENT_PLACEHOLDER} only once per line.` };
     }
     const open = line.slice(0, separatorIndex).trim();
-    const close = line.slice(separatorIndex + 2).trim();
+    const close = line.slice(separatorIndex + THINKING_TAG_CONTENT_PLACEHOLDER.length).trim();
     if (!open || !close) {
-      return { ok: false, error: "Both opening and closing markers are required." };
+      return { ok: false, error: `Both opening and closing tags are required around ${THINKING_TAG_CONTENT_PLACEHOLDER}.` };
     }
     pairs.push({ open, close });
   }
