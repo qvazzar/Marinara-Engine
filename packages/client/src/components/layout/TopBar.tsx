@@ -8,6 +8,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { cn } from "../../lib/utils";
 import { SpotifyMiniPlayer } from "../spotify/SpotifyMiniPlayer";
+import { YouTubePlayer } from "../chat/YouTubePlayer";
 
 const RIGHT_PANEL_BUTTONS = [
   { panel: "lorebooks" as const, icon: BookOpen, label: "Lorebooks", color: "from-amber-400 to-orange-500" },
@@ -117,6 +118,7 @@ export function TopBar() {
           </button>
         </div>
         {spotifyDesktopViewport && <SpotifyMiniPlayer forceFloating={spotifyUseFloatingFallback} />}
+        <YouTubePlayer />
       </div>
 
       {/* Right section - Panel toggles */}

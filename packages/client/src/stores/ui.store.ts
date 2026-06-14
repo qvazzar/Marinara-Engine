@@ -379,6 +379,8 @@ interface UIState {
   chibiProfessorMariEnabled: boolean;
   /** When true, show the global Spotify mini player in the app chrome. */
   spotifyPlayerEnabled: boolean;
+  /** When true, show the YouTube DJ mini player when the agent plays a track. */
+  youtubePlayerEnabled: boolean;
   /** Mobile Spotify widget collapsed state. */
   spotifyMobileWidgetCollapsed: boolean;
   /** Mobile Spotify widget position in viewport pixels. */
@@ -604,6 +606,7 @@ interface UIState {
   setSpeechToTextEnabled: (v: boolean) => void;
   setChibiProfessorMariEnabled: (v: boolean) => void;
   setSpotifyPlayerEnabled: (v: boolean) => void;
+  setYoutubePlayerEnabled: (v: boolean) => void;
   setSpotifyMobileWidgetCollapsed: (v: boolean) => void;
   setSpotifyMobileWidgetPosition: (position: FloatingWidgetPosition) => void;
   setIntuitiveSwipeNavigation: (v: boolean) => void;
@@ -750,6 +753,7 @@ export function pickSyncedSettings(state: UIState) {
     speechToTextEnabled: state.speechToTextEnabled,
     chibiProfessorMariEnabled: state.chibiProfessorMariEnabled,
     spotifyPlayerEnabled: state.spotifyPlayerEnabled,
+    youtubePlayerEnabled: state.youtubePlayerEnabled,
     spotifyMobileWidgetCollapsed: state.spotifyMobileWidgetCollapsed,
     spotifyMobileWidgetPosition: state.spotifyMobileWidgetPosition,
     intuitiveSwipeNavigation: state.intuitiveSwipeNavigation,
@@ -882,6 +886,7 @@ export const useUIStore = create<UIState>()(
       speechToTextEnabled: false,
       chibiProfessorMariEnabled: true,
       spotifyPlayerEnabled: false,
+      youtubePlayerEnabled: true,
       spotifyMobileWidgetCollapsed: true,
       spotifyMobileWidgetPosition: { x: 16, y: 96 },
       intuitiveSwipeNavigation: false,
@@ -1342,6 +1347,7 @@ export const useUIStore = create<UIState>()(
       setSpeechToTextEnabled: (v) => set({ speechToTextEnabled: v }),
       setChibiProfessorMariEnabled: (v) => set({ chibiProfessorMariEnabled: v }),
       setSpotifyPlayerEnabled: (v) => set({ spotifyPlayerEnabled: v }),
+      setYoutubePlayerEnabled: (v) => set({ youtubePlayerEnabled: v }),
       setSpotifyMobileWidgetCollapsed: (v) => set({ spotifyMobileWidgetCollapsed: v }),
       setSpotifyMobileWidgetPosition: (position) =>
         set({
@@ -1463,7 +1469,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 43,
+      version: 44,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1810,8 +1816,11 @@ export const useUIStore = create<UIState>()(
         if (version <= 41 && persisted.gameNotificationSound === undefined) {
           persisted.gameNotificationSound = true;
         }
-        // v42 -> v43: user-selectable Tracker panel background color.
-        if (version <= 42) {
+        // v42 -> v44: reconcile parallel v43 UI preference additions.
+        if (version <= 43 && persisted.youtubePlayerEnabled === undefined) {
+          persisted.youtubePlayerEnabled = true;
+        }
+        if (version <= 43) {
           persisted.trackerPanelBackgroundColor = normalizeTrackerPanelBackgroundColor(
             persisted.trackerPanelBackgroundColor,
           );
@@ -1883,6 +1892,7 @@ export const useUIStore = create<UIState>()(
         speechToTextEnabled: state.speechToTextEnabled,
         chibiProfessorMariEnabled: state.chibiProfessorMariEnabled,
         spotifyPlayerEnabled: state.spotifyPlayerEnabled,
+        youtubePlayerEnabled: state.youtubePlayerEnabled,
         spotifyMobileWidgetCollapsed: state.spotifyMobileWidgetCollapsed,
         spotifyMobileWidgetPosition: state.spotifyMobileWidgetPosition,
         intuitiveSwipeNavigation: state.intuitiveSwipeNavigation,

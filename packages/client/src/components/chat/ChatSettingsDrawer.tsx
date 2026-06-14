@@ -468,7 +468,10 @@ export function ChatSettingsDrawer({
     typeof metadata.gameSpotifyPlaylistId === "string" ? metadata.gameSpotifyPlaylistId : "";
   const gameSpotifyArtist = typeof metadata.gameSpotifyArtist === "string" ? metadata.gameSpotifyArtist : "";
   const gameAgentFeatureCount =
-    (metadata.enableAgents ? 1 : 0) + (gameLorebookKeeperEnabled ? 1 : 0) + (gameUseSpotifyMusic ? 1 : 0);
+    (metadata.enableAgents ? 1 : 0) +
+    (gameLorebookKeeperEnabled ? 1 : 0) +
+    (gameUseSpotifyMusic ? 1 : 0) +
+    (activeAgentIds.includes("youtube") ? 1 : 0);
   const spriteCharacterIds: string[] = Array.isArray(metadata.spriteCharacterIds) ? metadata.spriteCharacterIds : [];
   const spriteDisplayModes = normalizeSpriteDisplayModes(metadata.spriteDisplayModes);
   const spritePosition: "left" | "right" = metadata.spritePosition === "right" ? "right" : "left";
@@ -1440,7 +1443,8 @@ export function ChatSettingsDrawer({
         enableAgents: true,
         gameUseSpotifyMusic: true,
         gameSpotifySourceType,
-        activeAgentIds: Array.from(new Set([...activeAgentIds, "spotify"])),
+        // Mutually exclusive with YouTube DJ — only one music source at a time.
+        activeAgentIds: Array.from(new Set([...activeAgentIds.filter((id) => id !== "youtube"), "spotify"])),
       });
     } catch (error) {
       await showAlertDialog({
@@ -1452,6 +1456,62 @@ export function ChatSettingsDrawer({
       });
     }
   }, [activeAgentIds, chat.id, ensureSpotifyAgent, gameSpotifySourceType, gameUseSpotifyMusic, updateMeta]);
+
+  const ensureYoutubeAgent = useCallback(async () => {
+    const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === "youtube");
+    if (!builtInMeta) throw new Error("YouTube DJ agent metadata is missing.");
+    const config = agentConfigsByType.get("youtube") ?? null;
+    const nextSettings: Record<string, unknown> = {
+      ...getDefaultBuiltInAgentSettings("youtube"),
+      ...parseAgentSettings(config?.settings),
+      enabledTools: DEFAULT_AGENT_TOOLS.youtube ?? [],
+    };
+
+    if (config) {
+      await updateAgentConfig.mutateAsync({ id: config.id, enabled: true, settings: nextSettings });
+      return;
+    }
+
+    await createAgent.mutateAsync({
+      type: builtInMeta.id,
+      name: builtInMeta.name,
+      description: builtInMeta.description,
+      phase: builtInMeta.phase,
+      enabled: true,
+      connectionId: null,
+      promptTemplate: "",
+      settings: nextSettings,
+    });
+  }, [agentConfigsByType, createAgent, updateAgentConfig]);
+
+  const toggleGameYouTubeMusic = useCallback(async () => {
+    if (activeAgentIds.includes("youtube")) {
+      await updateMeta.mutateAsync({
+        id: chat.id,
+        activeAgentIds: activeAgentIds.filter((id) => id !== "youtube"),
+      });
+      return;
+    }
+
+    try {
+      await ensureYoutubeAgent();
+      await updateMeta.mutateAsync({
+        id: chat.id,
+        enableAgents: true,
+        // Mutually exclusive with Spotify DJ — only one music source at a time.
+        gameUseSpotifyMusic: false,
+        activeAgentIds: Array.from(new Set([...activeAgentIds.filter((id) => id !== "spotify"), "youtube"])),
+      });
+    } catch (error) {
+      await showAlertDialog({
+        title: "Couldn't Enable YouTube DJ",
+        message:
+          error instanceof Error
+            ? error.message
+            : "YouTube DJ could not be enabled for this game. Check the YouTube agent setup and try again.",
+      });
+    }
+  }, [activeAgentIds, chat.id, ensureYoutubeAgent, updateMeta]);
 
   const toggleGameLorebookKeeper = useCallback(() => {
     const nextActiveAgentIds = activeAgentIds.filter((id) => id !== "lorebook-keeper");
@@ -3663,6 +3723,40 @@ export function ChatSettingsDrawer({
                           className={cn(
                             "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
                             gameUseSpotifyMusic && "translate-x-3.5",
+                          )}
+                        />
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void toggleGameYouTubeMusic()}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+                        activeAgentIds.includes("youtube")
+                          ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                          : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+                      )}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 text-xs font-medium">
+                          <Music2 size="0.75rem" className="text-[var(--primary)]" />
+                          <span>YouTube DJ Music</span>
+                        </div>
+                        <p className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+                          Use YouTube (in-app player) instead of the built-in Game Mode music library.
+                        </p>
+                      </div>
+                      <div
+                        className={cn(
+                          "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                          activeAgentIds.includes("youtube") ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                            activeAgentIds.includes("youtube") && "translate-x-3.5",
                           )}
                         />
                       </div>

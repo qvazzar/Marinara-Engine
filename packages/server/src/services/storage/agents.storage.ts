@@ -158,6 +158,8 @@ export function createAgentsStorage(db: DB) {
 
     getByType,
 
+    ensureBuiltinConfig,
+
     async create(input: CreateAgentConfigInput) {
       const builtInType = isBuiltInAgentType(input.type);
       if (builtInType) {

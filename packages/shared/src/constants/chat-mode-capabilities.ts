@@ -183,7 +183,8 @@ export const CHAT_MODE_CAPABILITIES: Record<ChatMode, ChatModeCapabilities> = {
     agentPolicy: {
       kind: "allowlist",
       defaultAgentIds: GAME_AGENT_IDS,
-      allowedAgentIds: GAME_AGENT_IDS,
+      // YouTube DJ is allowed (opt-in via the game music toggle) but not on by default.
+      allowedAgentIds: [...GAME_AGENT_IDS, "youtube"],
     },
     sharedSections: SHARED_CHAT_SETTINGS_SECTIONS,
     modeSections: ["extra-prompt", "conversation-notes"],

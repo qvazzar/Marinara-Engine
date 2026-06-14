@@ -446,6 +446,10 @@ export function AgentEditor() {
   const [spotifyPasteSubmitting, setSpotifyPasteSubmitting] = useState(false);
   const spotifyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const spotifyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [localYoutubeApiKey, setLocalYoutubeApiKey] = useState("");
+  const [youtubeConfigured, setYoutubeConfigured] = useState(false);
+  const [youtubeSaving, setYoutubeSaving] = useState(false);
+  const [youtubeError, setYoutubeError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const setEditorDirty = useUIStore((s) => s.setEditorDirty);
   useEffect(() => {
@@ -595,6 +599,9 @@ export function AgentEditor() {
   // Fetch Spotify connection status when viewing a Spotify agent
   const isSpotifyAgent = agentDetailId === "spotify" || dbConfig?.type === "spotify";
 
+  // YouTube DJ agent — free Data API key, in-app embedded player
+  const isYoutubeAgent = agentDetailId === "youtube" || dbConfig?.type === "youtube";
+
   // Lorebook Keeper agent — run interval setting
   const isLorebookKeeperAgent = agentDetailId === "lorebook-keeper" || dbConfig?.type === "lorebook-keeper";
 
@@ -673,6 +680,26 @@ export function AgentEditor() {
       cancelled = true;
     };
   }, [isSpotifyAgent, dbConfig?.id]);
+
+  // Fetch YouTube DJ key-configured status when viewing a YouTube agent
+  useEffect(() => {
+    if (!isYoutubeAgent || !dbConfig?.id) {
+      setYoutubeConfigured(false);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/youtube/status?agentId=${encodeURIComponent(dbConfig.id)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled) setYoutubeConfigured(data.configured === true);
+      })
+      .catch(() => {
+        if (!cancelled) setYoutubeConfigured(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isYoutubeAgent, dbConfig?.id]);
 
   // Clean up Spotify polling timers on unmount
   useEffect(() => {
@@ -753,7 +780,15 @@ export function AgentEditor() {
     // Spotify tokens live in settings rather than their own column.
     const currentSettings: Record<string, unknown> = parseAgentSettingsRecord(dbConfig?.settings);
     const preservedSpotifyFields: Record<string, unknown> = {};
-    for (const key of ["spotifyAccessToken", "spotifyRefreshToken", "spotifyExpiresAt", "spotifyScope"]) {
+    for (const key of [
+      "spotifyAccessToken",
+      "spotifyRefreshToken",
+      "spotifyExpiresAt",
+      "spotifyScope",
+      // YouTube DJ key is encrypted server-side and not exposed by the form — preserve it
+      // so a normal agent Save (e.g. toggling Enabled) doesn't wipe the stored key.
+      "youtubeApiKey",
+    ]) {
       if (currentSettings[key] !== undefined) preservedSpotifyFields[key] = currentSettings[key];
     }
 
@@ -2337,6 +2372,123 @@ export function AgentEditor() {
                     machine over plain HTTP, register the loopback URI anyway and use the paste-back fallback that
                     appears under the Connect button — or set{" "}
                     <code className="text-white/40">SPOTIFY_REDIRECT_URI</code> to your HTTPS URL.
+                  </p>
+                </div>
+              </div>
+            </FieldGroup>
+          )}
+
+          {/* ── YouTube DJ Settings (only shown for YouTube agent) ── */}
+          {isYoutubeAgent && (
+            <FieldGroup
+              label="YouTube DJ"
+              icon={<Music size="0.875rem" className="text-red-400" />}
+              help="Plays mood-matched music from YouTube in an embedded in-app player. Needs a free YouTube Data API key — no Premium, no account login."
+            >
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[0.6875rem] font-medium text-white/60 mb-1">YouTube Data API Key</label>
+                  <input
+                    type="password"
+                    value={localYoutubeApiKey}
+                    onChange={(e) => {
+                      setLocalYoutubeApiKey(e.target.value);
+                      setYoutubeError(null);
+                    }}
+                    placeholder={youtubeConfigured ? "•••••••• key configured — paste a new one to replace" : "Paste your YouTube Data API key (AIza…)"}
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-red-500/50 focus:ring-1 focus:ring-red-500/20 font-mono"
+                  />
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={youtubeSaving || !localYoutubeApiKey.trim()}
+                    onClick={async () => {
+                      setYoutubeSaving(true);
+                      setYoutubeError(null);
+                      try {
+                        // agentId is optional — the server creates the built-in YouTube DJ
+                        // config if it doesn't exist yet, so the user never has to hit the
+                        // top-right Save first.
+                        const res = await fetch("/api/youtube/save-key", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ agentId: dbConfig?.id, apiKey: localYoutubeApiKey.trim() }),
+                        });
+                        if (!res.ok) {
+                          const data = await res.json().catch(() => ({}));
+                          throw new Error(data.error ?? `Save failed (${res.status})`);
+                        }
+                        setYoutubeConfigured(true);
+                        setLocalYoutubeApiKey("");
+                        // Refresh the agent list so dbConfig (the new/updated config row) populates.
+                        qc.invalidateQueries({ queryKey: agentKeys.all });
+                      } catch (err) {
+                        setYoutubeError(err instanceof Error ? err.message : "Save failed");
+                      } finally {
+                        setYoutubeSaving(false);
+                      }
+                    }}
+                    className="rounded-lg bg-red-500/15 px-3 py-2 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {youtubeSaving ? "Saving…" : youtubeConfigured ? "Update Key" : "Save Key"}
+                  </button>
+
+                  {youtubeConfigured && (
+                    <>
+                      <span className="flex items-center gap-1.5 rounded-lg bg-green-500/10 px-3 py-2 text-xs font-medium text-green-400">
+                        <Check size="0.75rem" />
+                        API key configured
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!dbConfig?.id) return;
+                          await fetch("/api/youtube/disconnect", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ agentId: dbConfig.id }),
+                          });
+                          setYoutubeConfigured(false);
+                        }}
+                        className="text-xs text-white/50 hover:text-red-400"
+                      >
+                        Remove
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {youtubeError && <p className="text-[0.6875rem] text-red-400">{youtubeError}</p>}
+
+                <div className="rounded-lg bg-white/5 p-3 text-[0.6875rem] text-white/50 leading-relaxed">
+                  <p className="mb-1 font-medium text-white/60">How to get a free key:</p>
+                  <ol className="ml-4 list-decimal space-y-1">
+                    <li>
+                      Open the{" "}
+                      <a
+                        href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-red-400 hover:underline inline-flex items-center gap-0.5"
+                      >
+                        Google Cloud Console <ExternalLink size="0.5625rem" />
+                      </a>{" "}
+                      and create (or pick) a project.
+                    </li>
+                    <li>Enable the <strong>YouTube Data API v3</strong>.</li>
+                    <li>
+                      Go to <strong>Credentials → Create credentials → API key</strong>, then paste it above.
+                    </li>
+                    <li>
+                      Leave the key <strong>unrestricted</strong>, or restrict it only by <em>API</em> (YouTube Data API
+                      v3) — not by HTTP referrer. Search runs server-side, so a referrer restriction would block it.
+                    </li>
+                  </ol>
+                  <p className="mt-1 text-[0.625rem] text-white/30">
+                    The free quota (~100 searches/day) is plenty for a personal DJ. Enable the agent, then it picks music
+                    as the scene&apos;s mood shifts.
                   </p>
                 </div>
               </div>

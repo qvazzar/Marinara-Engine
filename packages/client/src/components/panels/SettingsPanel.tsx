@@ -1146,6 +1146,8 @@ function GeneralSettings() {
   const setChibiProfessorMariEnabled = useUIStore((s) => s.setChibiProfessorMariEnabled);
   const spotifyPlayerEnabled = useUIStore((s) => s.spotifyPlayerEnabled);
   const setSpotifyPlayerEnabled = useUIStore((s) => s.setSpotifyPlayerEnabled);
+  const youtubePlayerEnabled = useUIStore((s) => s.youtubePlayerEnabled);
+  const setYoutubePlayerEnabled = useUIStore((s) => s.setYoutubePlayerEnabled);
   const intuitiveSwipeNavigation = useUIStore((s) => s.intuitiveSwipeNavigation);
   const setIntuitiveSwipeNavigation = useUIStore((s) => s.setIntuitiveSwipeNavigation);
   const intuitiveSwipeRerollLatest = useUIStore((s) => s.intuitiveSwipeRerollLatest);
@@ -1198,6 +1200,12 @@ function GeneralSettings() {
             checked={spotifyPlayerEnabled}
             onChange={setSpotifyPlayerEnabled}
             help="Shows a compact Spotify player in the top bar on desktop and as a draggable floating widget on mobile. Requires the Spotify DJ agent to be connected."
+          />
+          <ToggleSetting
+            label="YouTube DJ mini player"
+            checked={youtubePlayerEnabled}
+            onChange={setYoutubePlayerEnabled}
+            help="Shows a floating YouTube player when the YouTube DJ agent plays a track. When off, the player never appears and no music plays, but the agent can still pick tracks."
           />
           <ToggleSetting
             label="Mini Mari surprise visits"

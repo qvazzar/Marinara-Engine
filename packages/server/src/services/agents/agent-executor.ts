@@ -1586,6 +1586,12 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
     parts.push(`</spotify_dj_constraints>`);
   }
 
+  if (agentTypes.includes("youtube") && context.memory._youtubeDjConstraints) {
+    parts.push(`<youtube_dj_constraints>`);
+    parts.push(JSON.stringify(context.memory._youtubeDjConstraints));
+    parts.push(`</youtube_dj_constraints>`);
+  }
+
   if (agentTypes.includes("lorebook-keeper") && context.memory._existingLorebookEntries) {
     const rawEntries = context.memory._existingLorebookEntries as Array<
       string | { id?: string; name?: string; content?: string; keys?: string[]; locked?: boolean }
@@ -1704,6 +1710,7 @@ const AGENT_RESULT_TYPE_MAP: Record<string, AgentResultType> = {
   "custom-tracker": "custom_tracker_update",
   "chat-summary": "chat_summary",
   spotify: "spotify_control",
+  youtube: "youtube_control",
   editor: "text_rewrite",
   "knowledge-retrieval": "context_injection",
   haptic: "haptic_command",
@@ -1730,6 +1737,7 @@ const AGENT_RESULT_TYPES = new Set<AgentResultType>([
   "custom_tracker_update",
   "chat_summary",
   "spotify_control",
+  "youtube_control",
   "haptic_command",
   "cyoa_choices",
   "secret_plot",
@@ -1788,6 +1796,7 @@ const JSON_AGENTS = new Set([
   "custom-tracker",
   "chat-summary",
   "spotify",
+  "youtube",
   "editor",
   "haptic",
   "cyoa",

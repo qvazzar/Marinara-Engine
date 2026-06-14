@@ -810,6 +810,8 @@ export function useGenerate() {
   const addEchoMessage = useAgentStore((s) => s.addEchoMessage);
   const setCyoaChoices = useAgentStore((s) => s.setCyoaChoices);
   const clearCyoaChoices = useAgentStore((s) => s.clearCyoaChoices);
+  const setYoutubePlay = useAgentStore((s) => s.setYoutubePlay);
+  const setYoutubeVolume = useAgentStore((s) => s.setYoutubeVolume);
   const enqueuePendingCardUpdate = useAgentStore((s) => s.enqueuePendingCardUpdate);
   const setFailedAgentFailures = useAgentStore((s) => s.setFailedAgentFailures);
   const clearFailedAgentTypes = useAgentStore((s) => s.clearFailedAgentTypes);
@@ -1351,6 +1353,18 @@ export function useGenerate() {
                   const choices = (d.choices as Array<{ label: string; text: string }>) ?? [];
                   if (choices.length > 0) {
                     setCyoaChoices(choices, params.chatId);
+                  }
+                }
+
+                // Drive the embedded YouTube DJ player from the agent's intent.
+                if (result.agentType === "youtube") {
+                  const d = result.data as Record<string, unknown>;
+                  const action = d.action as string;
+                  if (typeof d.volume === "number" && Number.isFinite(d.volume)) {
+                    setYoutubeVolume(Math.max(0, Math.min(100, d.volume)));
+                  }
+                  if (action === "play" && typeof d.searchQuery === "string" && d.searchQuery.trim()) {
+                    setYoutubePlay({ searchQuery: d.searchQuery.trim(), mood: (d.mood as string) ?? "" });
                   }
                 }
               }
@@ -2148,6 +2162,8 @@ export function useGenerate() {
       addEchoMessage,
       setCyoaChoices,
       clearCyoaChoices,
+      setYoutubePlay,
+      setYoutubeVolume,
       enqueuePendingCardUpdate,
       clearFailedAgentTypes,
       setFailedAgentFailures,
@@ -2278,6 +2294,17 @@ export function useGenerate() {
                   const d = result.data as Record<string, unknown>;
                   const choices = (d.choices as Array<{ label: string; text: string }>) ?? [];
                   if (isActiveChat()) setCyoaChoices(choices, chatId);
+                }
+                // YouTube DJ re-pick: drive the in-app player with the fresh intent.
+                if (result.agentType === "youtube" && isActiveChat()) {
+                  const d = result.data as Record<string, unknown>;
+                  const action = d.action as string;
+                  if (typeof d.volume === "number" && Number.isFinite(d.volume)) {
+                    setYoutubeVolume(Math.max(0, Math.min(100, d.volume)));
+                  }
+                  if (action === "play" && typeof d.searchQuery === "string" && d.searchQuery.trim()) {
+                    setYoutubePlay({ searchQuery: d.searchQuery.trim(), mood: (d.mood as string) ?? "" });
+                  }
                 }
                 if (result.resultType === "background_change") {
                   const bg = result.data as { chosen?: string | null };
@@ -2431,6 +2458,8 @@ export function useGenerate() {
       clearFailedAgentTypes,
       clearThoughtBubbles,
       setCyoaChoices,
+      setYoutubePlay,
+      setYoutubeVolume,
       setFailedAgentFailures,
       setProcessing,
       setGameState,
@@ -2588,6 +2617,21 @@ function formatAgentBubble(agentType: string, agentName: string, data: unknown):
       }
       if (action === "volume") {
         return `🔊 Volume → ${d.volume}%${mood ? ` (${mood})` : ""}`;
+      }
+      return mood ? `🎵 ${mood}` : null;
+    }
+
+    case "youtube": {
+      const error = typeof d.error === "string" ? d.error.trim() : "";
+      if (error) return `🎵 YouTube DJ could not run: ${error}`;
+      if (d.parseError === true) return "🎵 YouTube DJ ran, but did not return a playable pick";
+      const action = d.action as string;
+      const mood = (d.mood as string) ?? "";
+      if (action === "none") return mood ? `🎵 Keeping current track — ${mood}` : "🎵 Keeping current track";
+      if (action === "volume") return `🔊 Volume → ${d.volume}%${mood ? ` (${mood})` : ""}`;
+      if (action === "play") {
+        const query = typeof d.searchQuery === "string" ? d.searchQuery.trim() : "";
+        return `🎵 ${query || "Now playing"}${mood ? ` — ${mood}` : ""}`;
       }
       return mood ? `🎵 ${mood}` : null;
     }

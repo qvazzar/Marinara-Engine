@@ -105,6 +105,10 @@ interface AgentState {
     text: string;
   }>;
   cyoaChoicesChatId: string | null;
+  /** Latest YouTube DJ "play" intent. nonce bumps each pick so the player reacts. */
+  youtubePlay: { searchQuery: string; mood: string; nonce: number } | null;
+  /** Latest YouTube DJ volume directive (0-100), independent of track changes. */
+  youtubeVolume: number | null;
   pendingCardUpdates: PendingCardUpdate[];
 
   // Actions
@@ -127,6 +131,9 @@ interface AgentState {
   setEchoLoadedChatId: (chatId: string | null) => void;
   setCyoaChoices: (choices: Array<{ label: string; text: string }>, chatId?: string | null) => void;
   clearCyoaChoices: () => void;
+  setYoutubePlay: (play: { searchQuery: string; mood: string }) => void;
+  setYoutubeVolume: (volume: number | null) => void;
+  clearYoutube: () => void;
   enqueuePendingCardUpdate: (entry: PendingCardUpdate) => void;
   dismissPendingCardUpdate: (id: string) => void;
   clearPendingCardUpdates: () => void;
@@ -147,6 +154,8 @@ export const useAgentStore = create<AgentState>((set) => ({
   echoLoadedChatId: null,
   cyoaChoices: [],
   cyoaChoicesChatId: null,
+  youtubePlay: null,
+  youtubeVolume: null,
   pendingCardUpdates: [],
 
   setActiveAgents: (agents) => set({ activeAgents: agents }),
@@ -219,6 +228,11 @@ export const useAgentStore = create<AgentState>((set) => ({
   setCyoaChoices: (choices, chatId = null) => set({ cyoaChoices: choices, cyoaChoicesChatId: chatId }),
   clearCyoaChoices: () => set({ cyoaChoices: [], cyoaChoicesChatId: null }),
 
+  setYoutubePlay: ({ searchQuery, mood }) =>
+    set((s) => ({ youtubePlay: { searchQuery, mood, nonce: (s.youtubePlay?.nonce ?? 0) + 1 } })),
+  setYoutubeVolume: (volume) => set({ youtubeVolume: volume }),
+  clearYoutube: () => set({ youtubePlay: null, youtubeVolume: null }),
+
   enqueuePendingCardUpdate: (entry) =>
     set((s) => ({ pendingCardUpdates: [...s.pendingCardUpdates, entry].slice(-20) })),
   dismissPendingCardUpdate: (id) =>
@@ -240,6 +254,8 @@ export const useAgentStore = create<AgentState>((set) => ({
       echoLoadedChatId: null,
       cyoaChoices: [],
       cyoaChoicesChatId: null,
+      youtubePlay: null,
+      youtubeVolume: null,
       pendingCardUpdates: [],
     }),
 }));

@@ -21,6 +21,7 @@ import { sceneRoutes } from "./scene.routes.js";
 import { fontsRoutes } from "./fonts.routes.js";
 import { galleryRoutes } from "./gallery.routes.js";
 import { spotifyAuthRoutes } from "./spotify-auth.routes.js";
+import { youtubeRoutes } from "./youtube.routes.js";
 import { knowledgeSourcesRoutes } from "./knowledge-sources.routes.js";
 import { gifsRoutes } from "./gifs.routes.js";
 import { conversationRoutes } from "./conversation.routes.js";
@@ -71,6 +72,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(fontsRoutes, { prefix: "/api/fonts" });
   await app.register(galleryRoutes, { prefix: "/api/gallery" });
   await app.register(spotifyAuthRoutes, { prefix: "/api/spotify" });
+  await app.register(youtubeRoutes, { prefix: "/api/youtube" });
   await app.register(knowledgeSourcesRoutes, { prefix: "/api/knowledge-sources" });
   await app.register(gifsRoutes, { prefix: "/api/gifs" });
   await app.register(conversationRoutes, { prefix: "/api/conversation" });

@@ -589,6 +589,19 @@ async function buildRetryAgentContext(args: {
     }
   }
 
+  if (resolvedAgentTypes.has("youtube")) {
+    const mode = ((chat as any).mode ?? "conversation") as string;
+    agentContext.memory._youtubeDjConstraints = {
+      manualRetry: true,
+      forceFreshPick: true,
+      mode,
+      retryNote:
+        mode === "game"
+          ? "This is a manual YouTube DJ retry from game mode. Pick a fresh fitting track now with action 'play' and a new searchQuery; do not keep the current track merely because it still fits."
+          : "This is a manual YouTube DJ retry. Pick a fresh fitting track now with action 'play' and a new searchQuery.",
+    };
+  }
+
   if (resolvedAgentTypes.has("spotify")) {
     const mode = ((chat as any).mode ?? "conversation") as string;
     agentContext.memory._spotifyDjConstraints = {

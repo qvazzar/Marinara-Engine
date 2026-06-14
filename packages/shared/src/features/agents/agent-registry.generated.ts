@@ -21,6 +21,7 @@ import { combatAgentManifest } from "./combat/manifest.js";
 import { htmlAgentManifest } from "./html/manifest.js";
 import { chatSummaryAgentManifest } from "./chat-summary/manifest.js";
 import { spotifyAgentManifest } from "./spotify/manifest.js";
+import { youtubeAgentManifest } from "./youtube/manifest.js";
 import { editorAgentManifest } from "./editor/manifest.js";
 import { knowledgeRetrievalAgentManifest } from "./knowledge-retrieval/manifest.js";
 import { knowledgeRouterAgentManifest } from "./knowledge-router/manifest.js";
@@ -51,6 +52,7 @@ export const BUILT_IN_AGENT_MANIFESTS: readonly BuiltInAgentManifest[] = [
   htmlAgentManifest,
   chatSummaryAgentManifest,
   spotifyAgentManifest,
+  youtubeAgentManifest,
   editorAgentManifest,
   knowledgeRetrievalAgentManifest,
   knowledgeRouterAgentManifest,

@@ -34,6 +34,7 @@ export type AgentResultType =
   | "custom_tracker_update"
   | "chat_summary"
   | "spotify_control"
+  | "youtube_control"
   | "haptic_command"
   | "cyoa_choices"
   | "secret_plot"
