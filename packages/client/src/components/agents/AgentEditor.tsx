@@ -74,18 +74,21 @@ import {
   DEFAULT_AGENT_TOOLS,
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_AUTHOR,
+  CUSTOM_AGENT_CAPABILITY_IDS,
   DEFAULT_CUSTOM_AGENT_ACTIVATION_SCAN_DEPTH,
   LOCAL_SIDECAR_CONNECTION_ID,
-  MAX_AGENT_MAX_TOKENS,
   MAX_CUSTOM_AGENT_ACTIVATION_SCAN_DEPTH,
   MIN_AGENT_MAX_TOKENS,
   getDefaultBuiltInAgentSettings,
   getDefaultAgentPrompt,
+  normalizeCustomAgentCapabilities,
   normalizeAgentPromptTemplateOptions,
   parseAgentSettingsRecord,
   type AgentPhase,
   type AgentPromptTemplateOption,
   type AgentResultType,
+  type CustomAgentCapability,
+  type CustomAgentCapabilityMap,
   type ToolDefinition,
 } from "@marinara-engine/shared";
 import { downloadJsonFile } from "../../lib/download-json";
@@ -118,6 +121,7 @@ function createCustomAgentType(name: string): string {
 }
 
 const LOREBOOK_WRITE_TOOL_NAME = "save_lorebook_entry";
+const MESSAGE_EDIT_TOOL_NAME = "edit_chat_message";
 
 // Mirrors the server's buildSpotifyRedirectUri rule: Spotify only accepts
 // https:// or http://127.0.0.1, so fall back to loopback whenever the page
@@ -158,19 +162,80 @@ function normalizeAgentMaxTokensInput(value: string): number | "" {
   if (value === "") return "";
   const parsed = parseInt(value, 10);
   if (!Number.isFinite(parsed)) return "";
-  return Math.max(1, Math.min(MAX_AGENT_MAX_TOKENS, parsed));
+  return Math.max(1, parsed);
 }
 
 function clampAgentMaxTokens(value: number): number {
-  return Math.max(MIN_AGENT_MAX_TOKENS, Math.min(MAX_AGENT_MAX_TOKENS, Math.trunc(value)));
+  return Math.max(MIN_AGENT_MAX_TOKENS, Math.trunc(value));
 }
 
-type CustomAgentResultType = Extract<AgentResultType, "context_injection" | "text_rewrite">;
+type CustomAgentResultType = Extract<
+  AgentResultType,
+  | "context_injection"
+  | "text_rewrite"
+  | "lorebook_update"
+  | "character_tracker_update"
+  | "persona_stats_update"
+  | "custom_tracker_update"
+  | "game_state_update"
+  | "image_prompt"
+  | "prompt_patch"
+  | "frontend_theme_update"
+>;
+
+const CUSTOM_AGENT_CAPABILITY_META: Array<{
+  id: CustomAgentCapability;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "create_lorebooks",
+    label: "Create lorebooks",
+    description: "Allow this agent to create a new agent-made lorebook when its lore output has no target.",
+  },
+  {
+    id: "edit_lorebooks",
+    label: "Edit lorebooks",
+    description: "Allow lorebook entry writes or lorebook update results for selected lorebooks.",
+  },
+  {
+    id: "edit_messages",
+    label: "Edit messages",
+    description: "Allow Text Rewrite output to replace generated message content.",
+  },
+  {
+    id: "edit_trackers",
+    label: "Edit trackers",
+    description: "Allow tracker result types to update game, character, persona, or custom tracker state.",
+  },
+  {
+    id: "change_frontend_styling",
+    label: "Frontend styling",
+    description: "Allow temporary CSS effects from this agent during generation.",
+  },
+  {
+    id: "trigger_image_generation",
+    label: "Image generation",
+    description: "Allow image prompt output to trigger the configured image generator.",
+  },
+  {
+    id: "access_vectors",
+    label: "Vectors/embeddings",
+    description: "Mark this agent as allowed to use configured vector or embedding context.",
+  },
+  {
+    id: "edit_main_prompt",
+    label: "Main prompt edits",
+    description: "Allow prompt patch output to edit the prompt sent to the main generation model.",
+  },
+];
 
 const CUSTOM_AGENT_RESULT_TYPE_OPTIONS: Array<{
   id: CustomAgentResultType;
   label: string;
   description: string;
+  requiredCapability?: CustomAgentCapability;
+  requiredAnyCapability?: CustomAgentCapability[];
 }> = [
   {
     id: "context_injection",
@@ -181,11 +246,81 @@ const CUSTOM_AGENT_RESULT_TYPE_OPTIONS: Array<{
     id: "text_rewrite",
     label: "Text Rewrite",
     description: 'Runs after the reply and expects JSON with "editedText" plus "changes" to replace the message.',
+    requiredCapability: "edit_messages",
+  },
+  {
+    id: "lorebook_update",
+    label: "Lorebook Update",
+    description: 'Expects JSON with an "updates" array to create or update lorebook entries.',
+    requiredCapability: "edit_lorebooks",
+  },
+  {
+    id: "character_tracker_update",
+    label: "Character Tracker",
+    description: 'Expects JSON with "presentCharacters" to update the character tracker.',
+    requiredCapability: "edit_trackers",
+  },
+  {
+    id: "persona_stats_update",
+    label: "Persona Stats",
+    description: 'Expects JSON with "stats", "status", and "inventory" for persona tracker state.',
+    requiredCapability: "edit_trackers",
+  },
+  {
+    id: "custom_tracker_update",
+    label: "Custom Tracker",
+    description: 'Expects JSON with "fields" to replace custom tracker fields.',
+    requiredCapability: "edit_trackers",
+  },
+  {
+    id: "game_state_update",
+    label: "Game State",
+    description: "Expects structured game-state JSON for world-state style tracker updates.",
+    requiredCapability: "edit_trackers",
+  },
+  {
+    id: "image_prompt",
+    label: "Image Prompt",
+    description: 'Expects JSON with "shouldGenerate", "prompt", optional style, and characters.',
+    requiredCapability: "trigger_image_generation",
+  },
+  {
+    id: "prompt_patch",
+    label: "Prompt Patch",
+    description: 'Expects JSON with "operations" to append, prepend, or replace prompt sections.',
+    requiredCapability: "edit_main_prompt",
+  },
+  {
+    id: "frontend_theme_update",
+    label: "Frontend Style",
+    description: 'Expects JSON with "css" for a temporary frontend styling effect.',
+    requiredCapability: "change_frontend_styling",
   },
 ];
 
 function normalizeCustomResultType(value: unknown): CustomAgentResultType {
-  return value === "text_rewrite" ? "text_rewrite" : "context_injection";
+  return CUSTOM_AGENT_RESULT_TYPE_OPTIONS.some((option) => option.id === value)
+    ? (value as CustomAgentResultType)
+    : "context_injection";
+}
+
+function customCapabilityMapFromLocal(capabilities: CustomAgentCapabilityMap): CustomAgentCapabilityMap {
+  const enabled: CustomAgentCapabilityMap = {};
+  for (const capability of CUSTOM_AGENT_CAPABILITY_IDS) {
+    if (capabilities[capability] === true) enabled[capability] = true;
+  }
+  return enabled;
+}
+
+function resultTypeAllowedByCapabilities(
+  resultType: CustomAgentResultType,
+  capabilities: CustomAgentCapabilityMap,
+): boolean {
+  const option = CUSTOM_AGENT_RESULT_TYPE_OPTIONS.find((entry) => entry.id === resultType);
+  if (!option) return false;
+  if (option.requiredCapability) return capabilities[option.requiredCapability] === true;
+  if (option.requiredAnyCapability) return option.requiredAnyCapability.some((capability) => capabilities[capability]);
+  return true;
 }
 
 function createPromptOptionId(name: string, existingIds: Set<string>): string {
@@ -281,6 +416,7 @@ export function AgentEditor() {
   const [localPromptTemplates, setLocalPromptTemplates] = useState<AgentPromptTemplateOption[]>([]);
   const [localAgentEnabled, setLocalAgentEnabled] = useState(true);
   const [localResultType, setLocalResultType] = useState<CustomAgentResultType>("context_injection");
+  const [localCustomCapabilities, setLocalCustomCapabilities] = useState<CustomAgentCapabilityMap>({});
   const [localInjectAsSection, setLocalInjectAsSection] = useState(false);
   const [localIncludePreGenInjections, setLocalIncludePreGenInjections] = useState(false);
   const [localIncludeParallelResults, setLocalIncludeParallelResults] = useState(false);
@@ -384,6 +520,7 @@ export function AgentEditor() {
       );
       setLocalImagePositivePrompt((settings.imagePositivePrompt as string) ?? "");
       setLocalImageNegativePrompt((settings.imageNegativePrompt as string) ?? "");
+      setLocalCustomCapabilities(normalizeCustomAgentCapabilities(settings));
       setLocalResultType(normalizeCustomResultType(settings.resultType));
       setLocalIncludePreGenInjections(settings.includePreGenInjections === true);
       setLocalIncludeParallelResults(settings.includeParallelResults === true);
@@ -413,6 +550,7 @@ export function AgentEditor() {
       setLocalUseAvatarReferences(defaultSettings.useAvatarReferences === true);
       setLocalImagePositivePrompt("");
       setLocalImageNegativePrompt("");
+      setLocalCustomCapabilities({});
       setLocalResultType("context_injection");
       setLocalIncludePreGenInjections(false);
       setLocalIncludeParallelResults(false);
@@ -445,6 +583,7 @@ export function AgentEditor() {
       setLocalUseAvatarReferences(false);
       setLocalImagePositivePrompt("");
       setLocalImageNegativePrompt("");
+      setLocalCustomCapabilities({});
       setLocalResultType("context_injection");
       setLocalIncludePreGenInjections(false);
       setLocalIncludeParallelResults(false);
@@ -613,8 +752,14 @@ export function AgentEditor() {
             1,
             Math.min(MAX_CUSTOM_AGENT_ACTIVATION_SCAN_DEPTH, Math.floor(Number(localActivationScanDepth) || 1)),
           );
+    const customCapabilities = customCapabilityMapFromLocal(localCustomCapabilities);
+    if (isEditingCustomAgent && !resultTypeAllowedByCapabilities(localResultType, customCapabilities)) {
+      setSaveError("Enable the matching custom-agent ability before saving this result type.");
+      return;
+    }
     const writableLorebookId = localWritableLorebookId.trim();
-    const lorebookWriterEnabled = isEditingCustomAgent && localLorebookWriteEnabled;
+    const lorebookWriterEnabled =
+      isEditingCustomAgent && localLorebookWriteEnabled && customCapabilities.edit_lorebooks === true;
     if (lorebookWriterEnabled && !writableLorebookId) {
       setSaveError("Select a target lorebook before enabling lorebook writing for this agent.");
       return;
@@ -625,7 +770,7 @@ export function AgentEditor() {
           ? [...localEnabledTools, LOREBOOK_WRITE_TOOL_NAME]
           : localEnabledTools.filter((tool) => tool !== LOREBOOK_WRITE_TOOL_NAME),
       ),
-    );
+    ).filter((tool) => customCapabilities.edit_messages === true || tool !== MESSAGE_EDIT_TOOL_NAME);
     const savedAuthor = localAuthor.trim() || (builtIn ? DEFAULT_AGENT_AUTHOR : "Unknown");
     const savedPromptTemplates = normalizeAgentPromptTemplateOptions(localPromptTemplates);
 
@@ -657,6 +802,7 @@ export function AgentEditor() {
         ...preservedSpotifyFields,
         author: savedAuthor,
         promptTemplates: savedPromptTemplates,
+        ...(isEditingCustomAgent ? { customCapabilities } : {}),
         ...(isEditingCustomAgent ? { resultType: localResultType } : {}),
         ...(activationKeywords.length > 0
           ? {
@@ -722,6 +868,7 @@ export function AgentEditor() {
     localPhase,
     localAgentEnabled,
     localResultType,
+    localCustomCapabilities,
     localConnectionId,
     localImageConnectionId,
     localIncludePreGenInjections,
@@ -772,8 +919,14 @@ export function AgentEditor() {
             1,
             Math.min(MAX_CUSTOM_AGENT_ACTIVATION_SCAN_DEPTH, Math.floor(Number(localActivationScanDepth) || 1)),
           );
+    const customCapabilities = customCapabilityMapFromLocal(localCustomCapabilities);
+    if (isEditingCustomAgent && !resultTypeAllowedByCapabilities(localResultType, customCapabilities)) {
+      toast.error("Enable the matching custom-agent ability before exporting this result type.");
+      return;
+    }
     const writableLorebookId = localWritableLorebookId.trim();
-    const lorebookWriterEnabled = isEditingCustomAgent && localLorebookWriteEnabled;
+    const lorebookWriterEnabled =
+      isEditingCustomAgent && localLorebookWriteEnabled && customCapabilities.edit_lorebooks === true;
     if (lorebookWriterEnabled && !writableLorebookId) {
       toast.error("Select a target lorebook before exporting lorebook writing for this agent.");
       return;
@@ -784,13 +937,14 @@ export function AgentEditor() {
           ? [...localEnabledTools, LOREBOOK_WRITE_TOOL_NAME]
           : localEnabledTools.filter((tool) => tool !== LOREBOOK_WRITE_TOOL_NAME),
       ),
-    );
+    ).filter((tool) => customCapabilities.edit_messages === true || tool !== MESSAGE_EDIT_TOOL_NAME);
     const savedAuthor = localAuthor.trim() || (builtIn ? DEFAULT_AGENT_AUTHOR : "Unknown");
     const savedPromptTemplates = normalizeAgentPromptTemplateOptions(localPromptTemplates);
     const agentType = dbConfig?.type ?? builtIn?.id ?? createCustomAgentType(localName);
     const settings = {
       author: savedAuthor,
       promptTemplates: savedPromptTemplates,
+      ...(isEditingCustomAgent ? { customCapabilities } : {}),
       ...(isEditingCustomAgent ? { resultType: localResultType } : {}),
       ...(activationKeywords.length > 0 ? { activationKeywords, activationScanDepth } : {}),
       ...(mayIncludeTurnData && localIncludePreGenInjections ? { includePreGenInjections: true } : {}),
@@ -859,6 +1013,26 @@ export function AgentEditor() {
 
   const markDirty = useCallback(() => setDirty(true), []);
 
+  const toggleCustomCapability = useCallback(
+    (capability: CustomAgentCapability) => {
+      setLocalCustomCapabilities((current) => {
+        const next = { ...current, [capability]: current[capability] !== true };
+        if (next[capability] !== true) {
+          const currentResultAllowed = resultTypeAllowedByCapabilities(localResultType, next);
+          if (!currentResultAllowed) {
+            setLocalResultType("context_injection");
+          }
+          if (capability === "edit_lorebooks") {
+            setLocalLorebookWriteEnabled(false);
+          }
+        }
+        return customCapabilityMapFromLocal(next);
+      });
+      markDirty();
+    },
+    [localResultType, markDirty],
+  );
+
   const handleAddPromptTemplate = useCallback(() => {
     setLocalPromptTemplates((options) => [...options, createBlankPromptOption(options)]);
     markDirty();
@@ -887,8 +1061,13 @@ export function AgentEditor() {
     (isCustomAgent || isNewCustomAgent) && localResultType === "text_rewrite" ? "post_processing" : localPhase;
   const showTurnDataAccess = (isCustomAgent || isNewCustomAgent) && effectivePhase === "post_processing";
   const visibleBuiltInTools = useMemo(
-    () => BUILT_IN_TOOLS.filter((tool) => tool.name !== LOREBOOK_WRITE_TOOL_NAME),
-    [],
+    () =>
+      BUILT_IN_TOOLS.filter(
+        (tool) =>
+          tool.name !== LOREBOOK_WRITE_TOOL_NAME &&
+          (tool.name !== MESSAGE_EDIT_TOOL_NAME || localCustomCapabilities.edit_messages === true),
+      ),
+    [localCustomCapabilities.edit_messages],
   );
 
   // ── Loading / not found ──
@@ -1140,27 +1319,71 @@ export function AgentEditor() {
 
           {(isCustomAgent || isNewCustomAgent) && (
             <FieldGroup
-              label="Result Type"
-              icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
-              help="Controls how Marinara interprets this custom agent's output. Use Text Rewrite for post-processing agents that edit the generated reply."
+              label="Custom Agent Abilities"
+              icon={<Sparkles size="0.875rem" className="text-[var(--primary)]" />}
+              help="Opt-in powers for custom agents. Result formats and runtime handlers stay blocked until the matching ability is enabled."
             >
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {CUSTOM_AGENT_CAPABILITY_META.map((capability) => {
+                  const enabled = localCustomCapabilities[capability.id] === true;
+                  return (
+                    <button
+                      key={capability.id}
+                      type="button"
+                      aria-pressed={enabled}
+                      onClick={() => toggleCustomCapability(capability.id)}
+                      className={cn(
+                        "flex items-start gap-3 rounded-xl p-3 text-left text-xs ring-1 transition-all",
+                        enabled
+                          ? "bg-[var(--primary)]/10 ring-[var(--primary)] text-[var(--foreground)]"
+                          : "ring-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                      )}
+                    >
+                      {enabled ? (
+                        <ToggleRight size="1rem" className="mt-0.5 shrink-0 text-emerald-400" />
+                      ) : (
+                        <ToggleLeft size="1rem" className="mt-0.5 shrink-0" />
+                      )}
+                      <span className="min-w-0">
+                        <span className="block font-semibold">{capability.label}</span>
+                        <span className="mt-0.5 block text-[0.625rem] leading-tight">{capability.description}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </FieldGroup>
+          )}
+
+          {(isCustomAgent || isNewCustomAgent) && (
+            <FieldGroup
+              label="Result Type"
+              icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
+              help="Controls how Marinara interprets this custom agent's output. Some result types require the matching ability toggle above."
+            >
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {CUSTOM_AGENT_RESULT_TYPE_OPTIONS.map((option) => {
                   const isActive = localResultType === option.id;
+                  const isAllowed = resultTypeAllowedByCapabilities(option.id, localCustomCapabilities);
                   return (
                     <button
                       key={option.id}
                       type="button"
+                      disabled={!isAllowed}
                       onClick={() => {
+                        if (!isAllowed) return;
                         setLocalResultType(option.id);
                         if (option.id === "text_rewrite") setLocalPhase("post_processing");
+                        if (option.id === "prompt_patch") setLocalPhase("pre_generation");
                         markDirty();
                       }}
                       className={cn(
                         "flex flex-col items-start gap-1 rounded-xl p-3 text-left text-xs ring-1 transition-all",
                         isActive
                           ? "bg-[var(--primary)]/10 ring-[var(--primary)] text-[var(--foreground)]"
-                          : "ring-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                          : isAllowed
+                            ? "ring-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+                            : "cursor-not-allowed ring-[var(--border)] text-[var(--muted-foreground)] opacity-45",
                       )}
                     >
                       <span className="font-semibold">{option.label}</span>
@@ -1253,6 +1476,7 @@ export function AgentEditor() {
                   type="button"
                   aria-pressed={localLorebookWriteEnabled}
                   onClick={() => {
+                    if (localCustomCapabilities.edit_lorebooks !== true) return;
                     setLocalLorebookWriteEnabled((value) => !value);
                     markDirty();
                   }}
@@ -1260,7 +1484,9 @@ export function AgentEditor() {
                     "flex w-full items-start gap-3 rounded-xl p-3 text-left text-xs ring-1 transition-all",
                     localLorebookWriteEnabled
                       ? "bg-[var(--primary)]/10 ring-[var(--primary)] text-[var(--foreground)]"
-                      : "ring-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                      : localCustomCapabilities.edit_lorebooks === true
+                        ? "ring-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+                        : "cursor-not-allowed ring-[var(--border)] text-[var(--muted-foreground)] opacity-45",
                   )}
                 >
                   {localLorebookWriteEnabled ? (
@@ -1271,7 +1497,9 @@ export function AgentEditor() {
                   <span className="min-w-0">
                     <span className="block font-semibold">Allow lorebook entry writes</span>
                     <span className="mt-0.5 block text-[0.625rem] leading-tight">
-                      The agent can only write to the lorebook selected below.
+                      {localCustomCapabilities.edit_lorebooks === true
+                        ? "The agent can only write to the lorebook selected below."
+                        : "Enable Edit lorebooks above before selecting a target."}
                     </span>
                   </span>
                 </button>
@@ -1281,7 +1509,7 @@ export function AgentEditor() {
                   {allLorebooks && allLorebooks.length > 0 ? (
                     <select
                       value={localWritableLorebookId}
-                      disabled={!localLorebookWriteEnabled}
+                      disabled={!localLorebookWriteEnabled || localCustomCapabilities.edit_lorebooks !== true}
                       onChange={(event) => {
                         setLocalWritableLorebookId(event.target.value);
                         markDirty();
@@ -1578,7 +1806,6 @@ export function AgentEditor() {
                   <input
                     type="number"
                     min={MIN_AGENT_MAX_TOKENS}
-                    max={MAX_AGENT_MAX_TOKENS}
                     value={localMaxTokens}
                     onChange={(e) => {
                       setLocalMaxTokens(normalizeAgentMaxTokensInput(e.target.value));

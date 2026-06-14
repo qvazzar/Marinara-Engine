@@ -357,6 +357,7 @@ async function buildRetryAgentContext(args: {
     chatMode: (chat as any).mode ?? "conversation",
     recentMessages: agentSlice.map((message: any) => {
       const nextMessage: AgentContext["recentMessages"][number] = {
+        id: typeof message.id === "string" ? message.id : undefined,
         role: message.role,
         content: message.content,
         characterId: message.characterId ?? undefined,

@@ -38,6 +38,12 @@ import { toast } from "sonner";
 import { cn, generateClientId } from "../../lib/utils";
 import { useUIStore } from "../../stores/ui.store";
 import {
+  ROLEPLAY_POPOVER_SCROLL_AREA,
+  ROLEPLAY_POPOVER_SHELL,
+  ROLEPLAY_POPOVER_SUBTITLE,
+  ROLEPLAY_POPOVER_TITLE,
+} from "./roleplay-popover-styles";
+import {
   DEFAULT_AGENT_PROMPTS,
   estimateChatSummaryTokens,
   normalizeChatSummaryEntries,
@@ -651,20 +657,22 @@ export function SummaryPopover({
       {isMobile && <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />}
       <div
         className={cn(
-          "relative rounded-xl border border-[var(--border)] bg-[var(--background)] shadow-2xl shadow-black/50 backdrop-blur-xl",
+          ROLEPLAY_POPOVER_SHELL,
+          ROLEPLAY_POPOVER_SCROLL_AREA,
+          "relative p-3",
           isMobile
             ? "relative w-full max-w-md max-h-[calc(100dvh-4rem)] overflow-y-auto"
             : "w-[28rem] overflow-visible",
         )}
       >
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--card)]/80 px-3 py-2.5 backdrop-blur-sm">
+        <div className="mb-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
-              <ScrollText size="0.8125rem" className="shrink-0 text-[var(--muted-foreground)]" />
+            <div className={ROLEPLAY_POPOVER_TITLE}>
+              <ScrollText size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
               <span className="truncate">Chat Summary</span>
             </div>
-            <p className="truncate text-[0.625rem] text-[var(--muted-foreground)]">
+            <p className={cn(ROLEPLAY_POPOVER_SUBTITLE, "truncate")}>
               {hasEntries
                 ? `${enabledEntryCount} active · ~${formatTokenCount(enabledTokenEstimate)} tokens`
                 : "No summaries yet"}
@@ -699,11 +707,14 @@ export function SummaryPopover({
         {scopeSettingsOpen && (
           <div
             ref={scopeSettingsRef}
-            className="absolute right-2 top-12 z-10 max-h-[min(34rem,calc(100vh-7rem))] w-[calc(100%-1rem)] max-w-80 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)] text-[var(--popover-foreground)] shadow-2xl shadow-black/50 ring-1 ring-white/5 backdrop-blur-xl"
+            className={cn(
+              ROLEPLAY_POPOVER_SHELL,
+              "absolute right-3 top-10 z-10 max-h-[min(34rem,calc(100vh-7rem))] w-[calc(100%-1.5rem)] max-w-80 overflow-hidden",
+            )}
           >
-            <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--card)]/80 px-3 py-2.5 backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-3 py-2.5">
               <div className="min-w-0">
-                <p className="text-xs font-semibold text-[var(--popover-foreground)]">Summary settings</p>
+                <p className="text-xs font-semibold text-[var(--foreground)]">Summary settings</p>
               </div>
             </div>
 
@@ -895,7 +906,7 @@ export function SummaryPopover({
         )}
 
         {/* Body */}
-        <div className="max-h-[min(26rem,calc(100dvh-15rem))] overflow-y-auto p-2.5">
+        <div className="max-h-[min(26rem,calc(100dvh-15rem))] overflow-y-auto pr-1">
           <div className="space-y-2">
             {hasPersistedEntries && (
               <div className="flex items-center justify-end gap-1.5 px-0.5">

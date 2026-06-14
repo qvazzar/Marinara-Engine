@@ -1370,6 +1370,7 @@ export function ChatArea() {
   const lastScrollTopRef = useRef(0);
   const userScrolledAtRef = useRef(0);
   const forcedBottomScrollRef = useRef<{ requestedAt: number; behavior: ScrollBehavior } | null>(null);
+  const openedAtBottomChatIdRef = useRef<string | null>(null);
   const scrollToMessagesBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const el = scrollRef.current;
     if (el) {
@@ -1403,6 +1404,17 @@ export function ChatArea() {
     window.addEventListener(CHAT_SCROLL_TO_BOTTOM_EVENT, handleScrollRequest);
     return () => window.removeEventListener(CHAT_SCROLL_TO_BOTTOM_EVENT, handleScrollRequest);
   }, [activeChatId, scheduleScrollToMessagesBottom]);
+
+  useEffect(() => {
+    if (!activeChatId || isFetchingNextPage || isLoadingMoreRef.current) return;
+    if (openedAtBottomChatIdRef.current === activeChatId) return;
+    if (isLoading && loadedMessageCount === 0) return;
+
+    openedAtBottomChatIdRef.current = activeChatId;
+    userScrolledAwayRef.current = false;
+    isNearBottomRef.current = true;
+    scheduleScrollToMessagesBottom("auto");
+  }, [activeChatId, isFetchingNextPage, isLoading, loadedMessageCount, scheduleScrollToMessagesBottom]);
 
   useEffect(() => {
     const el = scrollRef.current;

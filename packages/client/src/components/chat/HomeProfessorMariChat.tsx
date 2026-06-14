@@ -890,6 +890,8 @@ export function HomeProfessorMariChat({ pageActive = true }: { pageActive?: bool
 
   const displayMessages = useMemo(() => [createWelcomeMessage(chatId), ...messages], [chatId, messages]);
   const workspaceTimelineActive = workspaceActive || hasActiveGeneration;
+  const workspaceHasResponseText = workspaceTimeline.some((item) => item.type === "text" && item.content.trim());
+  const showDottoreSupport = workspaceTimelineActive && !workspaceHasResponseText;
 
   useEffect(() => {
     if (!connectionMenuOpen) return;
@@ -1160,6 +1162,7 @@ export function HomeProfessorMariChat({ pageActive = true }: { pageActive?: bool
                     <WorkspaceStatusEvent content={workspaceActivity ?? "Thinking..."} />
                   )}
                   <WorkspaceTimelineList items={workspaceTimeline} active={workspaceTimelineActive} openReasoning />
+                  <ProfessorMariWorkingWindow visible={showDottoreSupport} />
                   {workspaceStatus?.error && <WorkspaceErrorEvent message={workspaceStatus.error} />}
                   {pendingApprovals.map((approval) => (
                     <WorkspaceApprovalCard
@@ -1280,7 +1283,6 @@ export function HomeProfessorMariChat({ pageActive = true }: { pageActive?: bool
           />
         </div>
       </section>
-      <ProfessorMariWorkingWindow visible={isBusy} />
     </>
   );
 }

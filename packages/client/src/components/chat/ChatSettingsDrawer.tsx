@@ -51,9 +51,8 @@ import { ChatSettingsSection as Section } from "../../features/chat-settings/Cha
 import { AdvancedParametersSection } from "../../features/chat-settings/sections/AdvancedParametersSection";
 import { ChatNameSection } from "../../features/chat-settings/sections/ChatNameSection";
 import { ConnectionSection } from "../../features/chat-settings/sections/ConnectionSection";
-import { ContextLimitSection } from "../../features/chat-settings/sections/ContextLimitSection";
 import { ConversationPromptSection } from "../../features/chat-settings/sections/ConversationPromptSection";
-import { DiscordMirrorSection } from "../../features/chat-settings/sections/DiscordMirrorSection";
+import { DiscordMirrorControls } from "../../features/chat-settings/sections/DiscordMirrorSection";
 import { FunctionCallingSection } from "../../features/chat-settings/sections/FunctionCallingSection";
 import { GameExtraPromptSection } from "../../features/chat-settings/sections/GameExtraPromptSection";
 import { ImpersonateSection } from "../../features/chat-settings/sections/ImpersonateSection";
@@ -137,7 +136,6 @@ import {
   DEFAULT_AGENT_PROMPTS,
   getChatModeCapabilities,
   LIMITS,
-  MAX_AGENT_MAX_TOKENS,
   MIN_AGENT_MAX_TOKENS,
   estimateAgentLoadCost,
   getAgentPromptTemplateOptions,
@@ -204,6 +202,26 @@ const MODE_INTROS: Record<ChatMode, string> = {
   game: "Full Game Master with built-in dice, combat, encounters, world state, and session/map tracking — the Scene Analysis toggle below adds optional cinematic visuals (backgrounds, music, weather).",
 };
 
+const CHAT_SETTINGS_ORDER = {
+  settingsPresets: -1600,
+  modeIntro: -1500,
+  chatName: -1400,
+  connection: -1300,
+  promptPreset: -1200,
+  advancedParameters: -1100,
+  persona: -1000,
+  characters: -900,
+  groupChat: -800,
+  connectedChat: -700,
+  connectedNotes: -690,
+  lorebooks: -600,
+  agents: -500,
+  impersonate: -400,
+  memoryRecall: -300,
+  functionCalling: -200,
+  translation: -100,
+} as const;
+
 type AvailableAgent = {
   id: string;
   name: string;
@@ -259,12 +277,12 @@ function normalizePositiveInteger(value: unknown, fallback: number, max: number)
 
 function normalizeAgentMaxTokens(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_AGENT_MAX_TOKENS;
-  return Math.max(MIN_AGENT_MAX_TOKENS, Math.min(MAX_AGENT_MAX_TOKENS, Math.trunc(value)));
+  return Math.max(MIN_AGENT_MAX_TOKENS, Math.trunc(value));
 }
 
 function normalizeAgentMaxTokensInputValue(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 1;
-  return Math.max(1, Math.min(MAX_AGENT_MAX_TOKENS, Math.trunc(value)));
+  return Math.max(1, Math.trunc(value));
 }
 
 function normalizeSpriteDisplayValue(value: unknown, fallback: number, min: number, max: number): number {
@@ -1715,9 +1733,9 @@ export function ChatSettingsDrawer({
       <div className="absolute inset-0 z-40 bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
 
       {/* Drawer */}
-      <div className="absolute right-0 top-0 z-50 flex h-full w-80 max-md:w-full flex-col border-l border-[var(--border)] bg-[var(--background)] shadow-2xl animate-fade-in-up max-md:pt-[env(safe-area-inset-top)]">
+      <div className="absolute right-0 top-0 z-50 flex h-full min-h-0 w-80 max-md:w-full flex-col border-l border-[var(--border)] bg-[var(--background)] shadow-2xl animate-fade-in-up max-md:pt-[env(safe-area-inset-top)]">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <h3 className="text-sm font-bold">Chat Settings</h3>
           <button
             onClick={onClose}
@@ -1727,9 +1745,13 @@ export function ChatSettingsDrawer({
           </button>
         </div>
 
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pb-[calc(1rem+env(safe-area-inset-bottom))]">
         {/* Chat Settings Preset bar — hidden in Game Mode and scene chats. */}
         {modeCapabilities.supportsChatSettingsPresets && !isSceneChat && (
-          <div className="flex flex-col gap-2 border-b border-[var(--border)] px-4 py-3">
+          <div
+            style={{ order: CHAT_SETTINGS_ORDER.settingsPresets }}
+            className="flex shrink-0 flex-col gap-2 border-b border-[var(--border)] px-4 py-3"
+          >
             <input
               ref={presetFileInputRef}
               type="file"
@@ -1859,48 +1881,53 @@ export function ChatSettingsDrawer({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto">
           {/* Hardcoded — CHAT_MODES.defaultAgents looks like the source of truth but is currently
               unused, and wouldn't cover non-agent built-ins (GM pipeline, autonomous messaging, etc.) anyway. */}
           {MODE_INTROS[chatMode as ChatMode] && (
-            <div className="border-b border-[var(--border)] px-4 py-2.5">
+            <div style={{ order: CHAT_SETTINGS_ORDER.modeIntro }} className="border-b border-[var(--border)] px-4 py-2.5">
               <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
                 {MODE_INTROS[chatMode as ChatMode]}
               </p>
             </div>
           )}
 
-          <ChatNameSection
-            chatName={chat.name}
-            editingName={editingName}
-            nameValue={nameVal}
-            onBeginEdit={() => {
-              setNameVal(chat.name);
-              setEditingName(true);
-            }}
-            onNameValueChange={setNameVal}
-            onSaveName={saveName}
-          />
+          <div style={{ order: CHAT_SETTINGS_ORDER.chatName }}>
+            <ChatNameSection
+              chatName={chat.name}
+              editingName={editingName}
+              nameValue={nameVal}
+              onBeginEdit={() => {
+                setNameVal(chat.name);
+                setEditingName(true);
+              }}
+              onNameValueChange={setNameVal}
+              onSaveName={saveName}
+            />
+          </div>
 
-          <ConnectionSection
-            connectionId={chat.connectionId ?? null}
-            connections={textConnectionsList}
-            isGame={isGame}
-            onConnectionChange={setConnection}
-          />
+          <div style={{ order: CHAT_SETTINGS_ORDER.connection }}>
+            <ConnectionSection
+              connectionId={chat.connectionId ?? null}
+              connections={textConnectionsList}
+              isGame={isGame}
+              onConnectionChange={setConnection}
+            />
+          </div>
 
           {/* Preset — hidden for conversation mode and game mode */}
           {modeCapabilities.supportsPromptPresets && !metadata.sceneSystemPrompt && (
-            <PromptPresetSection
-              promptPresetId={chat.promptPresetId ?? null}
-              presets={(presets ?? []) as Array<{ id: string; name: string }>}
-              hasVariables={currentPromptPresetHasVariables}
-              showLorebookMarkerWarning={showLorebookMarkerWarning}
-              onEditVariables={() => {
-                if (chat.promptPresetId) setChoiceModalPresetId(chat.promptPresetId);
-              }}
-              onPromptPresetChange={setPreset}
-            />
+            <div style={{ order: CHAT_SETTINGS_ORDER.promptPreset }}>
+              <PromptPresetSection
+                promptPresetId={chat.promptPresetId ?? null}
+                presets={(presets ?? []) as Array<{ id: string; name: string }>}
+                hasVariables={currentPromptPresetHasVariables}
+                showLorebookMarkerWarning={showLorebookMarkerWarning}
+                onEditVariables={() => {
+                  if (chat.promptPresetId) setChoiceModalPresetId(chat.promptPresetId);
+                }}
+                onPromptPresetChange={setPreset}
+              />
+            </div>
           )}
 
           {/* Extra Prompt — game mode only */}
@@ -1930,6 +1957,7 @@ export function ChatSettingsDrawer({
           {/* Party (game mode) */}
           {isGame && (
             <Section
+              style={{ order: CHAT_SETTINGS_ORDER.persona }}
               label="Party"
               icon={<Users size="0.875rem" />}
               count={chatCharIds.length + (chat.personaId ? 1 : 0)}
@@ -2187,6 +2215,7 @@ export function ChatSettingsDrawer({
           {/* Persona */}
           {!isGame && (
             <Section
+              style={{ order: CHAT_SETTINGS_ORDER.persona }}
               label="Persona"
               icon={<User size="0.875rem" />}
               help="Your persona defines who you are in this chat. The AI will address you by this persona's name and use its details for context."
@@ -2330,6 +2359,7 @@ export function ChatSettingsDrawer({
           {/* Characters — only show added ones + add button */}
           {!isGame && (
             <Section
+              style={{ order: CHAT_SETTINGS_ORDER.characters }}
               label="Characters"
               icon={<Users size="0.875rem" />}
               count={chatCharIds.length}
@@ -2606,6 +2636,7 @@ export function ChatSettingsDrawer({
           {/* Group Chat Settings — only when 2+ characters, game mode handles it internally */}
           {chatCharIds.length > 1 && modeCapabilities.supportsGroupChatControls && (
             <Section
+              style={{ order: CHAT_SETTINGS_ORDER.groupChat }}
               label="Group Chat"
               icon={<Users size="0.875rem" />}
               help={
@@ -3253,10 +3284,11 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          {/* Connected Chat — conversation mode: link to a roleplay or game chat */}
+          {/* Connected Roleplay — conversation mode: link to a roleplay or game chat */}
           {isConversation && (
             <Section
-              label="Connected Chat"
+              style={{ order: CHAT_SETTINGS_ORDER.connectedChat }}
+              label="Connected Roleplay"
               icon={<ArrowRightLeft size="0.875rem" />}
               help="Link this conversation to a roleplay or game. Recent messages from the linked chat are pulled into context here automatically. To send something the other direction, the character uses `<influence>` (steers the next linked turn, one-shot) or `<note>` (persists on every future linked turn until cleared)."
             >
@@ -3321,15 +3353,20 @@ export function ChatSettingsDrawer({
                         <MessageSquare size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
                         <span className="truncate">{getConnectedChatDisplayName(c)}</span>
                       </button>
-                    ))}
+                  ))}
                 </PickerDropdown>
               )}
+              <DiscordMirrorControls
+                webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+                onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+              />
             </Section>
           )}
 
           {/* Connected Conversation — roleplay mode: linked OOC chat + optional in-world DM command */}
           {isRoleplayMode && (
             <Section
+              style={{ order: CHAT_SETTINGS_ORDER.connectedChat }}
               label="Connected Conversation"
               icon={<ArrowRightLeft size="0.875rem" />}
               help={
@@ -3403,6 +3440,10 @@ export function ChatSettingsDrawer({
                     />
                   </div>
                 </button>
+                <DiscordMirrorControls
+                  webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+                  onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+                />
               </div>
             </Section>
           )}
@@ -3410,6 +3451,7 @@ export function ChatSettingsDrawer({
           {/* Connected Conversation — game mode: show linked OOC chat */}
           {isGame && chat.connectedChatId && (
             <Section
+              style={{ order: CHAT_SETTINGS_ORDER.connectedChat }}
               label="Connected Conversation"
               icon={<ArrowRightLeft size="0.875rem" />}
               help="Linked to a conversation. `<influence>` tags from the conversation steer the next turn here (one-shot, then consumed). `<note>` tags persist on every turn until cleared. Raw conversation messages are not injected — use `<note>` for facts this chat should keep remembering."
@@ -3435,15 +3477,24 @@ export function ChatSettingsDrawer({
                   </div>
                 );
               })()}
+              <DiscordMirrorControls
+                webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+                onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+              />
             </Section>
           )}
 
           {/* Notes from Conversation — durable notes saved by the connected conversation's character */}
-          {!isConversation && chat.connectedChatId && <ConversationNotesSection chatId={chat.id} />}
+          {!isConversation && chat.connectedChatId && (
+            <div style={{ order: CHAT_SETTINGS_ORDER.connectedNotes }}>
+              <ConversationNotesSection chatId={chat.id} />
+            </div>
+          )}
 
           {/* Connect to Conversation — game mode without existing link */}
           {chatMode === "game" && !chat.connectedChatId && (
             <Section
+              style={{ order: CHAT_SETTINGS_ORDER.connectedChat }}
               label="Connected Conversation"
               icon={<ArrowRightLeft size="0.875rem" />}
               help="Link this game to an OOC conversation. The conversation character uses `<influence>` (one-shot) or `<note>` (durable) to bridge content into the game; raw conversation messages are not injected. Game events and roleplay moments flow back into the conversation automatically."
@@ -3485,31 +3536,38 @@ export function ChatSettingsDrawer({
                         <MessageSquare size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
                         <span className="truncate">{getConnectedChatDisplayName(c)}</span>
                       </button>
-                    ))}
+                  ))}
                 </PickerDropdown>
               )}
+              <DiscordMirrorControls
+                webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+                onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+              />
             </Section>
           )}
 
-          <LorebooksSection
-            chatId={chat.id}
-            activeLorebooks={activeLorebooks}
-            lorebooks={(lorebooks ?? []) as Lorebook[]}
-            lorebookSearch={lbSearch}
-            lorebookTokenBudget={lorebookTokenBudget}
-            showLorebookPicker={showLbPicker}
-            onLorebookSearchChange={setLbSearch}
-            onLorebookTokenBudgetChange={(lorebookTokenBudget) =>
-              updateMeta.mutate({ id: chat.id, lorebookTokenBudget })
-            }
-            onPinLorebook={pinLorebookToChat}
-            onShowLorebookPickerChange={setShowLbPicker}
-            onToggleLorebook={toggleLorebook}
-          />
+          <div style={{ order: CHAT_SETTINGS_ORDER.lorebooks }}>
+            <LorebooksSection
+              chatId={chat.id}
+              activeLorebooks={activeLorebooks}
+              lorebooks={(lorebooks ?? []) as Lorebook[]}
+              lorebookSearch={lbSearch}
+              lorebookTokenBudget={lorebookTokenBudget}
+              showLorebookPicker={showLbPicker}
+              onLorebookSearchChange={setLbSearch}
+              onLorebookTokenBudgetChange={(lorebookTokenBudget) =>
+                updateMeta.mutate({ id: chat.id, lorebookTokenBudget })
+              }
+              onPinLorebook={pinLorebookToChat}
+              onShowLorebookPickerChange={setShowLbPicker}
+              onToggleLorebook={toggleLorebook}
+            />
+          </div>
 
           {/* Agents */}
           {modeCapabilities.sharedSections.includes("agents") && (
             <Section
+              style={{ order: CHAT_SETTINGS_ORDER.agents }}
               label="Agents"
               icon={<Sparkles size="0.875rem" />}
               count={isGame ? gameAgentFeatureCount : activeAgentIds.length}
@@ -4844,9 +4902,10 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          {/* Memory Recall — conversation mode: show here; roleplay: shown after Function Calling */}
+          {/* Memory Recall — conversation mode: placed before Function Calling by section order */}
           {isConversation && import.meta.env.VITE_MARINARA_LITE !== "true" && (
             <Section
+              style={{ order: CHAT_SETTINGS_ORDER.memoryRecall }}
               label="Memory Recall"
               icon={<Brain size="0.875rem" />}
               help="When enabled, relevant fragments from this chat are automatically recalled and injected into the prompt as memories. Uses the local embedding model when available, or the configured embedding connection."
@@ -4949,35 +5008,33 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          <DiscordMirrorSection
-            webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
-            onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
-          />
+          <div style={{ order: CHAT_SETTINGS_ORDER.functionCalling }}>
+            <FunctionCallingSection
+              enableTools={metadata.enableTools as boolean | undefined}
+              activeToolIds={activeToolIds}
+              pendingToolIds={pendingToolIds}
+              availableTools={availableTools}
+              showToolPicker={showToolPicker}
+              toolSearch={toolSearch}
+              onEnableToolsChange={(enableTools) => updateMeta.mutate({ id: chat.id, enableTools })}
+              onToggleTool={toggleTool}
+              onShowToolPickerChange={setShowToolPicker}
+              onToolSearchChange={setToolSearch}
+              onPendingToolIdsChange={(updater) => setPendingToolIds(updater)}
+              onAddPendingTools={() => {
+                const next = [...activeToolIds, ...pendingToolIds];
+                updateMeta.mutate({ id: chat.id, activeToolIds: next });
+                setPendingToolIds([]);
+                setShowToolPicker(false);
+              }}
+              onCreateCustomTool={handleCreateCustomTool}
+            />
+          </div>
 
-          <FunctionCallingSection
-            enableTools={metadata.enableTools as boolean | undefined}
-            activeToolIds={activeToolIds}
-            pendingToolIds={pendingToolIds}
-            availableTools={availableTools}
-            showToolPicker={showToolPicker}
-            toolSearch={toolSearch}
-            onEnableToolsChange={(enableTools) => updateMeta.mutate({ id: chat.id, enableTools })}
-            onToggleTool={toggleTool}
-            onShowToolPickerChange={setShowToolPicker}
-            onToolSearchChange={setToolSearch}
-            onPendingToolIdsChange={(updater) => setPendingToolIds(updater)}
-            onAddPendingTools={() => {
-              const next = [...activeToolIds, ...pendingToolIds];
-              updateMeta.mutate({ id: chat.id, activeToolIds: next });
-              setPendingToolIds([]);
-              setShowToolPicker(false);
-            }}
-            onCreateCustomTool={handleCreateCustomTool}
-          />
-
-          {/* Memory Recall — roleplay/game modes: show after Function Calling */}
+          {/* Memory Recall — roleplay/game modes: placed before Function Calling by section order */}
           {!isConversation && import.meta.env.VITE_MARINARA_LITE !== "true" && (
             <Section
+              style={{ order: CHAT_SETTINGS_ORDER.memoryRecall }}
               label="Memory Recall"
               icon={<Brain size="0.875rem" />}
               help="When enabled, relevant fragments from this chat are automatically recalled and injected into the prompt as memories. Uses the local embedding model when available, or the configured embedding connection."
@@ -4986,36 +5043,39 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          <TranslationSection
-            metadata={metadata}
-            textConnections={textConnectionsList}
-            onMetadataChange={(patch) => updateMeta.mutate({ id: chat.id, ...patch })}
-          />
+          <div style={{ order: CHAT_SETTINGS_ORDER.translation }}>
+            <TranslationSection
+              metadata={metadata}
+              textConnections={textConnectionsList}
+              onMetadataChange={(patch) => updateMeta.mutate({ id: chat.id, ...patch })}
+            />
+          </div>
 
           {/* Advanced Parameters */}
-          <AdvancedParametersSection
-            metadata={metadata}
-            isConversation={isConversation}
-            connectionId={chat.connectionId ?? null}
-            connections={(connections as Record<string, unknown>[]) ?? []}
-            onChatParametersChange={(chatParameters) => updateMeta.mutate({ id: chat.id, chatParameters })}
-          />
+          <div style={{ order: CHAT_SETTINGS_ORDER.advancedParameters }}>
+            <AdvancedParametersSection
+              metadata={metadata}
+              isConversation={isConversation}
+              connectionId={chat.connectionId ?? null}
+              connections={(connections as Record<string, unknown>[]) ?? []}
+              contextMessageLimit={metadata.contextMessageLimit as number | null | undefined}
+              excludePastReasoning={metadata.excludePastReasoning as boolean | undefined}
+              onChatParametersChange={(chatParameters) => updateMeta.mutate({ id: chat.id, chatParameters })}
+              onContextMessageLimitChange={(contextMessageLimit) =>
+                updateMeta.mutate({ id: chat.id, contextMessageLimit })
+              }
+              onExcludePastReasoningChange={(excludePastReasoning) =>
+                updateMeta.mutate({ id: chat.id, excludePastReasoning })
+              }
+            />
+          </div>
 
-          <ContextLimitSection
-            contextMessageLimit={metadata.contextMessageLimit as number | null | undefined}
-            excludePastReasoning={metadata.excludePastReasoning as boolean | undefined}
-            onContextMessageLimitChange={(contextMessageLimit) =>
-              updateMeta.mutate({ id: chat.id, contextMessageLimit })
-            }
-            onExcludePastReasoningChange={(excludePastReasoning) =>
-              updateMeta.mutate({ id: chat.id, excludePastReasoning })
-            }
-          />
-
-          <ImpersonateSection
-            presets={(presets ?? []) as Array<{ id: string; name: string }>}
-            connections={textConnectionsList}
-          />
+          <div style={{ order: CHAT_SETTINGS_ORDER.impersonate }}>
+            <ImpersonateSection
+              presets={(presets ?? []) as Array<{ id: string; name: string }>}
+              connections={textConnectionsList}
+            />
+          </div>
         </div>
       </div>
 
@@ -5111,7 +5171,6 @@ export function ChatSettingsDrawer({
                     <input
                       type="number"
                       min={MIN_AGENT_MAX_TOKENS}
-                      max={MAX_AGENT_MAX_TOKENS}
                       value={agentAddPreview.maxTokens}
                       onChange={(e) => {
                         const value = parseInt(e.target.value, 10);

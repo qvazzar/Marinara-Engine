@@ -16,11 +16,11 @@ import {
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  BookOpen,
   Loader2,
   ChevronUp,
   Settings2,
   FolderOpen,
-  Globe,
   Image as ImageIcon,
   ArrowRightLeft,
   MoreHorizontal,
@@ -29,7 +29,7 @@ import { ConversationMessage } from "./ConversationMessage";
 import { ConversationInput } from "./ConversationInput";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
-import { ActiveWorldInfoButton, ActiveWorldInfoModal } from "./ActiveWorldInfoButton";
+import { ActiveLorebookEntriesButton, ActiveLorebookEntriesModal } from "./ActiveLorebookEntriesButton";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
@@ -419,7 +419,7 @@ export function ConversationView({
     return { background: `linear-gradient(135deg, ${g.from}, ${g.to})` };
   }, [convoGradient, theme]);
   const hasAutonomousMessaging = !!chatMeta.autonomousMessages || !!chatMeta.characterExchanges;
-  const [mobileWorldInfoOpen, setMobileWorldInfoOpen] = useState(false);
+  const [mobileActiveContextOpen, setMobileActiveContextOpen] = useState(false);
   const renderToolbarActions = (compact = false) => (
     <>
       <ChatBranchSelector
@@ -433,15 +433,15 @@ export function ConversationView({
       />
       {compact ? (
         <button
-          onClick={() => setMobileWorldInfoOpen(true)}
+          onClick={() => setMobileActiveContextOpen(true)}
           className={MOBILE_MENU_BTN}
-          title="Active World Info"
-          aria-label="Active World Info"
+          title="Active Context"
+          aria-label="Active Context"
         >
-          <Globe size="0.875rem" />
+          <BookOpen size="0.875rem" />
         </button>
       ) : (
-        <ActiveWorldInfoButton chatId={chatId} buttonClassName={HEADER_BTN} />
+        <ActiveLorebookEntriesButton chatId={chatId} buttonClassName={HEADER_BTN} />
       )}
       <button onClick={onOpenFiles} className={compact ? MOBILE_MENU_BTN : HEADER_BTN} title="Manage Chat Files">
         <FolderOpen size="0.875rem" />
@@ -1023,10 +1023,10 @@ export function ConversationView({
             desktopChildren={renderToolbarActions()}
             mobileChildren={renderToolbarActions(true)}
           />
-          <ActiveWorldInfoModal
+          <ActiveLorebookEntriesModal
             chatId={chatId}
-            open={mobileWorldInfoOpen}
-            onClose={() => setMobileWorldInfoOpen(false)}
+            open={mobileActiveContextOpen}
+            onClose={() => setMobileActiveContextOpen(false)}
           />
         </div>
 

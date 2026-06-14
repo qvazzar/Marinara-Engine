@@ -80,6 +80,7 @@ export const TRACKER_PANEL_SIZE_PROFILE_WIDTHS: Record<TrackerPanelSizeProfile, 
 export const TRACKER_PANEL_WIDTH_DEFAULT = TRACKER_PANEL_SIZE_PROFILE_WIDTHS.standard;
 export const TRACKER_PANEL_WIDTH_MIN = TRACKER_PANEL_SIZE_PROFILE_WIDTHS.compact;
 export const TRACKER_PANEL_WIDTH_MAX = TRACKER_PANEL_SIZE_PROFILE_WIDTHS.expanded;
+export const TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR = "#09090b";
 const IMAGE_DIMENSION_MIN = 64;
 const IMAGE_DIMENSION_MAX = 4096;
 const GAME_SETUP_LEARNED_LIMIT = 60;
@@ -202,6 +203,11 @@ export function normalizeTrackerTemperatureUnit(value: unknown): TrackerTemperat
     : "celsius";
 }
 
+function normalizeTrackerPanelBackgroundColor(value: unknown) {
+  if (typeof value !== "string") return TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR;
+  return value.trim() || TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR;
+}
+
 function normalizeLearnedGameSetupOption(value: unknown) {
   if (typeof value !== "string") return "";
   return value.replace(/\s+/g, " ").trim().slice(0, 160);
@@ -272,6 +278,7 @@ interface UIState {
   trackerPanelThoughtBubbleDisplay: TrackerThoughtBubbleDisplay;
   trackerPanelDockedThoughtsAlwaysVisible: boolean;
   trackerPanelSizeProfile: TrackerPanelSizeProfile;
+  trackerPanelBackgroundColor: string;
   trackerTemperatureUnit: TrackerTemperatureUnit;
   trackerPanelCollapsedSections: TrackerPanelCollapsedSections;
   trackerPanelSectionOrder: TrackerPanelSectionOrder;
@@ -516,6 +523,7 @@ interface UIState {
   setTrackerPanelThoughtBubbleDisplay: (display: TrackerThoughtBubbleDisplay) => void;
   setTrackerPanelDockedThoughtsAlwaysVisible: (visible: boolean) => void;
   setTrackerPanelSizeProfile: (profile: TrackerPanelSizeProfile) => void;
+  setTrackerPanelBackgroundColor: (color: string) => void;
   setTrackerTemperatureUnit: (unit: TrackerTemperatureUnit) => void;
   setTrackerPanelSectionOrder: (order: TrackerPanelSectionOrder) => void;
   setTrackerPanelSectionCollapsed: (section: TrackerDataPanelSection, collapsed: boolean) => void;
@@ -699,6 +707,7 @@ export function pickSyncedSettings(state: UIState) {
     trackerPanelThoughtBubbleDisplay: state.trackerPanelThoughtBubbleDisplay,
     trackerPanelDockedThoughtsAlwaysVisible: state.trackerPanelDockedThoughtsAlwaysVisible,
     trackerPanelSizeProfile: state.trackerPanelSizeProfile,
+    trackerPanelBackgroundColor: state.trackerPanelBackgroundColor,
     trackerTemperatureUnit: state.trackerTemperatureUnit,
     trackerPanelCollapsedSections: state.trackerPanelCollapsedSections,
     trackerPanelSectionOrder: state.trackerPanelSectionOrder,
@@ -811,6 +820,7 @@ export const useUIStore = create<UIState>()(
       trackerPanelThoughtBubbleDisplay: "inline" as TrackerThoughtBubbleDisplay,
       trackerPanelDockedThoughtsAlwaysVisible: false,
       trackerPanelSizeProfile: "standard" as TrackerPanelSizeProfile,
+      trackerPanelBackgroundColor: TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR,
       trackerTemperatureUnit: "celsius" as TrackerTemperatureUnit,
       trackerPanelCollapsedSections: {},
       trackerPanelSectionOrder: [...TRACKER_DATA_PANEL_SECTIONS],
@@ -965,6 +975,8 @@ export const useUIStore = create<UIState>()(
         set({ trackerPanelDockedThoughtsAlwaysVisible: visible }),
       setTrackerPanelSizeProfile: (profile) =>
         set({ trackerPanelSizeProfile: normalizeTrackerPanelSizeProfile(profile) }),
+      setTrackerPanelBackgroundColor: (color) =>
+        set({ trackerPanelBackgroundColor: normalizeTrackerPanelBackgroundColor(color) }),
       setTrackerTemperatureUnit: (unit) => set({ trackerTemperatureUnit: normalizeTrackerTemperatureUnit(unit) }),
       setTrackerPanelSectionOrder: (order) =>
         set({ trackerPanelSectionOrder: normalizeTrackerPanelSectionOrder(order) }),
@@ -1457,7 +1469,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 43,
+      version: 44,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1804,10 +1816,18 @@ export const useUIStore = create<UIState>()(
         if (version <= 41 && persisted.gameNotificationSound === undefined) {
           persisted.gameNotificationSound = true;
         }
-        // v42 -> v43: add YouTube DJ mini player toggle (default on so playback shows).
-        if (version <= 42 && persisted.youtubePlayerEnabled === undefined) {
+        // v42 -> v44: reconcile parallel v43 UI preference additions.
+        if (version <= 43 && persisted.youtubePlayerEnabled === undefined) {
           persisted.youtubePlayerEnabled = true;
         }
+        if (version <= 43) {
+          persisted.trackerPanelBackgroundColor = normalizeTrackerPanelBackgroundColor(
+            persisted.trackerPanelBackgroundColor,
+          );
+        }
+        persisted.trackerPanelBackgroundColor = normalizeTrackerPanelBackgroundColor(
+          persisted.trackerPanelBackgroundColor,
+        );
         delete persisted.trackerPanelWidth;
         return persisted;
       },
@@ -1823,6 +1843,7 @@ export const useUIStore = create<UIState>()(
         trackerPanelThoughtBubbleDisplay: state.trackerPanelThoughtBubbleDisplay,
         trackerPanelDockedThoughtsAlwaysVisible: state.trackerPanelDockedThoughtsAlwaysVisible,
         trackerPanelSizeProfile: state.trackerPanelSizeProfile,
+        trackerPanelBackgroundColor: state.trackerPanelBackgroundColor,
         trackerTemperatureUnit: state.trackerTemperatureUnit,
         trackerPanelCollapsedSections: state.trackerPanelCollapsedSections,
         trackerPanelSectionOrder: state.trackerPanelSectionOrder,

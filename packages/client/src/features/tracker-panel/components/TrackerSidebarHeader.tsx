@@ -42,7 +42,7 @@ export function TrackerSidebarHeader({
       onClick={onClose}
       title="Close trackers"
       aria-label="Close tracker panel"
-      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-[var(--background)]/45 text-[var(--primary)] ring-1 ring-[var(--primary)]/25 transition-all hover:bg-[var(--primary)]/12 hover:ring-[var(--primary)]/40 active:scale-90"
+      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-[var(--background)]/45 text-[var(--foreground)]/70 ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)]/45 hover:text-[var(--foreground)] hover:ring-[var(--foreground)]/20 active:scale-90"
     >
       <TrackerPanelIcon size="1.05rem" strokeWidth={1.95} />
     </button>
@@ -63,7 +63,7 @@ export function TrackerSidebarHeader({
         className={cn(
           "flex h-6 w-6 items-center justify-center rounded-sm transition-all ring-1 active:scale-90",
           addMode
-            ? "bg-[var(--primary)]/14 text-[var(--primary)] ring-[var(--primary)]/42"
+            ? "bg-[var(--foreground)]/12 text-[var(--foreground)] ring-[var(--foreground)]/24"
             : "text-[var(--muted-foreground)]/55 ring-transparent hover:bg-[var(--accent)] hover:text-[var(--muted-foreground)] hover:ring-[var(--border)]",
         )}
       >
@@ -93,7 +93,7 @@ export function TrackerSidebarHeader({
         onClick={() => onSetSizeProfile(nextSizeProfile)}
         title={sizeTitle}
         aria-label={sizeTitle}
-        className="flex h-6 w-6 items-center justify-center rounded-sm text-[var(--muted-foreground)]/62 ring-1 ring-transparent transition-all hover:bg-[var(--accent)] hover:text-[var(--primary)] hover:ring-[var(--border)] active:scale-90"
+        className="flex h-6 w-6 items-center justify-center rounded-sm text-[var(--muted-foreground)]/62 ring-1 ring-transparent transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] hover:ring-[var(--border)] active:scale-90"
       >
         <TrackerSizeTierIcon sizeProfile={sizeProfile} />
       </button>
@@ -104,21 +104,21 @@ export function TrackerSidebarHeader({
         aria-label={`Tracker panel anchored ${trackerPanelSide}. Click to anchor ${trackerPanelSide === "left" ? "right" : "left"}.`}
         role="switch"
         aria-checked={trackerPanelSide === "right"}
-        className="relative grid h-6 w-[2.875rem] grid-cols-2 items-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--background)]/30 p-0.5 text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/35 hover:bg-[var(--accent)]/60"
+        className="relative grid h-6 w-[2.875rem] grid-cols-2 items-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--background)]/30 p-0.5 text-[var(--muted-foreground)] transition-colors hover:border-[var(--foreground)]/20 hover:bg-[var(--accent)]/60"
       >
         <span
           className={cn(
-            "absolute inset-y-0.5 w-[1.25rem] rounded-full bg-[var(--primary)]/15 ring-1 ring-[var(--primary)]/30 transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]",
+            "absolute inset-y-0.5 w-[1.25rem] rounded-full bg-[var(--foreground)]/12 ring-1 ring-[var(--foreground)]/20 transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]",
             trackerPanelSide === "left" ? "translate-x-0.5" : "translate-x-[1.375rem]",
           )}
         />
         <PanelLeft
           size="0.75rem"
-          className={cn("relative z-10 mx-auto", trackerPanelSide === "left" && "text-[var(--primary)]")}
+          className={cn("relative z-10 mx-auto", trackerPanelSide === "left" && "text-[var(--foreground)]")}
         />
         <PanelRight
           size="0.75rem"
-          className={cn("relative z-10 mx-auto", trackerPanelSide === "right" && "text-[var(--primary)]")}
+          className={cn("relative z-10 mx-auto", trackerPanelSide === "right" && "text-[var(--foreground)]")}
         />
       </button>
     </div>

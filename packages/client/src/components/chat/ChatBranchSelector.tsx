@@ -4,6 +4,12 @@ import { Check, ChevronDown, GitBranch, Loader2, MessageSquare } from "lucide-re
 import { useChatGroup } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
+import {
+  ROLEPLAY_POPOVER_SCROLL_AREA,
+  ROLEPLAY_POPOVER_SHELL,
+  ROLEPLAY_POPOVER_SUBTITLE,
+  ROLEPLAY_POPOVER_TITLE,
+} from "./roleplay-popover-styles";
 
 interface ChatBranchSelectorProps {
   activeChatId: string | null;
@@ -48,10 +54,13 @@ export function ChatBranchSelector({
   useLayoutEffect(() => {
     if (!open || !buttonRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
+    const width = Math.max(rect.width, 280);
+    const viewportPadding = 12;
+    const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
     setPosition({
       top: rect.bottom + 8,
-      left: Math.max(12, Math.min(rect.left, window.innerWidth - Math.max(rect.width, 280) - 12)),
-      width: Math.max(rect.width, 280),
+      left: Math.max(viewportPadding, Math.min(rect.right - width, maxLeft)),
+      width,
     });
   }, [branches.length, open]);
 
@@ -159,19 +168,20 @@ export function ChatBranchSelector({
           <div
             ref={popoverRef}
             data-chat-branch-popover
-            className="fixed z-[9999] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl shadow-black/40"
+            className={cn(ROLEPLAY_POPOVER_SHELL, "fixed z-[9999] overflow-hidden")}
             style={{ top: position.top, left: position.left, width: position.width }}
           >
             <div className="border-b border-[var(--border)] px-3 py-2">
-              <div className="text-[0.6875rem] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
+              <div className={ROLEPLAY_POPOVER_TITLE}>
+                <GitBranch size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
                 Chat Branches
               </div>
-              <div className="mt-1 text-xs text-[var(--muted-foreground)]">
+              <div className={ROLEPLAY_POPOVER_SUBTITLE}>
                 Switch branches without opening Manage Chat Files.
               </div>
             </div>
 
-            <div className="max-h-[min(22rem,calc(100vh-8rem))] overflow-y-auto p-2">
+            <div className={cn(ROLEPLAY_POPOVER_SCROLL_AREA, "max-h-[min(22rem,calc(100vh-8rem))] overflow-y-auto p-2")}>
               {branches.map((branch) => {
                 const isActive = branch.id === activeChatId;
                 const updatedAt = new Date(branch.updatedAt).toLocaleString(undefined, {
@@ -191,14 +201,14 @@ export function ChatBranchSelector({
                     }}
                     className={cn(
                       "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
-                      isActive ? "bg-sky-500/10 text-[var(--foreground)]" : "hover:bg-[var(--accent)]",
+                      isActive ? "bg-[var(--accent)]/70 text-[var(--foreground)]" : "hover:bg-[var(--accent)]/45",
                     )}
                   >
                     <div
                       className={cn(
                         "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl",
                         isActive
-                          ? "bg-gradient-to-br from-sky-400 to-blue-500 text-white"
+                          ? "bg-[var(--foreground)]/15 text-[var(--foreground)]"
                           : "bg-[var(--secondary)] text-[var(--muted-foreground)]",
                       )}
                     >
@@ -211,7 +221,7 @@ export function ChatBranchSelector({
                     </div>
 
                     {isActive && (
-                      <span className="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[0.625rem] font-medium text-sky-400">
+                      <span className="shrink-0 rounded-full bg-[var(--foreground)]/10 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--foreground)]/75">
                         Active
                       </span>
                     )}

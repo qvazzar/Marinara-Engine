@@ -112,7 +112,6 @@ export function RoleplayHUDActionsMenu({
   const currentTab = tabs[safeTabIndex] ?? tabs[0];
   const activeTab = currentTab.id;
   const showTrackerActions = activeTab === "activity";
-  const showRetryFailedAction = !!(onRetryFailedAgents && failedAgentTypes && failedAgentTypes.length > 0);
   const displayedFailures = useMemo(
     () =>
       failedAgentFailures && failedAgentFailures.length > 0
@@ -120,6 +119,8 @@ export function RoleplayHUDActionsMenu({
         : (failedAgentTypes ?? []).map((agentType) => toAgentFailure({ agentType })),
     [failedAgentFailures, failedAgentTypes],
   );
+  const failureCount = displayedFailures.length;
+  const showRetryFailedAction = !!onRetryFailedAgents && failureCount > 0;
   const showFooterActions = showEcho || showTrackerActions || showRetryFailedAction;
 
   useEffect(() => {
@@ -151,7 +152,7 @@ export function RoleplayHUDActionsMenu({
                   }
                   className={
                     active
-                      ? "min-h-6 min-w-0 flex-1 rounded-md bg-[var(--primary)]/15 px-1.5 py-0.5 text-center text-[0.5625rem] font-semibold text-[var(--primary)] ring-1 ring-[var(--primary)]/25 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] max-md:min-h-7"
+                      ? "min-h-6 min-w-0 flex-1 rounded-md bg-[var(--card)] px-1.5 py-0.5 text-center text-[0.5625rem] font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] max-md:min-h-7"
                       : "min-h-6 min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-center text-[0.5625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]/45 hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] max-md:min-h-7"
                   }
                 >
@@ -166,23 +167,25 @@ export function RoleplayHUDActionsMenu({
       {activeTab === "activity" && (
         <>
           {isAgentProcessing && (
-            <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2">
-              <Sparkles size="0.75rem" className="animate-pulse text-foreground/65" />
-              <span className="text-[0.625rem] text-foreground/65">Agents thinking...</span>
+            <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2">
+              <Sparkles size="0.75rem" className="animate-pulse text-[var(--muted-foreground)]" />
+              <span className="text-[0.625rem] text-[var(--muted-foreground)]">Agents thinking...</span>
             </div>
           )}
           {!hasAnyActivity && (
-            <div className="px-3 py-4 text-center text-[0.625rem] text-white/30">No agent activity yet</div>
+            <div className="px-3 py-4 text-center text-[0.625rem] text-[var(--muted-foreground)]">
+              No agent activity yet
+            </div>
           )}
           {thoughtBubbles.length > 0 && (
             <>
-              <div className="flex items-center justify-between border-b border-white/5 px-3 py-1.5">
-                <span className="text-[0.625rem] text-white/40">
+              <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1.5">
+                <span className="text-[0.625rem] text-[var(--muted-foreground)]">
                   {uniqueAgentCount} agent{uniqueAgentCount !== 1 ? "s" : ""} triggered
                 </span>
                 <button
                   onClick={clearThoughtBubbles}
-                  className="text-[0.625rem] text-white/30 transition-colors hover:text-white/60"
+                  className="text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
                 >
                   Clear all
                 </button>
@@ -191,11 +194,11 @@ export function RoleplayHUDActionsMenu({
                 {thoughtBubbles.map((bubble, index) => (
                   <div
                     key={`${bubble.agentId}-${bubble.timestamp}`}
-                    className="relative rounded-lg bg-white/5 p-2 text-[0.625rem]"
+                    className="relative rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2 text-[0.625rem]"
                   >
                     <button
                       onClick={() => dismissThoughtBubble(index)}
-                      className="absolute right-1.5 top-1.5 text-white/20 transition-colors hover:text-white/60"
+                      className="absolute right-1.5 top-1.5 text-[var(--muted-foreground)]/50 transition-colors hover:text-[var(--foreground)]"
                     >
                       <X size="0.625rem" />
                     </button>
@@ -204,7 +207,9 @@ export function RoleplayHUDActionsMenu({
                       {bubble.agentId === "continuity" ? (
                         <ContinuityIssueChecklist content={bubble.content} compact />
                       ) : (
-                        <p className="mt-0.5 whitespace-pre-wrap text-white/50 leading-relaxed">{bubble.content}</p>
+                        <p className="mt-0.5 whitespace-pre-wrap text-[var(--muted-foreground)] leading-relaxed">
+                          {bubble.content}
+                        </p>
                       )}
                     </div>
                   </div>
@@ -249,7 +254,11 @@ export function RoleplayHUDActionsMenu({
 
       {activeTab === "secret" && showSecretPlotTab && (
         <Suspense
-          fallback={<div className="px-3 py-4 text-center text-[0.625rem] text-white/35">Loading secret plot...</div>}
+          fallback={
+            <div className="px-3 py-4 text-center text-[0.625rem] text-[var(--muted-foreground)]">
+              Loading secret plot...
+            </div>
+          }
         >
           <SecretPlotPanel
             chatId={chatId}
@@ -261,7 +270,7 @@ export function RoleplayHUDActionsMenu({
       )}
 
       {showFooterActions && (
-        <div className="border-t border-white/5 divide-y divide-white/5">
+        <div className="divide-y divide-[var(--border)] border-t border-[var(--border)]">
           {showRetryFailedAction && displayedFailures.length > 0 && (
             <div className="space-y-1.5 px-3 py-2">
               <div className="flex items-center gap-1.5 text-[0.5625rem] font-semibold uppercase tracking-wide text-amber-300/90">
@@ -287,7 +296,7 @@ export function RoleplayHUDActionsMenu({
           {showEcho && (
             <button
               onClick={toggleEchoChamber}
-              className="flex w-full items-center gap-2 px-3 py-2 text-[0.625rem] transition-colors hover:bg-white/5"
+              className="flex w-full items-center gap-2 px-3 py-2 text-[0.625rem] transition-colors hover:bg-[var(--accent)]/45"
             >
               <MessageCircle size="0.75rem" className={echoChamberOpen ? "text-foreground/75" : "text-foreground/50"} />
               <span className={echoChamberOpen ? "font-medium text-foreground/75" : "text-foreground/55"}>
@@ -306,7 +315,7 @@ export function RoleplayHUDActionsMenu({
                 clearGameState();
                 onClose();
               }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-[0.625rem] text-white/60 transition-colors hover:bg-red-500/10 hover:text-red-300"
+              className="flex w-full items-center gap-2 px-3 py-2 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:bg-red-500/10 hover:text-red-300"
             >
               <Trash2 size="0.75rem" className="text-current" />
               <span>Clear Trackers</span>
@@ -319,7 +328,7 @@ export function RoleplayHUDActionsMenu({
                 onClose();
               }}
               disabled={isGenerationBusy}
-              className="flex w-full items-center gap-2 px-3 py-2 text-[0.625rem] font-medium text-foreground/60 transition-colors hover:bg-white/5 hover:text-foreground/75 disabled:opacity-50"
+              className="flex w-full items-center gap-2 px-3 py-2 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]/45 hover:text-[var(--foreground)] disabled:opacity-50"
             >
               <RefreshCw size="0.6875rem" className={isGenerationBusy ? "animate-spin" : ""} />
               {isGenerationBusy
@@ -339,7 +348,7 @@ export function RoleplayHUDActionsMenu({
               className="flex w-full items-center gap-2 px-3 py-2 text-[0.625rem] font-medium text-amber-300 transition-colors hover:bg-amber-500/10 disabled:opacity-50"
             >
               <AlertTriangle size="0.6875rem" className={isGenerationBusy ? "animate-pulse" : ""} />
-              {isGenerationBusy ? "Busy..." : `Retry Failed Agents (${failedAgentTypes?.length ?? 0})`}
+              {isGenerationBusy ? "Busy..." : `Retry Failed Agents (${failureCount})`}
             </button>
           )}
         </div>
@@ -386,7 +395,7 @@ function CustomAgentRunsSection({
   );
 
   return (
-    <div className="border-t border-white/5">
+    <div className="border-t border-[var(--border)]">
       {collapsible ? (
         <button
           type="button"
@@ -544,12 +553,16 @@ function CustomAgentRunItem({ run }: { run: AgentRunRow }) {
       return;
     }
     setError(null);
-    await updateRun.mutateAsync({ id: run.id, chatId: run.chatId, resultData: parsed.value });
-    setEditing(false);
+    try {
+      await updateRun.mutateAsync({ id: run.id, chatId: run.chatId, resultData: parsed.value });
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save output");
+    }
   };
 
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]/55 p-2 text-[0.625rem] text-[var(--popover-foreground)]">
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2 text-[0.625rem] text-[var(--foreground)]">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">

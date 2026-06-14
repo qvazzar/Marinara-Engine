@@ -302,14 +302,14 @@ export function PersonaInventoryPanel({
   );
 
   return (
-    <div className="relative z-10 overflow-hidden border-b border-[color-mix(in_srgb,var(--border)_72%,transparent)] bg-[color-mix(in_srgb,var(--card)_5%,transparent)] shadow-inner transition-colors duration-200">
+    <div className="relative z-10 overflow-hidden border-b border-[color-mix(in_srgb,var(--border)_72%,transparent)] bg-[var(--tracker-panel-section-background,color-mix(in_srgb,var(--card)_5%,transparent))] shadow-inner transition-colors duration-200">
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)]" />
 
       <SectionHeader
         icon={<Sparkles size="0.6875rem" />}
         title="Persona"
         action={action}
-        className="bg-[color-mix(in_srgb,var(--background)_86%,var(--card)_14%)] [--primary:var(--sidebar-accent-foreground)] [--tracker-profile-icon:var(--sidebar-accent-foreground)]"
+        className="bg-[color-mix(in_srgb,var(--background)_86%,var(--card)_14%)] [--primary:var(--foreground)] [--tracker-profile-icon:var(--muted-foreground)]"
         collapsed={collapsed}
         onToggle={onToggleCollapsed}
       />
@@ -404,7 +404,7 @@ export function PersonaInventoryPanel({
                     onSave={onSaveStatus}
                     placeholder="Status"
                     className={cn(
-                      "relative z-[1] min-h-5 flex-1 rounded-[2px] px-0.5 py-0 text-[0.6875rem] font-medium leading-[0.875rem] text-[color-mix(in_srgb,var(--tracker-profile-text)_86%,var(--primary)_14%)] hover:bg-[var(--accent)]/18",
+                      "relative z-[1] min-h-5 flex-1 rounded-[2px] px-0.5 py-0 text-[0.6875rem] font-medium leading-[0.875rem] text-[color-mix(in_srgb,var(--tracker-profile-text)_92%,var(--muted-foreground)_8%)] hover:bg-[var(--accent)]/18",
                       trackerPanelSizeProfile === "compact" && "h-5",
                     )}
                     title={`${personaName} status`}

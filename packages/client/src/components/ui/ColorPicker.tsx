@@ -18,6 +18,8 @@ interface ColorPickerProps {
   helpText?: string;
   /** Text shown when no color is set. */
   emptyText?: string;
+  /** Text shown for the clear/reset action. */
+  clearLabel?: string;
   /** Optional compact control shown beside the label. */
   headerAction?: ReactNode;
 }
@@ -85,6 +87,7 @@ export function ColorPicker({
   label,
   helpText,
   emptyText = "No color set — uses default",
+  clearLabel = "Clear",
   headerAction,
 }: ColorPickerProps) {
   const isGradient = value.startsWith("linear-gradient");
@@ -183,7 +186,7 @@ export function ColorPicker({
               className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)] transition-all hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
             >
               <X size="0.625rem" />
-              Clear
+              {clearLabel}
             </button>
           )}
         </div>

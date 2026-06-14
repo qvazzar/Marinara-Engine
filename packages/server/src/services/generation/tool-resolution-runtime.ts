@@ -1,4 +1,4 @@
-import { BUILT_IN_TOOLS, DEFAULT_AGENT_TOOLS } from "@marinara-engine/shared";
+import { BUILT_IN_TOOLS, DEFAULT_AGENT_TOOLS, customAgentHasCapability } from "@marinara-engine/shared";
 import type { AgentContext } from "@marinara-engine/shared";
 import type { LLMToolDefinition } from "../llm/base-provider.js";
 import type { ResolvedAgent } from "../agents/agent-pipeline.js";
@@ -36,6 +36,8 @@ type CustomToolsStore = {
 };
 
 type ChatsStore = {
+  getMessage(id: string): Promise<{ id: string; chatId: string; role: string } | null>;
+  updateMessageContent(id: string, content: string): Promise<unknown>;
   patchMetadata(
     chatId: string,
     patcher: (currentMeta: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>,
@@ -87,6 +89,7 @@ const AGENT_ONLY_TOOL_NAMES = new Set([
   "append_chat_summary",
   "read_chat_variable",
   "write_chat_variable",
+  "edit_chat_message",
 ]);
 
 function parseExtra(extra: unknown): Record<string, unknown> {
@@ -483,6 +486,27 @@ export async function resolveGenerationTools({
     return updatedMeta;
   };
 
+  const replaceChatMessageContent = async (input: {
+    messageId: string;
+    content: string;
+    reason?: string;
+  }): Promise<Record<string, unknown>> => {
+    const message = await chats.getMessage(input.messageId);
+    if (!message || message.chatId !== chatId) {
+      return { error: "Message not found in this chat.", messageId: input.messageId };
+    }
+    if (message.role !== "user" && message.role !== "assistant") {
+      return { error: "Only user or assistant messages can be edited.", messageId: input.messageId };
+    }
+    await chats.updateMessageContent(input.messageId, input.content);
+    return {
+      applied: true,
+      messageId: input.messageId,
+      role: message.role,
+      reason: input.reason ?? null,
+    };
+  };
+
   const baseToolExecutionContext: ToolExecutionContext = {
     gameState: gameState ? (gameState as Record<string, unknown>) : undefined,
     customTools: customToolDefs,
@@ -508,12 +532,16 @@ export async function resolveGenerationTools({
     const agentTools = allToolDefs.filter(
       (toolDef) =>
         agentEnabledNames.includes(toolDef.function.name) &&
+        (toolDef.function.name !== "edit_chat_message" || customAgentHasCapability(agentSettings, "edit_messages")) &&
         (spotifyToolsAvailable || !spotifyToolNames.has(toolDef.function.name) || allowSpotifyAgentTools),
     );
     if (agentTools.length === 0) continue;
 
     const allowedToolNames = new Set(agentTools.map((toolDef) => toolDef.function.name));
     const saveLorebookEntry = createLorebookEntryWriter(lorebooksStore, agent, agentSettings);
+    const replaceChatMessageContentForAgent = customAgentHasCapability(agentSettings, "edit_messages")
+      ? replaceChatMessageContent
+      : undefined;
     if (agent.type === "spotify") {
       resetSpotifyAgentRuntime(agent);
     }
@@ -533,6 +561,7 @@ export async function resolveGenerationTools({
         const results = await executeToolCalls([call], {
           ...baseToolExecutionContext,
           saveLorebookEntry,
+          replaceChatMessageContent: replaceChatMessageContentForAgent,
         });
         const result = results[0]?.result ?? "Tool execution failed";
         if (agent.type === "spotify" && call.function.name === "spotify_play") {

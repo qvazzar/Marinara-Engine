@@ -41,14 +41,14 @@ import { ExternalThoughtBubble, InlineThoughtBubble } from "./CharacterThoughtBu
 
 const FEATURED_CARD_CLASS = cn(
   TRACKER_PROFILE_CARD_FRAME_CLASS,
-  "group/character mx-1 hover:border-[var(--primary)]/30",
+  "group/character mx-1 hover:border-[var(--foreground)]/20",
 );
 const FEATURED_COCKPIT_SHELF_CLASS = cn(
   "pointer-events-none absolute inset-x-0 top-5 z-0 h-[9rem] overflow-hidden border-b border-[color-mix(in_srgb,var(--tracker-profile-dialogue-border)_42%,transparent)] shadow-[inset_0_9px_16px_color-mix(in_srgb,var(--background)_18%,transparent),inset_0_-10px_18px_color-mix(in_srgb,var(--background)_38%,transparent)] @min-[380px]:h-[10.5rem]",
   TRACKER_PROFILE_MATERIAL_PANEL_CLASS,
 );
 const FEATURED_REMOVE_BUTTON_CLASS =
-  "rounded p-1 text-[var(--destructive)] transition-all hover:bg-[var(--destructive)]/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)] active:scale-90";
+  "rounded p-1 text-[var(--destructive)] transition-all hover:bg-[var(--destructive)]/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--border)] active:scale-90";
 const FEATURED_PORTRAIT_COLUMN_CLASS = "relative z-[1] min-w-0 self-start";
 const FEATURED_PORTRAIT_ANCHOR_CLASS = "relative min-w-0";
 const FEATURED_DETAILS_COLUMN_CLASS =

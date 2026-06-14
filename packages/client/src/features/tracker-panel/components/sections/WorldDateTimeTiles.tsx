@@ -32,7 +32,7 @@ export function WorldDateTile({
       >
         {isFreeformDate ? (
           <>
-            <span className="mb-0.5 max-w-full truncate text-[0.4375rem] font-bold uppercase leading-none text-[var(--primary)]/82">
+            <span className="mb-0.5 max-w-full truncate text-[0.4375rem] font-bold uppercase leading-none text-[var(--muted-foreground)]/75">
               Date
             </span>
             <span className="line-clamp-2 max-w-full break-words text-[0.5625rem] font-black leading-[0.625rem] text-[var(--foreground)] [overflow-wrap:anywhere]">
@@ -46,7 +46,7 @@ export function WorldDateTile({
           </>
         ) : (
           <>
-            <div className="bg-[var(--primary)]/24 text-[0.5rem] font-bold leading-[0.95rem] text-[var(--primary)]">
+            <div className="bg-[var(--foreground)]/10 text-[0.5rem] font-bold leading-[0.95rem] text-[var(--foreground)]/75">
               {display.month}
             </div>
             <div className="flex min-h-0 flex-col items-center justify-center bg-[var(--background)]/22 text-[var(--foreground)]">
@@ -70,16 +70,16 @@ function WorldClockFace({ hour, minute }: { hour: number | null; minute: number 
   const hourRotation = hasTime ? (hour % 12) * 30 + minute * 0.5 : -45;
 
   return (
-    <div className="relative flex h-7 w-7 items-center justify-center rounded-full border border-[var(--border)]/45 bg-[radial-gradient(circle_at_50%_48%,color-mix(in_srgb,var(--background)_58%,transparent)_0%,color-mix(in_srgb,var(--background)_84%,transparent)_68%,color-mix(in_srgb,var(--foreground)_8%,transparent)_100%)] text-sky-300 shadow-[inset_0_-2px_5px_rgba(0,0,0,0.28),0_0_10px_color-mix(in_srgb,var(--primary)_10%,transparent)]">
+    <div className="relative flex h-7 w-7 items-center justify-center rounded-full border border-[var(--border)]/45 bg-[radial-gradient(circle_at_50%_48%,color-mix(in_srgb,var(--background)_58%,transparent)_0%,color-mix(in_srgb,var(--background)_84%,transparent)_68%,color-mix(in_srgb,var(--foreground)_8%,transparent)_100%)] text-sky-300 shadow-[inset_0_-2px_5px_rgba(0,0,0,0.28),0_0_10px_rgba(56,189,248,0.10)]">
       {hasTime ? (
         <>
-          <span className="absolute h-1 w-1 rounded-full bg-sky-300 shadow-[0_0_5px_color-mix(in_srgb,var(--primary)_42%,transparent)]" />
+          <span className="absolute h-1 w-1 rounded-full bg-sky-300 shadow-[0_0_5px_rgba(125,211,252,0.42)]" />
           <span
             className="absolute left-1/2 top-1/2 h-[0.5625rem] w-[2px] origin-bottom rounded-full bg-sky-300"
             style={{ transform: `translate(-50%, -100%) rotate(${hourRotation}deg)` }}
           />
           <span
-            className="absolute left-1/2 top-1/2 h-[0.78rem] w-[1px] origin-bottom rounded-full bg-[var(--primary)]"
+            className="absolute left-1/2 top-1/2 h-[0.78rem] w-[1px] origin-bottom rounded-full bg-sky-200"
             style={{ transform: `translate(-50%, -100%) rotate(${minuteRotation}deg)` }}
           />
         </>

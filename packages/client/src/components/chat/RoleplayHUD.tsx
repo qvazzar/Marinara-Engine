@@ -34,6 +34,10 @@ import {
   getTemperatureKeywordHint,
   parseTemperatureValue,
 } from "../../features/tracker-panel/lib/world-state-display";
+import {
+  ROLEPLAY_POPOVER_SCROLL_AREA,
+  ROLEPLAY_POPOVER_SHELL,
+} from "./roleplay-popover-styles";
 import type {
   GameState,
   PresentCharacter,
@@ -434,7 +438,7 @@ export function RoleplayHUD({
 
 /** Common mobile HUD button sizing – used by all four strip buttons */
 const MOBILE_HUD_BTN =
-  "flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)]/80 backdrop-blur-md px-2 py-1.5 transition-all hover:bg-[var(--card)] dark:border-foreground/10 dark:bg-black/40 dark:hover:bg-black/60 cursor-pointer select-none";
+  "flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)]/80 backdrop-blur-md px-2 py-1.5 transition-all hover:bg-[var(--card)] dark:border-foreground/10 cursor-pointer select-none";
 
 function DeferredHUDPanelFallback({ label }: { label: string }) {
   return <div className="px-3 py-4 text-center text-[0.625rem] text-[var(--muted-foreground)]/60">{label}</div>;
@@ -585,7 +589,11 @@ function ActionsGroup({
     createPortal(
       <div
         ref={dropdownRef}
-        className="fixed w-72 max-w-[calc(100vw-1rem)] max-h-80 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--popover)] backdrop-blur-xl shadow-xl z-[9999] animate-message-in dark:border-foreground/10 dark:bg-black/80"
+        className={cn(
+          ROLEPLAY_POPOVER_SHELL,
+          ROLEPLAY_POPOVER_SCROLL_AREA,
+          "fixed z-[9999] max-h-80 w-72 max-w-[calc(100vw-1rem)] overflow-y-auto",
+        )}
         style={{ top: pos.top, left: pos.left }}
       >
         <Suspense fallback={<DeferredActionsFallback isAgentProcessing={isAgentProcessing} />}>
@@ -625,8 +633,8 @@ function ActionsGroup({
         ref={btnRef}
         onClick={() => setAgentsOpen(!agentsOpen)}
         className={cn(
-          "group flex items-center gap-1.5 md:gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)]/80 backdrop-blur-md px-2 py-1.5 md:px-2 md:py-2 md:h-10 transition-all hover:bg-[var(--card)] dark:border-foreground/10 dark:bg-black/40 dark:hover:bg-black/60 cursor-pointer select-none",
-          agentsOpen && "bg-[var(--card)] border-[var(--border)] dark:bg-black/60 dark:border-foreground/20",
+          "group flex items-center gap-1.5 md:gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)]/80 backdrop-blur-md px-2 py-1.5 md:px-2 md:py-2 md:h-10 transition-all hover:bg-[var(--card)] dark:border-foreground/10 cursor-pointer select-none",
+          agentsOpen && "bg-[var(--card)] border-[var(--border)] dark:border-foreground/20",
         )}
         title={`Agents & Actions${generatedAgentCount > 0 ? ` - ${generatedAgentCount} generated` : ""}${
           failedAgentTypes.length > 0 ? ` - ${failedAgentTypes.length} failed` : ""
@@ -718,7 +726,7 @@ function CombinedPlayerWidget({
       <button
         ref={buttonRef}
         onClick={() => setOpen(!open)}
-        className={cn(WIDGET, "text-orange-300")}
+        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
         title="Player & Tracker"
       >
         <div className="flex h-7 max-md:h-auto items-center justify-center shrink-0">
@@ -863,7 +871,9 @@ function WidgetPopover({
       ref={ref}
       style={pos ? { position: "fixed", top: pos.top, left: pos.left } : { position: "fixed", top: -9999, left: -9999 }}
       className={cn(
-        "z-[9999] min-h-24 min-w-60 max-w-[calc(100vw-1rem)] animate-message-in resize overflow-auto rounded-xl border border-[var(--border)] bg-[var(--popover)] backdrop-blur-xl shadow-xl dark:border-foreground/10 dark:bg-black/80",
+        ROLEPLAY_POPOVER_SHELL,
+        ROLEPLAY_POPOVER_SCROLL_AREA,
+        "z-[9999] min-h-24 min-w-60 max-w-[calc(100vw-1rem)] resize overflow-auto",
         className,
         "!max-h-[calc(100vh-1rem)]",
       )}
@@ -971,7 +981,7 @@ function PersonaStatsWidget({
       <button
         ref={buttonRef}
         onClick={() => setOpen(!open)}
-        className={cn(WIDGET, "text-violet-300")}
+        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
         title="Persona Stats"
       >
         {bars.length > 0 ? (
@@ -985,14 +995,17 @@ function PersonaStatsWidget({
                 >
                   <div
                     className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${pct}%`, backgroundColor: bar.color || "#8b5cf6" }}
+                    style={{
+                      width: `${pct}%`,
+                      backgroundColor: bar.color || "#a1a1aa",
+                    }}
                   />
                 </div>
               );
             })}
           </div>
         ) : (
-          <BarChart3 size="0.875rem" className="text-violet-400/40 max-md:h-3.5 max-md:w-3.5" />
+          <BarChart3 size="0.875rem" className="text-sky-400/45 max-md:h-3.5 max-md:w-3.5" />
         )}
         <span className="max-w-full truncate text-[0.5625rem] max-md:text-[0.4375rem] font-semibold leading-tight shrink-0 md:hidden">
           Persona
@@ -1069,7 +1082,7 @@ function CustomTrackerWidget({
       <button
         ref={buttonRef}
         onClick={() => setOpen(!open)}
-        className={cn(WIDGET, "text-cyan-300")}
+        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
         title="Custom Tracker"
       >
         {fields.length > 0 && currentField ? (
@@ -1150,7 +1163,12 @@ function InventoryWidget({
 
   return (
     <div className="relative">
-      <button ref={buttonRef} onClick={() => setOpen(!open)} className={cn(WIDGET, "text-amber-300")} title="Inventory">
+      <button
+        ref={buttonRef}
+        onClick={() => setOpen(!open)}
+        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
+        title="Inventory"
+      >
         {items.length > 0 && currentItem ? (
           <span
             key={animKey}
@@ -1207,7 +1225,7 @@ function QuestsWidget({
       <button
         ref={buttonRef}
         onClick={() => setOpen(!open)}
-        className={cn(WIDGET, "text-emerald-300")}
+        className={cn(WIDGET, "text-foreground/60 hover:text-foreground/75")}
         title="Active Quests"
       >
         {currentObjective ? (
@@ -1249,7 +1267,7 @@ function QuestsWidget({
 // ═══════════════════════════════════════════════
 
 const WIDGET =
-  "group flex w-10 h-10 max-md:w-auto max-md:h-auto max-md:px-2 max-md:py-1.5 flex-col items-center justify-center gap-0.5 max-md:gap-0 rounded-xl max-md:rounded-lg border border-[var(--border)] bg-[var(--card)]/80 backdrop-blur-md transition-all hover:bg-[var(--card)] dark:border-foreground/15 dark:bg-black/40 dark:hover:bg-black/60 cursor-pointer select-none overflow-hidden";
+  "group flex w-10 h-10 max-md:w-auto max-md:h-auto max-md:px-2 max-md:py-1.5 flex-col items-center justify-center gap-0.5 max-md:gap-0 rounded-xl max-md:rounded-lg border border-[var(--border)] bg-[var(--card)]/80 backdrop-blur-md transition-all hover:bg-[var(--card)] dark:border-foreground/15 cursor-pointer select-none overflow-hidden";
 
 // ═══════════════════════════════════════════════
 // Combined World-State Widget (icon strip + popover, desktop & mobile)
@@ -1314,8 +1332,8 @@ function CombinedWorldWidget({
         ref={buttonRef}
         onClick={() => setOpen(!open)}
         className={cn(
-          "flex items-center gap-1.5 md:gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)]/80 backdrop-blur-md px-2 py-1.5 md:px-2 md:py-2 md:h-10 transition-all hover:bg-[var(--card)] dark:border-foreground/10 dark:bg-black/40 dark:hover:bg-black/60 cursor-pointer select-none",
-          open && "bg-[var(--card)] border-[var(--border)] dark:bg-black/60 dark:border-foreground/20",
+          "flex items-center gap-1.5 md:gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)]/80 backdrop-blur-md px-2 py-1.5 md:px-2 md:py-2 md:h-10 transition-all hover:bg-[var(--card)] dark:border-foreground/10 cursor-pointer select-none",
+          open && "bg-[var(--card)] border-[var(--border)] dark:border-foreground/20",
         )}
         title="World State"
       >
@@ -1332,9 +1350,9 @@ function CombinedWorldWidget({
             rx="2"
             stroke="currentColor"
             strokeWidth="1.5"
-            className="text-violet-400/70"
+            className="text-zinc-300/70"
           />
-          <line x1="2" y1="8" x2="18" y2="8" stroke="currentColor" strokeWidth="1.2" className="text-violet-400/50" />
+          <line x1="2" y1="8" x2="18" y2="8" stroke="currentColor" strokeWidth="1.2" className="text-zinc-400/50" />
           <line
             x1="6"
             y1="2"
@@ -1343,7 +1361,7 @@ function CombinedWorldWidget({
             stroke="currentColor"
             strokeWidth="1.5"
             strokeLinecap="round"
-            className="text-violet-400/70"
+            className="text-zinc-300/70"
           />
           <line
             x1="14"
@@ -1353,7 +1371,7 @@ function CombinedWorldWidget({
             stroke="currentColor"
             strokeWidth="1.5"
             strokeLinecap="round"
-            className="text-violet-400/70"
+            className="text-zinc-300/70"
           />
           {dateParts.day && (
             <text
@@ -1363,7 +1381,7 @@ function CombinedWorldWidget({
               fill="currentColor"
               fontSize="7"
               fontWeight="700"
-              className="text-violet-300"
+              className="text-zinc-100"
             >
               {dateParts.day}
             </text>
@@ -1580,7 +1598,7 @@ function getLocationPinColor(location: string): string {
       l,
     )
   )
-    return "text-purple-400";
+    return "text-sky-400";
   // Interior / indoors
   if (
     /\b(room|hall|chamber|dungeon|cellar|basement|attic|library|study|bedroom|kitchen|office|lab|laboratory|vault|corridor|passage|cabin|hut|tent|interior|house|home|building|apartment|manor|lodge|dormitor|warehouse|prison|cell|jail)\b/.test(

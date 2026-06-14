@@ -185,7 +185,7 @@ export function AgentDebugPanel() {
 
                 return (
                   <div key={`tool-${i}`} className="rounded-md bg-[var(--muted)]/30 p-2">
-                    <div className="mb-1 flex items-center gap-1.5 font-semibold text-violet-400">
+                    <div className="mb-1 flex items-center gap-1.5 font-semibold text-[var(--muted-foreground)]">
                       <Wrench size="0.75rem" className="shrink-0" />
                       <span>{call ? "Tool Call" : "Tool Result"}</span>
                       <span className={cn("truncate font-medium", failed && "text-red-400")}>{name}</span>

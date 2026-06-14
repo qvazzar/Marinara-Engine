@@ -34,6 +34,7 @@ import {
 import { cn } from "../../lib/utils";
 import { api } from "../../lib/api-client";
 import { useAgentConfigs, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
+import { ROLEPLAY_POPOVER_HEADER, ROLEPLAY_POPOVER_TITLE } from "./roleplay-popover-styles";
 import type {
   CharacterStat,
   CustomTrackerField,
@@ -86,7 +87,7 @@ function TrackerSectionRefresh({
       }}
       disabled={busy}
       title={title ?? `Re-run ${agentType} only`}
-      className="rounded p-0.5 text-[var(--muted-foreground)]/50 transition-colors hover:bg-[var(--accent)] hover:text-purple-300 disabled:opacity-40"
+      className="rounded p-0.5 text-[var(--muted-foreground)]/50 transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
     >
       <RefreshCw size="0.625rem" className={busy ? "animate-spin" : ""} />
     </button>
@@ -94,6 +95,10 @@ function TrackerSectionRefresh({
 }
 
 const EMPTY_STATE = "text-[0.625rem] text-[var(--muted-foreground)]/60 text-center py-1";
+const TRACKER_SECTION_TITLE =
+  "text-[0.625rem] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider flex items-center gap-1";
+const TRACKER_SECTION_ACTION =
+  "flex items-center gap-0.5 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]";
 
 export function CombinedPlayerPanel({
   showPersona,
@@ -186,9 +191,9 @@ export function CombinedPlayerPanel({
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1.5">
-        <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider flex items-center gap-1">
-          <Swords size="0.625rem" /> Trackers
+      <div className={cn(ROLEPLAY_POPOVER_HEADER, "flex items-center justify-between")}>
+        <span className={ROLEPLAY_POPOVER_TITLE}>
+          <Swords size="0.625rem" className="text-orange-400/80" /> Trackers
         </span>
         <button
           onClick={onClose}
@@ -202,7 +207,7 @@ export function CombinedPlayerPanel({
           <div className="p-2">
             <PersonaStatusField value={personaStatus} onSave={onUpdatePersonaStatus} />
             <div className="flex items-center justify-between px-1 pb-1">
-              <span className="text-[0.625rem] font-semibold text-violet-300/70 uppercase tracking-wider">
+              <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider">
                 Persona Stats
               </span>
               <TrackerSectionRefresh
@@ -230,8 +235,8 @@ export function CombinedPlayerPanel({
         {showCharacters && (
           <div className="p-2">
             <div className="flex items-center justify-between px-1 pb-1">
-              <span className="text-[0.625rem] font-semibold text-purple-300/70 uppercase tracking-wider flex items-center gap-1">
-                <Users size="0.5625rem" /> Characters ({characters.length})
+              <span className={TRACKER_SECTION_TITLE}>
+                <Users size="0.5625rem" className="text-sky-400/80" /> Characters ({characters.length})
               </span>
               <span className="flex items-center gap-1">
                 <TrackerSectionRefresh
@@ -242,7 +247,7 @@ export function CombinedPlayerPanel({
                 />
                 <button
                   onClick={addCharacter}
-                  className="flex items-center gap-0.5 text-[0.625rem] text-purple-400 hover:text-purple-300 transition-colors"
+                  className="flex items-center gap-0.5 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
                 >
                   <Plus size="0.625rem" /> Add
                 </button>
@@ -323,12 +328,12 @@ export function CombinedPlayerPanel({
         {showPersona && (
           <div className="p-2">
             <div className="flex items-center justify-between px-1 pb-1">
-              <span className="text-[0.625rem] font-semibold text-amber-300/70 uppercase tracking-wider flex items-center gap-1">
-                <Package size="0.5625rem" /> Inventory ({inventory.length})
+              <span className={TRACKER_SECTION_TITLE}>
+                <Package size="0.5625rem" className="text-amber-400/80" /> Inventory ({inventory.length})
               </span>
               <button
                 onClick={addItem}
-                className="flex items-center gap-0.5 text-[0.625rem] text-amber-400 hover:text-amber-300 transition-colors"
+                className={TRACKER_SECTION_ACTION}
               >
                 <Plus size="0.625rem" /> Add
               </button>
@@ -367,8 +372,8 @@ export function CombinedPlayerPanel({
         {showQuests && (
           <div className="p-2">
             <div className="flex items-center justify-between px-1 pb-1">
-              <span className="text-[0.625rem] font-semibold text-emerald-300/70 uppercase tracking-wider flex items-center gap-1">
-                <Scroll size="0.5625rem" /> Quests ({quests.length})
+              <span className={TRACKER_SECTION_TITLE}>
+                <Scroll size="0.5625rem" className="text-emerald-400/80" /> Quests ({quests.length})
               </span>
               <span className="flex items-center gap-1">
                 <TrackerSectionRefresh
@@ -379,7 +384,7 @@ export function CombinedPlayerPanel({
                 />
                 <button
                   onClick={addQuest}
-                  className="flex items-center gap-0.5 text-[0.625rem] text-emerald-400 hover:text-emerald-300 transition-colors"
+                  className={TRACKER_SECTION_ACTION}
                 >
                   <Plus size="0.625rem" /> Add
                 </button>
@@ -402,8 +407,8 @@ export function CombinedPlayerPanel({
         {showCustomTracker && (
           <div className="p-2">
             <div className="flex items-center justify-between px-1 pb-1">
-              <span className="text-[0.625rem] font-semibold text-cyan-300/70 uppercase tracking-wider flex items-center gap-1">
-                <SlidersHorizontal size="0.5625rem" /> Custom ({customTrackerFields.length})
+              <span className={TRACKER_SECTION_TITLE}>
+                <SlidersHorizontal size="0.5625rem" className="text-cyan-400/80" /> Custom ({customTrackerFields.length})
               </span>
               <span className="flex items-center gap-1">
                 <TrackerSectionRefresh
@@ -414,7 +419,7 @@ export function CombinedPlayerPanel({
                 />
                 <button
                   onClick={addCustomField}
-                  className="flex items-center gap-0.5 text-[0.625rem] text-cyan-400 hover:text-cyan-300 transition-colors"
+                  className={TRACKER_SECTION_ACTION}
                 >
                   <Plus size="0.625rem" /> Add
                 </button>
@@ -486,8 +491,8 @@ export function PersonaStatsPanel({
       <div className="border-b border-[var(--border)] p-2">
         <PersonaStatusField value={status} onSave={onUpdateStatus} />
       </div>
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1.5">
-        <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider">
+      <div className={cn(ROLEPLAY_POPOVER_HEADER, "flex items-center justify-between")}>
+        <span className={ROLEPLAY_POPOVER_TITLE}>
           Persona Stats
         </span>
         <TrackerSectionRefresh
@@ -608,9 +613,9 @@ export function CharactersPanel({
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1.5">
-        <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider flex items-center gap-1">
-          <Users size="0.625rem" /> Present Characters
+      <div className={cn(ROLEPLAY_POPOVER_HEADER, "flex items-center justify-between")}>
+        <span className={ROLEPLAY_POPOVER_TITLE}>
+          <Users size="0.625rem" className="text-sky-400/80" /> Present Characters
         </span>
         <div className="flex items-center gap-2">
           <TrackerSectionRefresh
@@ -625,7 +630,7 @@ export function CharactersPanel({
               className={cn(
                 "flex items-center gap-1 text-[0.5625rem] transition-colors",
                 autoGenEnabled
-                  ? "text-purple-400"
+                  ? "text-[var(--foreground)]"
                   : "text-[var(--muted-foreground)]/50 hover:text-[var(--muted-foreground)]",
               )}
               title={autoGenEnabled ? "Auto-generate avatars: ON" : "Auto-generate avatars: OFF"}
@@ -636,7 +641,7 @@ export function CharactersPanel({
           )}
           <button
             onClick={addCharacter}
-            className="flex items-center gap-0.5 text-[0.625rem] text-purple-400 hover:text-purple-300 transition-colors"
+            className="flex items-center gap-0.5 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
           >
             <Plus size="0.625rem" /> Add
           </button>
@@ -654,7 +659,7 @@ export function CharactersPanel({
                     setUploadIdx(idx);
                     fileInputRef.current?.click();
                   }}
-                  className="shrink-0 rounded-full overflow-hidden ring-1 ring-purple-400/40 hover:ring-purple-400/80 transition-all"
+                  className="shrink-0 overflow-hidden rounded-full ring-1 ring-[var(--border)] transition-all hover:ring-[var(--foreground)]/30"
                   title="Change avatar"
                 >
                   <img src={char.avatarPath} alt={char.name} className="w-8 h-8 object-cover" />
@@ -665,7 +670,7 @@ export function CharactersPanel({
                     setUploadIdx(idx);
                     fileInputRef.current?.click();
                   }}
-                  className="shrink-0 w-8 h-8 rounded-full bg-[var(--muted)]/30 flex items-center justify-center text-[var(--muted-foreground)]/50 hover:text-purple-400 hover:bg-[var(--muted)]/50 transition-all ring-1 ring-[var(--border)]"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--muted)]/30 text-[var(--muted-foreground)]/50 ring-1 ring-[var(--border)] transition-all hover:bg-[var(--muted)]/50 hover:text-[var(--foreground)]"
                   title="Upload avatar"
                 >
                   <ImagePlus size="0.75rem" />
@@ -768,13 +773,13 @@ export function InventoryPanel({ items, onUpdate }: InventoryPanelProps) {
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1.5">
-        <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider flex items-center gap-1">
-          <Package size="0.625rem" /> Inventory ({items.length})
+      <div className={cn(ROLEPLAY_POPOVER_HEADER, "flex items-center justify-between")}>
+        <span className={ROLEPLAY_POPOVER_TITLE}>
+          <Package size="0.625rem" className="text-amber-400/80" /> Inventory ({items.length})
         </span>
         <button
           onClick={addItem}
-          className="flex items-center gap-0.5 text-[0.625rem] text-amber-400 hover:text-amber-300 transition-colors"
+          className={TRACKER_SECTION_ACTION}
         >
           <Plus size="0.625rem" /> Add
         </button>
@@ -844,9 +849,9 @@ export function QuestsPanel({ quests, onUpdate, onRerunSingleTracker, isTrackerR
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1.5">
-        <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider flex items-center gap-1">
-          <Scroll size="0.625rem" /> Quests ({quests.length})
+      <div className={cn(ROLEPLAY_POPOVER_HEADER, "flex items-center justify-between")}>
+        <span className={ROLEPLAY_POPOVER_TITLE}>
+          <Scroll size="0.625rem" className="text-emerald-400/80" /> Quests ({quests.length})
         </span>
         <span className="flex items-center gap-1">
           <TrackerSectionRefresh
@@ -857,7 +862,7 @@ export function QuestsPanel({ quests, onUpdate, onRerunSingleTracker, isTrackerR
           />
           <button
             onClick={addQuest}
-            className="flex items-center gap-0.5 text-[0.625rem] text-emerald-400 hover:text-emerald-300 transition-colors"
+            className={TRACKER_SECTION_ACTION}
           >
             <Plus size="0.625rem" /> Add
           </button>
@@ -907,9 +912,9 @@ export function CustomTrackerPanel({
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1.5">
-        <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider flex items-center gap-1">
-          <SlidersHorizontal size="0.625rem" /> Custom Tracker ({fields.length})
+      <div className={cn(ROLEPLAY_POPOVER_HEADER, "flex items-center justify-between")}>
+        <span className={ROLEPLAY_POPOVER_TITLE}>
+          <SlidersHorizontal size="0.625rem" className="text-cyan-400/80" /> Custom Tracker ({fields.length})
         </span>
         <span className="flex items-center gap-1">
           <TrackerSectionRefresh
@@ -920,7 +925,7 @@ export function CustomTrackerPanel({
           />
           <button
             onClick={addField}
-            className="flex items-center gap-0.5 text-[0.625rem] text-cyan-400 hover:text-cyan-300 transition-colors"
+            className={TRACKER_SECTION_ACTION}
           >
             <Plus size="0.625rem" /> Add
           </button>
@@ -997,9 +1002,9 @@ export function CombinedWorldPanel({
 }: CombinedWorldPanelProps) {
   return (
     <>
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1.5">
-        <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider flex items-center gap-1">
-          <CloudSun size="0.625rem" /> World State
+      <div className={cn(ROLEPLAY_POPOVER_HEADER, "flex items-center justify-between")}>
+        <span className={ROLEPLAY_POPOVER_TITLE}>
+          <CloudSun size="0.625rem" className="text-sky-400/80" /> World State
         </span>
         <span className="flex items-center gap-1">
           <TrackerSectionRefresh
@@ -1022,35 +1027,35 @@ export function CombinedWorldPanel({
           label="Location"
           value={location}
           onSave={onSaveLocation}
-          accent="text-emerald-300"
+          accent="text-[var(--foreground)]/80"
         />
         <WorldFieldRow
-          icon={<CalendarDays size="0.8125rem" className="text-violet-400" />}
+          icon={<CalendarDays size="0.8125rem" className="text-[var(--muted-foreground)]" />}
           label="Date"
           value={date}
           onSave={onSaveDate}
-          accent="text-violet-300"
+          accent="text-[var(--foreground)]"
         />
         <WorldFieldRow
           icon={<Clock size="0.8125rem" className="text-amber-400" />}
           label="Time"
           value={time}
           onSave={onSaveTime}
-          accent="text-amber-300"
+          accent="text-[var(--foreground)]/80"
         />
         <WorldFieldRow
           icon={<span className="text-sm leading-none">{weatherEmoji}</span>}
           label="Weather"
           value={weather}
           onSave={onSaveWeather}
-          accent="text-sky-300"
+          accent="text-[var(--foreground)]/80"
         />
         <WorldFieldRow
           icon={<Thermometer size="0.8125rem" className={tempColor} />}
           label="Temperature"
           value={temperature}
           onSave={onSaveTemperature}
-          accent="text-rose-300"
+          accent="text-[var(--foreground)]"
         />
       </div>
     </>
@@ -1240,7 +1245,7 @@ function InlineEdit({
         }}
         onBlur={commit}
         className={cn(
-          "bg-[var(--muted)]/20 rounded px-1.5 py-0.5 text-[0.625rem] text-[var(--foreground)] outline-none border border-[var(--border)] focus:border-purple-400/40",
+          "rounded border border-[var(--border)] bg-[var(--muted)]/20 px-1.5 py-0.5 text-[0.625rem] text-[var(--foreground)] outline-none focus:border-[var(--foreground)]/30",
           className,
         )}
         placeholder={placeholder}
@@ -1285,10 +1290,10 @@ function InlineEdit({
 
 function PersonaStatusField({ value, onSave }: { value: string; onSave?: (v: string) => void }) {
   return (
-    <div className="mb-2 rounded-lg border border-violet-400/15 bg-violet-500/5 px-2 py-1.5">
+    <div className="mb-2 rounded-lg border border-[var(--border)]/60 bg-[var(--muted)]/10 px-2 py-1.5">
       <div className="mb-0.5 flex items-center gap-1.5">
-        <Sparkles size="0.5625rem" className="text-violet-300/60" />
-        <span className="text-[0.5625rem] font-semibold uppercase tracking-wide text-violet-200/65">
+        <Sparkles size="0.5625rem" className="text-[var(--muted-foreground)]/60" />
+        <span className="text-[0.5625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]/70">
           Current Status
         </span>
       </div>

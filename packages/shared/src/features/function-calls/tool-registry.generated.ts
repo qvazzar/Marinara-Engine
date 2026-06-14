@@ -18,6 +18,7 @@ import { spotifyGetPlaylistTracksToolManifest } from "./tools/spotify-get-playli
 import { spotifySearchToolManifest } from "./tools/spotify-search/manifest.js";
 import { spotifyPlayToolManifest } from "./tools/spotify-play/manifest.js";
 import { spotifySetVolumeToolManifest } from "./tools/spotify-set-volume/manifest.js";
+import { editChatMessageToolManifest } from "./tools/edit-chat-message/manifest.js";
 
 export const BUILT_IN_TOOL_MANIFESTS: readonly ToolDefinition[] = [
   rollDiceToolManifest,
@@ -36,5 +37,6 @@ export const BUILT_IN_TOOL_MANIFESTS: readonly ToolDefinition[] = [
   spotifySearchToolManifest,
   spotifyPlayToolManifest,
   spotifySetVolumeToolManifest,
+  editChatMessageToolManifest,
 ];
 

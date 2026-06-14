@@ -4,7 +4,7 @@
 // Positions itself within the chat area, respecting sidebar, right panel,
 // HUD widget position (top/left/right), and the top bar.
 // ──────────────────────────────────────────────
-import { useRef, useEffect, useMemo, useState } from "react";
+import { useRef, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { X, Trash2 } from "lucide-react";
 import { useAgentStore } from "../../stores/agent.store";
 import { useUIStore } from "../../stores/ui.store";
@@ -14,6 +14,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useChat } from "../../hooks/use-chats";
 import { api } from "../../lib/api-client";
 import { cn } from "../../lib/utils";
+import { ROLEPLAY_POPOVER_SHELL } from "./roleplay-popover-styles";
 
 const MESSAGE_INTERVAL_MS = 30_000; // 30 s between reveals
 const NAME_COLORS = [
@@ -21,14 +22,14 @@ const NAME_COLORS = [
   "text-blue-400",
   "text-green-400",
   "text-yellow-400",
-  "text-purple-400",
-  "text-pink-400",
   "text-cyan-400",
   "text-orange-400",
   "text-emerald-400",
-  "text-rose-400",
-  "text-indigo-400",
   "text-amber-400",
+  "text-teal-400",
+  "text-lime-400",
+  "text-sky-400",
+  "text-stone-300",
 ];
 
 const CORNERS: EchoChamberSide[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
@@ -36,7 +37,8 @@ const CORNERS: EchoChamberSide[] = ["top-left", "top-right", "bottom-left", "bot
 // Layout constants (px)
 const WIDGET_BAR_H = 76; // top HUD toolbar: py-2 (16px) + widget buttons h-[3.75rem] (60px)
 const INPUT_BOX_H = 72; // bottom chat input area height
-const GAP = 8; // breathing room
+const HUD_EDGE_GAP = 16; // Aligns with the roleplay HUD edge padding.
+const FLOATING_EDGE_GAP = 16;
 
 interface EchoChamberPanelProps {
   hiddenOnMobile?: boolean;
@@ -53,7 +55,7 @@ function CornerPicker({ current, onChange }: { current: EchoChamberSide; onChang
           onClick={() => onChange(c)}
           className={cn(
             "h-[0.4375rem] w-[0.4375rem] rounded-[0.09375rem] transition-colors",
-            c === current ? "bg-purple-400" : "bg-white/15 hover:bg-white/30",
+            c === current ? "bg-white/70" : "bg-white/15 hover:bg-white/30",
           )}
           title={c.replace("-", " ")}
         />
@@ -187,7 +189,7 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
   }, [echoMessages]);
 
   // ── Compute position style relative to the chat area container ──
-  const [posStyle, setPosStyle] = useState<Record<string, number | undefined>>({});
+  const [posStyle, setPosStyle] = useState<CSSProperties>({});
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
 
   useEffect(() => {
@@ -225,10 +227,10 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
     // Desktop: position within the chat area container (absolute, not fixed)
     const isTop = echoChamberSide.startsWith("top");
     const isLeft = echoChamberSide.endsWith("left");
-    const topOffset = isTop ? WIDGET_BAR_H + GAP : undefined;
-    const bottomOffset = !isTop ? INPUT_BOX_H + GAP : undefined;
-    const leftOffset = isLeft ? GAP : undefined;
-    const rightOffset = !isLeft ? GAP : undefined;
+    const topOffset = isTop ? WIDGET_BAR_H + FLOATING_EDGE_GAP : undefined;
+    const bottomOffset = !isTop ? INPUT_BOX_H + FLOATING_EDGE_GAP : undefined;
+    const leftOffset = isLeft ? `calc(${HUD_EDGE_GAP}px + var(--tracker-panel-hud-clear-left, 0px))` : undefined;
+    const rightOffset = !isLeft ? `calc(${HUD_EDGE_GAP}px + var(--tracker-panel-hud-clear-right, 0px))` : undefined;
     setPosStyle({
       ...(topOffset !== undefined && { top: topOffset }),
       ...(bottomOffset !== undefined && { bottom: bottomOffset }),
@@ -243,14 +245,15 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
   return (
     <div
       className={cn(
-        "absolute z-[60] flex flex-col rounded-xl border border-white/[0.04] shadow-lg",
+        ROLEPLAY_POPOVER_SHELL,
+        "absolute z-[60] flex flex-col",
         "pointer-events-auto w-60 max-md:w-auto max-h-44 max-md:max-h-28",
       )}
-      style={{ ...posStyle, background: "rgba(10, 10, 22, 0.35)", backdropFilter: "blur(14px)" }}
+      style={posStyle}
     >
       {/* Header — live dot, corner picker, close */}
       <div className="flex items-center justify-between px-2 py-1">
-        <span className="flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-purple-400/60">
+        <span className="flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
           <span className="relative flex h-1.5 w-1.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-60" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-red-500" />

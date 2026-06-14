@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent } from "react";
-import { ChevronDown, Save, Settings2 } from "lucide-react";
+import { ChevronDown, MessageSquare, Save, Settings2 } from "lucide-react";
 import { HelpTooltip } from "../../../components/ui/HelpTooltip";
 import {
   CHAT_PARAMETER_DEFAULTS,
@@ -16,7 +16,11 @@ interface AdvancedParametersSectionProps {
   isConversation: boolean;
   connectionId: string | null;
   connections: Record<string, unknown>[];
+  contextMessageLimit: number | null | undefined;
+  excludePastReasoning: boolean | undefined;
   onChatParametersChange: (chatParameters: Record<string, unknown>) => void;
+  onContextMessageLimitChange: (value: number | null) => void;
+  onExcludePastReasoningChange: (value: boolean) => void;
 }
 
 export function AdvancedParametersSection({
@@ -24,7 +28,11 @@ export function AdvancedParametersSection({
   isConversation,
   connectionId,
   connections,
+  contextMessageLimit,
+  excludePastReasoning,
   onChatParametersChange,
+  onContextMessageLimitChange,
+  onExcludePastReasoningChange,
 }: AdvancedParametersSectionProps) {
   const modeDefaults = isConversation ? CHAT_PARAMETER_DEFAULTS : ROLEPLAY_PARAMETER_DEFAULTS;
   const conn = connectionId ? connections.find((connection) => connection.id === connectionId) : null;
@@ -33,6 +41,7 @@ export function AdvancedParametersSection({
   const [expanded, setExpanded] = useState(false);
   const params = (metadata.chatParameters as Record<string, unknown>) ?? {};
   const effectiveParams = getEditableGenerationParameters(defaults, params);
+  const excludeReasoningEnabled = excludePastReasoning !== false;
 
   const setParameters = (next: EditableGenerationParameters) => {
     onChatParametersChange({ ...params, ...next });
@@ -77,6 +86,103 @@ export function AdvancedParametersSection({
             showOpenRouterServiceTier={conn?.provider === "openrouter"}
             onChange={setParameters}
           />
+          <div className="space-y-2 border-t border-[var(--border)] pt-3">
+            <div className="flex items-center gap-1.5 text-xs font-semibold">
+              <MessageSquare size="0.75rem" className="text-[var(--muted-foreground)]" />
+              <span>Context</span>
+              <HelpTooltip
+                text="Limit how many messages are included in the context sent to the AI model. When off, all messages are sent up to the model's context window."
+                size="0.625rem"
+              />
+            </div>
+            <button
+              type="button"
+              aria-pressed={Boolean(contextMessageLimit)}
+              onClick={() => {
+                if (contextMessageLimit) {
+                  onContextMessageLimitChange(null);
+                } else {
+                  onContextMessageLimitChange(50);
+                }
+              }}
+              className={cn(
+                "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+                contextMessageLimit
+                  ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                  : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+              )}
+            >
+              <div>
+                <span className="text-xs font-medium">Limit Context Messages</span>
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                  Only send the last N messages to the model.
+                </p>
+              </div>
+              <div
+                className={cn(
+                  "h-5 w-9 overflow-hidden rounded-full p-0.5 transition-colors",
+                  contextMessageLimit ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                )}
+              >
+                <div
+                  className={cn(
+                    "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                    contextMessageLimit && "translate-x-3.5",
+                  )}
+                />
+              </div>
+            </button>
+            {contextMessageLimit && (
+              <div className="flex items-center gap-2 px-1">
+                <input
+                  type="number"
+                  aria-label="Context message limit"
+                  min={1}
+                  max={9999}
+                  value={contextMessageLimit}
+                  onChange={(event) => {
+                    const value = parseInt(event.target.value, 10);
+                    if (value > 0) {
+                      onContextMessageLimitChange(value);
+                    }
+                  }}
+                  className="w-20 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
+                />
+                <span className="text-[0.625rem] text-[var(--muted-foreground)]">messages</span>
+              </div>
+            )}
+            <button
+              type="button"
+              aria-pressed={excludeReasoningEnabled}
+              onClick={() => onExcludePastReasoningChange(!excludeReasoningEnabled)}
+              className={cn(
+                "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+                excludeReasoningEnabled
+                  ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                  : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+              )}
+            >
+              <div>
+                <span className="text-xs font-medium">Exclude Past Reasoning</span>
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                  Keep stored thinking/reasoning metadata out of future prompts.
+                </p>
+              </div>
+              <div
+                className={cn(
+                  "h-5 w-9 overflow-hidden rounded-full p-0.5 transition-colors",
+                  excludeReasoningEnabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                )}
+              >
+                <div
+                  className={cn(
+                    "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                    excludeReasoningEnabled && "translate-x-3.5",
+                  )}
+                />
+              </div>
+            </button>
+          </div>
           {connectionId && connectionId !== "random" && (
             <button
               onClick={() => {

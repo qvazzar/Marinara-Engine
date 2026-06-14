@@ -1,4 +1,4 @@
-import { useState, type ReactNode, type KeyboardEvent } from "react";
+import { useState, type CSSProperties, type ReactNode, type KeyboardEvent } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../../components/ui/HelpTooltip";
@@ -8,10 +8,11 @@ interface ChatSettingsSectionProps {
   icon?: ReactNode;
   count?: number;
   help?: string;
+  style?: CSSProperties;
   children: ReactNode;
 }
 
-export function ChatSettingsSection({ label, icon, count, help, children }: ChatSettingsSectionProps) {
+export function ChatSettingsSection({ label, icon, count, help, style, children }: ChatSettingsSectionProps) {
   const [open, setOpen] = useState(false);
   const toggleOpen = () => setOpen((o) => !o);
   const handleHeaderKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -22,7 +23,7 @@ export function ChatSettingsSection({ label, icon, count, help, children }: Chat
   };
 
   return (
-    <div className="border-b border-[var(--border)]">
+    <div className="border-b border-[var(--border)]" style={style}>
       <div
         role="button"
         tabIndex={0}
@@ -48,7 +49,7 @@ export function ChatSettingsSection({ label, icon, count, help, children }: Chat
           className={cn("text-[var(--muted-foreground)] transition-transform", open && "rotate-180")}
         />
       </div>
-      {open && <div className="px-6 py-3">{children}</div>}
+      {open && <div className="px-4 pb-3">{children}</div>}
     </div>
   );
 }

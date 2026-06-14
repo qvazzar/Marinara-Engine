@@ -22,6 +22,7 @@ import {
   isAgentAvailableInChatMode,
   normalizeAgentPromptTemplateSelectionMap,
   normalizeThinkingTagPairs,
+  customAgentHasCapability,
   supportsXhighReasoningEffort,
 } from "@marinara-engine/shared";
 import type {
@@ -335,6 +336,131 @@ import {
   shouldDeferExpressionAgentEvent,
 } from "../services/generation/agent-event-dispatcher.js";
 import { findLastUserMessageIdBefore } from "../services/generation/message-history.js";
+
+function findResultAgent(result: AgentResult, agents: ResolvedAgent[]): ResolvedAgent | null {
+  return agents.find((agent) => agent.id === result.agentId || agent.type === result.agentType) ?? null;
+}
+
+function customAgentCanApplyResult(
+  result: AgentResult,
+  agents: ResolvedAgent[],
+  builtInAgentTypes: Set<string>,
+  capability: Parameters<typeof customAgentHasCapability>[1],
+): boolean {
+  if (builtInAgentTypes.has(result.agentType)) return true;
+  const agent = findResultAgent(result, agents);
+  return agent ? customAgentHasCapability(agent.settings, capability) : false;
+}
+
+function customAgentCanEmitResult(
+  result: AgentResult,
+  agents: ResolvedAgent[],
+  builtInAgentTypes: Set<string>,
+): boolean {
+  if (builtInAgentTypes.has(result.agentType)) return true;
+  switch (result.type) {
+    case "text_rewrite":
+      return customAgentCanApplyResult(result, agents, builtInAgentTypes, "edit_messages");
+    case "lorebook_update":
+      return (
+        customAgentCanApplyResult(result, agents, builtInAgentTypes, "edit_lorebooks") ||
+        customAgentCanApplyResult(result, agents, builtInAgentTypes, "create_lorebooks")
+      );
+    case "game_state_update":
+    case "character_tracker_update":
+    case "persona_stats_update":
+    case "custom_tracker_update":
+      return customAgentCanApplyResult(result, agents, builtInAgentTypes, "edit_trackers");
+    case "image_prompt":
+      return customAgentCanApplyResult(result, agents, builtInAgentTypes, "trigger_image_generation");
+    case "prompt_patch":
+      return customAgentCanApplyResult(result, agents, builtInAgentTypes, "edit_main_prompt");
+    case "frontend_theme_update":
+      return customAgentCanApplyResult(result, agents, builtInAgentTypes, "change_frontend_styling");
+    default:
+      return true;
+  }
+}
+
+function resolveCustomWritableLorebookIds(settings: Record<string, unknown>): string[] | null {
+  const ids: string[] = [];
+  for (const key of ["writableLorebookId", "targetLorebookId"]) {
+    const value = settings[key];
+    if (typeof value === "string" && value.trim()) ids.push(value.trim());
+  }
+  const arrayValue = settings.writableLorebookIds;
+  if (Array.isArray(arrayValue)) {
+    for (const value of arrayValue) {
+      if (typeof value === "string" && value.trim()) ids.push(value.trim());
+    }
+  }
+  return ids.length > 0 ? Array.from(new Set(ids)) : null;
+}
+
+function promptPreviewForAgents(messages: ChatMessage[]): string {
+  const preview = messages
+    .map((message, index) => {
+      const content = String(message.content ?? "").slice(0, 3000);
+      return `<message index="${index}" role="${message.role}">\n${content}\n</message>`;
+    })
+    .join("\n\n");
+  return preview.slice(0, 24_000);
+}
+
+function findLastPromptMessageIndex(messages: ChatMessage[], role: ChatMessage["role"]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === role) return index;
+  }
+  return -1;
+}
+
+function applyPromptPatchOperations(messages: ChatMessage[], data: unknown): number {
+  if (!data || typeof data !== "object") return 0;
+  const rawOperations = Array.isArray((data as Record<string, unknown>).operations)
+    ? ((data as Record<string, unknown>).operations as unknown[])
+    : [data];
+  let applied = 0;
+
+  for (const rawOperation of rawOperations.slice(0, 12)) {
+    if (!rawOperation || typeof rawOperation !== "object") continue;
+    const operation = rawOperation as Record<string, unknown>;
+    const content = typeof operation.content === "string" ? operation.content.slice(0, 12_000) : "";
+    if (!content.trim()) continue;
+    const target = typeof operation.target === "string" ? operation.target : "last_user";
+    const mode =
+      operation.mode === "replace" || operation.mode === "prepend" || operation.mode === "append"
+        ? operation.mode
+        : "append";
+
+    if (target === "append_system" || target === "prepend_system") {
+      const message = { role: "system" as const, content };
+      if (target === "prepend_system") messages.unshift(message);
+      else messages.push(message);
+      applied++;
+      continue;
+    }
+
+    const index =
+      target === "first_system"
+        ? messages.findIndex((message) => message.role === "system")
+        : target === "last_message"
+          ? messages.length - 1
+          : findLastPromptMessageIndex(messages, "user");
+    if (index < 0 || !messages[index]) continue;
+
+    const current = messages[index]!;
+    const nextContent =
+      mode === "replace"
+        ? content
+        : mode === "prepend"
+          ? `${content}\n\n${current.content}`
+          : `${current.content}\n\n${content}`;
+    messages[index] = { ...current, content: nextContent };
+    applied++;
+  }
+
+  return applied;
+}
 
 export async function generateRoutes(app: FastifyInstance) {
   const isDebug = logger.isLevelEnabled("debug");
@@ -3070,6 +3196,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
         const recentMsgs = agentSlice.map((m: any) => {
           const msg: AgentContext["recentMessages"][number] = {
+            id: typeof m.id === "string" ? m.id : undefined,
             role: m.role as string,
             content: m.content as string,
             characterId: m.characterId ?? undefined,
@@ -3627,10 +3754,21 @@ export async function generateRoutes(app: FastifyInstance) {
           findTrackerContextInsertIndex,
         });
 
-        const { sendAgentEvent, sendAgentResultEvent } = createAgentEventDispatcher({
+        const {
+          sendAgentEvent: sendRawAgentEvent,
+          sendAgentResultEvent: sendRawAgentResultEvent,
+        } = createAgentEventDispatcher({
           resolvedAgents,
           sendEvent: (payload) => trySendSseEvent(reply, payload),
         });
+        const sendAgentEvent = (result: AgentResult, options?: { finalized?: boolean }) => {
+          if (!customAgentCanEmitResult(result, resolvedAgents, builtInAgentTypes)) return;
+          sendRawAgentEvent(result, options);
+        };
+        const sendAgentResultEvent = (result: AgentResult) => {
+          if (!customAgentCanEmitResult(result, resolvedAgents, builtInAgentTypes)) return;
+          sendRawAgentResultEvent(result);
+        };
 
         for (const warning of agentConnectionWarnings) {
           trySendSseEvent(reply, { type: "agent_warning", data: warning });
@@ -3692,6 +3830,9 @@ export async function generateRoutes(app: FastifyInstance) {
           agentContext,
           emitMetadataPatch: (patch) => trySendSseEvent(reply, { type: "metadata_patch", data: patch }),
         });
+        // Pre-generation prompt-patch agents read the assembled prompt here; this is overwritten
+        // with the fitted provider prompt before each main model call.
+        agentContext.memory._mainPromptPreview = promptPreviewForAgents(finalMessages);
         const pipeline = createAgentPipeline(pipelineAgents, agentContext, sendAgentEvent);
 
         // ────────────────────────────────────────
@@ -3953,6 +4094,19 @@ export async function generateRoutes(app: FastifyInstance) {
           if (nonCriticalFailed.length > 0) {
             const failedNames = nonCriticalFailed.map((r) => r.agentType).join(", ");
             logger.warn(`[pre-gen] Non-critical agent(s) failed (${failedNames}) — continuing generation`);
+          }
+
+          for (const result of preGenResults) {
+            if (!result.success || result.type !== "prompt_patch") continue;
+            if (!customAgentCanApplyResult(result, resolvedAgents, builtInAgentTypes, "edit_main_prompt")) continue;
+            const applied = applyPromptPatchOperations(finalMessages, result.data);
+            if (applied > 0) {
+              logger.info("[custom-agent] Applied %d prompt patch operation(s) from %s", applied, result.agentType);
+              trySendSseEvent(reply, {
+                type: "prompt_patch",
+                data: { agentType: result.agentType, applied },
+              });
+            }
           }
 
           const shouldReviewWriterAgentOutputs =
@@ -4797,6 +4951,9 @@ export async function generateRoutes(app: FastifyInstance) {
           };
 
           let finalPromptSent: ChatMessage[] = [];
+          const rememberMainPromptPreviewForAgents = (messages: ChatMessage[]) => {
+            agentContext.memory._mainPromptPreview = promptPreviewForAgents(messages);
+          };
           let effectiveMaxTokensForSend = maxTokens;
           const fitPromptForSend = (candidateMessages: ChatMessage[]): ChatMessage[] => {
             const fit = fitMessagesToContext(
@@ -4813,6 +4970,7 @@ export async function generateRoutes(app: FastifyInstance) {
             fitPromptForSend(toProviderMessages(preparedMessagesForGen)),
           );
           finalPromptSent = initialProviderMessages;
+          rememberMainPromptPreviewForAgents(initialProviderMessages);
 
           // Reset per-character accumulators
           fullResponse = "";
@@ -4946,6 +5104,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 let result;
                 try {
                   loopMessages = fitPromptForSend(loopMessages);
+                  rememberMainPromptPreviewForAgents(loopMessages);
                   logPromptSentToModel(
                     loopMessages,
                     round === 0 ? "Prompt sent to model" : `Prompt sent to model (tool round ${round + 1})`,
@@ -5097,6 +5256,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   // Reset per-character accumulator for final round content
                   const prevLen = fullResponse.length;
                   loopMessages = fitPromptForSend(loopMessages);
+                  rememberMainPromptPreviewForAgents(loopMessages);
                   logPromptSentToModel(loopMessages, "Prompt sent to model (final tool follow-up)");
                   const finalResult = await provider.chatComplete(loopMessages, {
                     model: conn.model,
@@ -6446,7 +6606,8 @@ export async function generateRoutes(app: FastifyInstance) {
               result.success &&
               result.type === "game_state_update" &&
               result.data &&
-              typeof result.data === "object"
+              typeof result.data === "object" &&
+              customAgentCanApplyResult(result, resolvedAgents, builtInAgentTypes, "edit_trackers")
             ) {
               try {
                 const gs = result.data as Record<string, unknown>;
@@ -6568,7 +6729,8 @@ export async function generateRoutes(app: FastifyInstance) {
               result.success &&
               result.type === "character_tracker_update" &&
               result.data &&
-              typeof result.data === "object"
+              typeof result.data === "object" &&
+              customAgentCanApplyResult(result, resolvedAgents, builtInAgentTypes, "edit_trackers")
             ) {
               try {
                 const ctData = result.data as Record<string, unknown>;
@@ -6797,7 +6959,8 @@ export async function generateRoutes(app: FastifyInstance) {
               result.success &&
               result.type === "persona_stats_update" &&
               result.data &&
-              typeof result.data === "object"
+              typeof result.data === "object" &&
+              customAgentCanApplyResult(result, resolvedAgents, builtInAgentTypes, "edit_trackers")
             ) {
               try {
                 const psData = result.data as Record<string, unknown>;
@@ -6870,7 +7033,8 @@ export async function generateRoutes(app: FastifyInstance) {
               result.success &&
               result.type === "custom_tracker_update" &&
               result.data &&
-              typeof result.data === "object"
+              typeof result.data === "object" &&
+              customAgentCanApplyResult(result, resolvedAgents, builtInAgentTypes, "edit_trackers")
             ) {
               try {
                 const ctData = result.data as Record<string, unknown>;
@@ -6907,7 +7071,13 @@ export async function generateRoutes(app: FastifyInstance) {
             }
 
             // Quest Tracker agent → merge quest updates into playerStats.activeQuests
-            if (result.success && result.type === "quest_update" && result.data && typeof result.data === "object") {
+            if (
+              result.success &&
+              result.type === "quest_update" &&
+              result.data &&
+              typeof result.data === "object" &&
+              customAgentCanApplyResult(result, resolvedAgents, builtInAgentTypes, "edit_trackers")
+            ) {
               try {
                 const qData = result.data as Record<string, unknown>;
                 const updates = Array.isArray(qData.updates) ? qData.updates : [];
@@ -6965,18 +7135,38 @@ export async function generateRoutes(app: FastifyInstance) {
             // Lorebook Keeper agent → persist new/updated entries to the database
             if (result.success && result.type === "lorebook_update" && result.data && typeof result.data === "object") {
               try {
+                const resultAgent = findResultAgent(result, resolvedAgents);
+                const isBuiltInLorebookAgent = builtInAgentTypes.has(result.agentType);
+                const customCanEditLorebooks =
+                  isBuiltInLorebookAgent || (resultAgent ? customAgentHasCapability(resultAgent.settings, "edit_lorebooks") : false);
+                const customCanCreateLorebooks =
+                  isBuiltInLorebookAgent ||
+                  (resultAgent ? customAgentHasCapability(resultAgent.settings, "create_lorebooks") : false);
+                if (!customCanEditLorebooks && !customCanCreateLorebooks) continue;
+
                 const lkData = result.data as Record<string, unknown>;
                 const updates = (lkData.updates as any[]) ?? [];
                 if (updates.length > 0) {
+                  const customWritableLorebookIds =
+                    !isBuiltInLorebookAgent && resultAgent
+                      ? resolveCustomWritableLorebookIds(resultAgent.settings)
+                      : agentContext.writableLorebookIds;
+                  const writableLorebookIds = customCanEditLorebooks ? customWritableLorebookIds : null;
+                  const preferredTargetLorebookId =
+                    !isBuiltInLorebookAgent && resultAgent
+                      ? (writableLorebookIds?.[0] ?? null)
+                      : typeof agentContext.memory._lorebookKeeperTargetLorebookId === "string"
+                        ? (agentContext.memory._lorebookKeeperTargetLorebookId as string)
+                        : null;
+                  if (!customCanCreateLorebooks && !preferredTargetLorebookId && !writableLorebookIds?.length) {
+                    continue;
+                  }
                   await persistLorebookKeeperUpdates({
                     lorebooksStore,
                     chatId: input.chatId,
                     chatName: chat.name,
-                    preferredTargetLorebookId:
-                      typeof agentContext.memory._lorebookKeeperTargetLorebookId === "string"
-                        ? (agentContext.memory._lorebookKeeperTargetLorebookId as string)
-                        : null,
-                    writableLorebookIds: agentContext.writableLorebookIds,
+                    preferredTargetLorebookId,
+                    writableLorebookIds,
                     updates,
                   });
                 }
@@ -7093,7 +7283,13 @@ export async function generateRoutes(app: FastifyInstance) {
             }
 
             // ── ILLUSTRATOR HANDLER: generate image from agent prompt ──
-            if (result.success && result.type === "image_prompt" && result.data && typeof result.data === "object") {
+            if (
+              result.success &&
+              result.type === "image_prompt" &&
+              result.data &&
+              typeof result.data === "object" &&
+              customAgentCanApplyResult(result, resolvedAgents, builtInAgentTypes, "trigger_image_generation")
+            ) {
               const illData = result.data as Record<string, unknown>;
               const shouldGenerate = illData.shouldGenerate === true;
               const imagePrompt = ((illData.prompt as string) ?? "").trim();
@@ -7374,7 +7570,12 @@ export async function generateRoutes(app: FastifyInstance) {
                   /* Non-critical */
                 }
 
-                if (editorResult.success && editorResult.type === "text_rewrite" && editorResult.data) {
+                if (
+                  editorResult.success &&
+                  editorResult.type === "text_rewrite" &&
+                  editorResult.data &&
+                  customAgentCanApplyResult(editorResult, resolvedAgents, builtInAgentTypes, "edit_messages")
+                ) {
                   const edData = editorResult.data as Record<string, unknown>;
                   const editedText = (edData.editedText as string) ?? "";
                   const changes = (edData.changes as Array<{ description: string }>) ?? [];

@@ -69,11 +69,11 @@ const NAME_PREVIEW_CLASS =
   "relative z-[1] w-full text-[0.75rem] font-bold leading-5 text-[color:var(--tracker-profile-nameplate-text)] drop-shadow-[0_1px_2px_rgba(0,0,0,0.42)] @min-[340px]:text-[0.8125rem]";
 
 export const TRACKER_PROFILE_NAMEPLATE_ICON_BUTTON_CLASS =
-  "flex h-4 w-4 items-center justify-center rounded-full border border-transparent bg-[color-mix(in_srgb,var(--background)_18%,transparent)] text-[var(--tracker-profile-icon)]/54 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--tracker-profile-dialogue-border)_20%,transparent),inset_0_1px_0_color-mix(in_srgb,var(--foreground)_6%,transparent)] transition-all hover:border-[color-mix(in_srgb,var(--primary)_32%,transparent)] hover:bg-[color-mix(in_srgb,var(--tracker-profile-accent-solid)_9%,transparent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)] active:scale-95";
+  "flex h-4 w-4 items-center justify-center rounded-full border border-transparent bg-[color-mix(in_srgb,var(--background)_18%,transparent)] text-[var(--tracker-profile-icon)]/54 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--tracker-profile-dialogue-border)_20%,transparent),inset_0_1px_0_color-mix(in_srgb,var(--foreground)_6%,transparent)] transition-all hover:border-[color-mix(in_srgb,var(--foreground)_24%,transparent)] hover:bg-[color-mix(in_srgb,var(--foreground)_8%,transparent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--border)] active:scale-95";
 export const TRACKER_PROFILE_NAMEPLATE_ICON_BUTTON_ACTIVE_CLASS =
-  "border-[color-mix(in_srgb,var(--primary)_46%,transparent)] bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] text-[var(--primary)] shadow-[0_0_6px_color-mix(in_srgb,var(--primary)_12%,transparent),inset_0_1px_0_color-mix(in_srgb,var(--foreground)_8%,transparent)]";
+  "border-[color-mix(in_srgb,var(--foreground)_32%,transparent)] bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)] text-[var(--foreground)] shadow-[0_0_6px_color-mix(in_srgb,var(--foreground)_10%,transparent),inset_0_1px_0_color-mix(in_srgb,var(--foreground)_8%,transparent)]";
 export const TRACKER_PROFILE_NAMEPLATE_HEADER_BUTTON_CLASS =
-  "flex h-4 w-4 items-center justify-center rounded-sm text-[var(--muted-foreground)]/45 opacity-70 transition-all hover:bg-[var(--primary)]/8 hover:text-[var(--tracker-profile-icon)]/75 hover:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)]/55 focus-visible:opacity-100 active:scale-95";
+  "flex h-4 w-4 items-center justify-center rounded-sm text-[var(--muted-foreground)]/45 opacity-70 transition-all hover:bg-[var(--foreground)]/8 hover:text-[var(--tracker-profile-icon)]/75 hover:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--border)] focus-visible:opacity-100 active:scale-95";
 
 function TrackerProfileNameplateClasp({
   side,

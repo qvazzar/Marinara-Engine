@@ -305,7 +305,7 @@ export function getTemperatureGaugeDisplay(
     value === null ? 42 : Math.max(8, Math.min(96, Math.round(((Math.max(-12, Math.min(42, value)) + 12) / 54) * 100)));
   const color =
     value === null
-      ? "color-mix(in srgb, var(--primary) 42%, var(--muted-foreground) 28%)"
+      ? "color-mix(in srgb, var(--foreground) 42%, var(--muted-foreground) 28%)"
       : value < 0
         ? "rgb(96 165 250)"
         : value < 15
@@ -342,7 +342,7 @@ export function getLocationPinColor(location: string | null | undefined) {
       text,
     )
   ) {
-    return "text-purple-400";
+    return "text-sky-400";
   }
   if (
     /\b(room|hall|chamber|dungeon|cellar|basement|attic|library|study|bedroom|kitchen|office|lab|laboratory|vault|corridor|passage|cabin|hut|tent|interior|house|home|building|apartment|manor|lodge|dormitor|warehouse|prison|cell|jail)\b/.test(
@@ -361,64 +361,8 @@ export function getLocationPinColor(location: string | null | undefined) {
   return "text-emerald-400";
 }
 
-export function getWorldAmbienceStyle(state: GameState | null): CSSProperties {
-  const weather = (state?.weather ?? "").toLowerCase();
-  const location = (state?.location ?? "").toLowerCase();
-  const time = (state?.time ?? "").toLowerCase();
-  const temperature = (state?.temperature ?? "").toLowerCase();
-  const tempValue = parseTemperatureValue(state?.temperature) ?? getTemperatureKeywordHint(state?.temperature);
-  let primary = "var(--primary)";
-  let secondary = "var(--accent)";
-  let primaryMix = 20;
-  let secondaryMix = 22;
-
-  if (weather.includes("rain") || weather.includes("storm") || weather.includes("thunder")) {
-    primary = "rgb(56 189 248)";
-    secondary = "rgb(59 130 246)";
-    primaryMix = 24;
-    secondaryMix = 30;
-  } else if (
-    weather.includes("snow") ||
-    weather.includes("frost") ||
-    weather.includes("blizzard") ||
-    (tempValue !== null && tempValue < 4)
-  ) {
-    primary = "rgb(186 230 253)";
-    secondary = "rgb(96 165 250)";
-    primaryMix = 18;
-    secondaryMix = 24;
-  } else if (
-    weather.includes("fire") ||
-    weather.includes("ash") ||
-    weather.includes("sunny") ||
-    temperature.includes("hot") ||
-    (tempValue !== null && tempValue > 32) ||
-    /\b(desert|waste|volcano|forge|lava|dune)\b/.test(location)
-  ) {
-    primary = "rgb(245 158 11)";
-    secondary = "rgb(244 63 94)";
-    primaryMix = 24;
-    secondaryMix = 26;
-  } else if (/\b(night|midnight|dusk|moon|evening)\b/.test(time)) {
-    primary = "rgb(129 140 248)";
-    secondary = "rgb(168 85 247)";
-    primaryMix = 22;
-    secondaryMix = 26;
-  } else if (/\b(forest|grove|garden|field|meadow|wild|trail|river|lake|sea|shore)\b/.test(location)) {
-    primary = "rgb(52 211 153)";
-    secondary = "rgb(132 204 22)";
-    primaryMix = 18;
-    secondaryMix = 20;
-  } else if (/\b(city|market|inn|tavern|castle|room|hall|tower|street|shop|temple)\b/.test(location)) {
-    primary = "var(--primary)";
-    secondary = "rgb(168 85 247)";
-    primaryMix = 22;
-    secondaryMix = 20;
-  }
-
+export function getWorldAmbienceStyle(_state: GameState | null): CSSProperties {
   return {
-    background:
-      `linear-gradient(135deg, color-mix(in srgb, color-mix(in srgb, var(--card) ${100 - primaryMix}%, ${primary} ${primaryMix}%) 58%, transparent), ` +
-      `color-mix(in srgb, color-mix(in srgb, var(--background) ${100 - secondaryMix}%, ${secondary} ${secondaryMix}%) 52%, transparent))`,
+    background: "var(--tracker-panel-section-background, color-mix(in srgb, var(--card) 6%, transparent))",
   };
 }

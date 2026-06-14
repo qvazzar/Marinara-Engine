@@ -40,7 +40,7 @@ import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useGameStateStore } from "../../stores/game-state.store";
-import { useLorebooks } from "../../hooks/use-lorebooks";
+import { useActiveLorebookEntries, useLorebooks } from "../../hooks/use-lorebooks";
 import { usePresets } from "../../hooks/use-presets";
 import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
@@ -49,7 +49,11 @@ import { ChatBranchSelector } from "./ChatBranchSelector";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { EndSceneBar } from "./SceneBanner";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
-import { ActiveWorldInfoButton } from "./ActiveWorldInfoButton";
+import {
+  ROLEPLAY_POPOVER_SCROLL_AREA,
+  ROLEPLAY_POPOVER_SHELL,
+  ROLEPLAY_POPOVER_TITLE,
+} from "./roleplay-popover-styles";
 import type { SpriteDisplayMode } from "./sprite-display-modes";
 import type {
   CharacterMap,
@@ -101,8 +105,11 @@ const PANEL_BACKDROP =
   "fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]";
 const TRACKER_FOREGROUND_AVOIDANCE_CLASS =
   "md:pl-[var(--tracker-chat-avoid-left)] md:pr-[var(--tracker-chat-avoid-right)] md:transition-[padding] md:duration-200 md:ease-[cubic-bezier(0.16,1,0.3,1)]";
-const PANEL_CONTAINER =
-  "relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in";
+const PANEL_CONTAINER = cn(
+  ROLEPLAY_POPOVER_SHELL,
+  ROLEPLAY_POPOVER_SCROLL_AREA,
+  "relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto p-3",
+);
 const roleplayNotificationSeenKeys = new Set<string>();
 
 function WeatherEffectsConnected() {
@@ -354,7 +361,7 @@ function ToolbarMenu({ children }: { children: ReactNode }) {
           createPortal(
             <div
               ref={popRef}
-              className="fixed z-[9999] flex w-9 flex-col items-center gap-0.5 rounded-xl border border-foreground/10 bg-[var(--card)] p-1 shadow-xl backdrop-blur-xl animate-message-in"
+              className={cn(ROLEPLAY_POPOVER_SHELL, "fixed z-[9999] flex w-9 flex-col items-center gap-0.5 p-1")}
               style={{ top: pos.top, right: pos.right }}
               onClick={() => setOpen(false)}
             >
@@ -389,6 +396,10 @@ function ActiveContextLinksButton({
   const compact = useUIStore((s) => s.centerCompact);
   const { data: lorebooks } = useLorebooks();
   const { data: presets } = usePresets();
+  const { data: activeLorebookScan, isLoading: activeLorebookScanLoading } = useActiveLorebookEntries(
+    chat?.id ?? null,
+    open && !!chat?.id,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -414,7 +425,33 @@ function ActiveContextLinksButton({
   const characterIds = chatCharIds.filter((id) => !inactiveCharacterIds.includes(id));
   const activeLorebookIds = readStringArray(chatMeta.activeLorebookIds);
   const promptPresetId = typeof chat.promptPresetId === "string" ? chat.promptPresetId : null;
-  const hasLinks = characterIds.length > 0 || activeLorebookIds.length > 0 || !!promptPresetId;
+  const triggeredEntries = activeLorebookScan?.entries ?? [];
+  const skippedLorebookEntries = activeLorebookScan?.budgetSkippedEntries ?? [];
+  const visibleLorebookIds = Array.from(
+    new Set([
+      ...activeLorebookIds,
+      ...triggeredEntries.map((entry) => entry.lorebookId),
+      ...skippedLorebookEntries.map((entry) => entry.lorebookId),
+    ]),
+  );
+  const triggeredEntriesByLorebook = new Map<string, typeof triggeredEntries>();
+  for (const entry of triggeredEntries) {
+    const current = triggeredEntriesByLorebook.get(entry.lorebookId) ?? [];
+    current.push(entry);
+    triggeredEntriesByLorebook.set(entry.lorebookId, current);
+  }
+  const skippedEntriesByLorebook = new Map<string, typeof skippedLorebookEntries>();
+  for (const entry of skippedLorebookEntries) {
+    const current = skippedEntriesByLorebook.get(entry.lorebookId) ?? [];
+    current.push(entry);
+    skippedEntriesByLorebook.set(entry.lorebookId, current);
+  }
+  const hasLinks =
+    characterIds.length > 0 ||
+    visibleLorebookIds.length > 0 ||
+    triggeredEntries.length > 0 ||
+    skippedLorebookEntries.length > 0 ||
+    !!promptPresetId;
 
   if (!hasLinks) return null;
 
@@ -437,6 +474,8 @@ function ActiveContextLinksButton({
   const itemClassName =
     "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-foreground/80 transition-colors hover:bg-foreground/10 hover:text-foreground";
   const iconClassName = "shrink-0 text-foreground/55";
+  const entryClassName =
+    "flex min-w-0 items-center gap-1.5 rounded-md bg-foreground/5 px-2 py-1 text-[0.625rem] text-foreground/70 ring-1 ring-foreground/10";
 
   return (
     <div className="relative" ref={ref} onClick={(event) => event.stopPropagation()}>
@@ -459,9 +498,16 @@ function ActiveContextLinksButton({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-[var(--border)] bg-[var(--card)] p-2 shadow-2xl shadow-black/40 animate-message-in"
+          className={cn(
+            ROLEPLAY_POPOVER_SHELL,
+            ROLEPLAY_POPOVER_SCROLL_AREA,
+            "absolute right-0 top-full z-50 mt-2 max-h-[min(32rem,calc(100vh-6rem))] w-72 overflow-y-auto p-2",
+          )}
         >
-          <div className="px-2 pb-1 text-[0.625rem] font-semibold uppercase text-foreground/45">Active Context</div>
+          <div className={cn(ROLEPLAY_POPOVER_TITLE, "px-2 pb-1")}>
+            <BookOpen size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+            Active Context
+          </div>
           <div className="space-y-1">
             {characterIds.map((id, index) => (
               <button
@@ -478,13 +524,51 @@ function ActiveContextLinksButton({
                 <span className="shrink-0 text-[0.625rem] text-foreground/45">Card</span>
               </button>
             ))}
-            {activeLorebookIds.map((id, index) => (
-              <button key={id} type="button" role="menuitem" className={itemClassName} onClick={() => openLorebook(id)}>
-                <BookOpen size="0.8125rem" className={iconClassName} />
-                <span className="min-w-0 flex-1 truncate">{lorebookNameById.get(id) ?? `Lorebook ${index + 1}`}</span>
-                <span className="shrink-0 text-[0.625rem] text-foreground/45">Lorebook</span>
-              </button>
-            ))}
+            {visibleLorebookIds.map((id, index) => {
+              const entries = triggeredEntriesByLorebook.get(id) ?? [];
+              const skippedEntries = skippedEntriesByLorebook.get(id) ?? [];
+              return (
+                <div key={id} className="space-y-1">
+                  <button type="button" role="menuitem" className={itemClassName} onClick={() => openLorebook(id)}>
+                    <BookOpen size="0.8125rem" className={iconClassName} />
+                    <span className="min-w-0 flex-1 truncate">
+                      {lorebookNameById.get(id) ?? `Lorebook ${index + 1}`}
+                    </span>
+                    <span className="shrink-0 text-[0.625rem] text-foreground/45">
+                      {entries.length > 0 ? `${entries.length} hit${entries.length === 1 ? "" : "s"}` : "Lorebook"}
+                    </span>
+                  </button>
+                  {entries.length > 0 && (
+                    <div className="ml-6 space-y-1 border-l border-foreground/10 pl-2">
+                      {entries.map((entry) => (
+                        <div key={entry.id} className={entryClassName} title={entry.content || entry.name}>
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+                          <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                          {entry.constant && (
+                            <span className="shrink-0 rounded bg-amber-400/15 px-1 py-0.5 text-[0.5rem] font-semibold text-amber-300">
+                              CONST
+                            </span>
+                          )}
+                          <span className="shrink-0 text-foreground/40">#{entry.order}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {skippedEntries.length > 0 && (
+                    <div className="ml-6 rounded-md bg-amber-500/10 px-2 py-1 text-[0.625rem] leading-relaxed text-amber-100/80 ring-1 ring-amber-500/20">
+                      {skippedEntries.length} matching {skippedEntries.length === 1 ? "entry was" : "entries were"}{" "}
+                      skipped by token budget.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {open && activeLorebookScanLoading && visibleLorebookIds.length > 0 && (
+              <div className="flex items-center gap-2 px-2 py-1.5 text-[0.625rem] text-foreground/50">
+                <Loader2 size="0.6875rem" className="animate-spin" />
+                Scanning active lorebook entries...
+              </div>
+            )}
             {promptPresetId && (
               <button
                 type="button"
@@ -636,7 +720,7 @@ function AuthorNotesButton({ chatId, chatMeta }: { chatId: string | null; chatMe
             document.body,
           )
         ) : (
-          <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in">
+          <div className={cn(ROLEPLAY_POPOVER_SHELL, "absolute right-0 top-full z-50 mt-2 w-72 p-3")}>
             <Suspense
               fallback={
                 <div className="flex items-center gap-2 py-4 text-xs text-[var(--muted-foreground)]">
@@ -1091,7 +1175,6 @@ export function ChatRoleplaySurface({
                       chatCharIds={chatCharIds}
                       characterMap={characterMap}
                     />
-                    <ActiveWorldInfoButton chatId={chat?.id ?? null} />
                     <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
                     <RpToolbarButton
                       icon={<FolderOpen size="0.875rem" />}
@@ -1178,7 +1261,6 @@ export function ChatRoleplaySurface({
                           chatCharIds={chatCharIds}
                           characterMap={characterMap}
                         />
-                        <ActiveWorldInfoButton chatId={chat?.id ?? null} />
                         <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
                         <RpToolbarButton
                           icon={<FolderOpen size="0.875rem" />}
@@ -1235,7 +1317,6 @@ export function ChatRoleplaySurface({
                         chatCharIds={chatCharIds}
                         characterMap={characterMap}
                       />
-                      <ActiveWorldInfoButton chatId={chat?.id ?? null} />
                       <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
                       <RpToolbarButton
                         icon={<FolderOpen size="0.875rem" />}

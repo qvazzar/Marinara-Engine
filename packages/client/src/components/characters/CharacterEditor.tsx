@@ -1770,7 +1770,7 @@ function AdvancedTab({
         <div className="flex items-center justify-between">
           <span className="inline-flex items-center gap-1 text-xs font-semibold">
             Depth Prompt{" "}
-            <HelpTooltip text="Injects text at a specific position in the chat history. Depth 0 = at the end, depth 4 = 4 messages back. Useful for persistent reminders." />
+            <HelpTooltip text="Injects text at a specific position in the chat history. Depth 0 = after the latest message, depth 4 = 4 messages back. Useful for persistent reminders." />
           </span>
           <button
             type="button"

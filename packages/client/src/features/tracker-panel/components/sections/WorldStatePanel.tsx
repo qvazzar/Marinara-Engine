@@ -44,7 +44,7 @@ export function WorldStatePanel({
       className="relative z-10 overflow-hidden border-b border-[var(--border)] shadow-inner transition-colors duration-200"
       style={getWorldAmbienceStyle(state)}
     >
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-[var(--primary)]/20" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-[var(--foreground)]/10" />
 
       <SectionHeader
         icon={<MapPin size="0.6875rem" />}

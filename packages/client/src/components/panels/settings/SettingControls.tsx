@@ -106,7 +106,7 @@ export function ConversationSoundSetting() {
       setBrowserPermission(permission);
       if (permission === "granted") {
         setConversationBrowserNotifications(true);
-        toast.success("Browser notifications enabled for background Conversation replies.");
+        toast.success("Browser notifications enabled for background replies.");
         return;
       }
       setConversationBrowserNotifications(false);
@@ -156,7 +156,7 @@ export function ConversationSoundSetting() {
         <HelpTooltip text="Show an operating-system browser notification when a background Conversation reply arrives while Marinara is not focused. Message content is hidden." />
       </div>
       <ToggleSetting
-        label="Background Conversation replies"
+        label="Background replies"
         checked={conversationBrowserNotifications && browserPermission === "granted"}
         onChange={handleBrowserNotificationToggle}
       />

@@ -4,6 +4,7 @@
 import {
   APP_LANGUAGE_OPTIONS,
   TRACKER_DATA_PANEL_SECTIONS,
+  TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR,
   useUIStore,
   getTrackerPanelWidthForProfile,
   type ConversationMessageStyle,
@@ -88,6 +89,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useGameAssetStore } from "../../stores/game-asset.store";
 import { chatKeys } from "../../hooks/use-chats";
 import { HelpTooltip } from "../ui/HelpTooltip";
+import { ColorPicker } from "../ui/ColorPicker";
 import { TrackerPanelIcon } from "../ui/TrackerPanelIcon";
 import { TrackerSizeTierIcon } from "../ui/TrackerSizeTierIcon";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
@@ -813,6 +815,8 @@ function TrackerPanelAppearanceDrawer({
   setTrackerPanelDockedThoughtsAlwaysVisible,
   trackerPanelSizeProfile,
   setTrackerPanelSizeProfile,
+  trackerPanelBackgroundColor,
+  setTrackerPanelBackgroundColor,
   trackerTemperatureUnit,
   setTrackerTemperatureUnit,
 }: {
@@ -828,11 +832,21 @@ function TrackerPanelAppearanceDrawer({
   setTrackerPanelDockedThoughtsAlwaysVisible: (visible: boolean) => void;
   trackerPanelSizeProfile: TrackerPanelSizeProfile;
   setTrackerPanelSizeProfile: (profile: TrackerPanelSizeProfile) => void;
+  trackerPanelBackgroundColor: string;
+  setTrackerPanelBackgroundColor: (color: string) => void;
   trackerTemperatureUnit: TrackerTemperatureUnit;
   setTrackerTemperatureUnit: (unit: TrackerTemperatureUnit) => void;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(true);
   const drawerId = React.useId();
+  const handleTrackerPanelBackgroundColorChange = useCallback(
+    (color: string) => {
+      setTrackerPanelBackgroundColor(
+        color.trim().toLowerCase().startsWith("linear-gradient") ? TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR : color,
+      );
+    },
+    [setTrackerPanelBackgroundColor],
+  );
 
   const toggleTrackerPanel = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -915,6 +929,17 @@ function TrackerPanelAppearanceDrawer({
             onChange={setTrackerPanelUseExpressionSprites}
             help="When on, tracker portraits can switch to Expression Engine sprites if that agent is enabled for the chat and the character has matching sprite images."
           />
+          <div className="mt-2">
+            <ColorPicker
+              value={trackerPanelBackgroundColor}
+              onChange={handleTrackerPanelBackgroundColorChange}
+              compact
+              label="Panel background"
+              helpText="Pick the Tracker panel and tracker section background color. CSS color values are accepted."
+              emptyText={`Default ${TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR}`}
+              clearLabel="Reset"
+            />
+          </div>
           <div className="mt-2 grid gap-1.5">
             <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
               Desktop size
@@ -1756,6 +1781,8 @@ function AppearanceSettings() {
   const setTrackerPanelDockedThoughtsAlwaysVisible = useUIStore((s) => s.setTrackerPanelDockedThoughtsAlwaysVisible);
   const trackerPanelSizeProfile = useUIStore((s) => s.trackerPanelSizeProfile);
   const setTrackerPanelSizeProfile = useUIStore((s) => s.setTrackerPanelSizeProfile);
+  const trackerPanelBackgroundColor = useUIStore((s) => s.trackerPanelBackgroundColor);
+  const setTrackerPanelBackgroundColor = useUIStore((s) => s.setTrackerPanelBackgroundColor);
   const trackerTemperatureUnit = useUIStore((s) => s.trackerTemperatureUnit);
   const setTrackerTemperatureUnit = useUIStore((s) => s.setTrackerTemperatureUnit);
 
@@ -2228,6 +2255,8 @@ function AppearanceSettings() {
         setTrackerPanelDockedThoughtsAlwaysVisible={setTrackerPanelDockedThoughtsAlwaysVisible}
         trackerPanelSizeProfile={trackerPanelSizeProfile}
         setTrackerPanelSizeProfile={setTrackerPanelSizeProfile}
+        trackerPanelBackgroundColor={trackerPanelBackgroundColor}
+        setTrackerPanelBackgroundColor={setTrackerPanelBackgroundColor}
         trackerTemperatureUnit={trackerTemperatureUnit}
         setTrackerTemperatureUnit={setTrackerTemperatureUnit}
       />

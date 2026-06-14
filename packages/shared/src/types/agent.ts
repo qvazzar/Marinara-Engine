@@ -41,7 +41,9 @@ export type AgentResultType =
   | "game_master_narration"
   | "party_action"
   | "game_map_update"
-  | "game_state_transition";
+  | "game_state_transition"
+  | "prompt_patch"
+  | "frontend_theme_update";
 
 /** Configuration for a single agent. */
 export interface AgentConfig {
@@ -255,6 +257,7 @@ export interface AgentContext {
   chatMode: string;
   /** Recent chat history (last N messages) */
   recentMessages: Array<{
+    id?: string;
     role: string;
     content: string;
     characterId?: string;
@@ -388,6 +391,73 @@ export const DEFAULT_AGENT_CONTEXT_SIZE = 5;
 export const DEFAULT_AGENT_MAX_TOKENS = 4096;
 export const MIN_AGENT_MAX_TOKENS = 128;
 export const MAX_AGENT_MAX_TOKENS = 32768;
+
+export const CUSTOM_AGENT_CAPABILITY_IDS = [
+  "create_lorebooks",
+  "edit_lorebooks",
+  "edit_messages",
+  "edit_trackers",
+  "change_frontend_styling",
+  "trigger_image_generation",
+  "access_vectors",
+  "edit_main_prompt",
+] as const;
+
+export type CustomAgentCapability = (typeof CUSTOM_AGENT_CAPABILITY_IDS)[number];
+export type CustomAgentCapabilityMap = Partial<Record<CustomAgentCapability, boolean>>;
+
+const CUSTOM_AGENT_CAPABILITY_SET = new Set<string>(CUSTOM_AGENT_CAPABILITY_IDS);
+
+const CUSTOM_AGENT_RESULT_CAPABILITY: Partial<Record<AgentResultType, CustomAgentCapability>> = {
+  text_rewrite: "edit_messages",
+  lorebook_update: "edit_lorebooks",
+  character_tracker_update: "edit_trackers",
+  persona_stats_update: "edit_trackers",
+  custom_tracker_update: "edit_trackers",
+  game_state_update: "edit_trackers",
+  image_prompt: "trigger_image_generation",
+  prompt_patch: "edit_main_prompt",
+  frontend_theme_update: "change_frontend_styling",
+};
+
+function normalizeCapabilityMap(value: unknown): CustomAgentCapabilityMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const output: CustomAgentCapabilityMap = {};
+  for (const [key, enabled] of Object.entries(value as Record<string, unknown>)) {
+    if (!CUSTOM_AGENT_CAPABILITY_SET.has(key) || enabled !== true) continue;
+    output[key as CustomAgentCapability] = true;
+  }
+  return output;
+}
+
+export function normalizeCustomAgentCapabilities(settings: Record<string, unknown> | null | undefined): CustomAgentCapabilityMap {
+  const capabilities = normalizeCapabilityMap(settings?.customCapabilities ?? settings?.capabilities);
+  const enabledToolsValue = settings?.enabledTools;
+  const enabledTools = Array.isArray(enabledToolsValue) ? enabledToolsValue : [];
+  const resultType = typeof settings?.resultType === "string" ? settings.resultType : null;
+
+  if (settings?.lorebookWriteEnabled === true || enabledTools.includes("save_lorebook_entry")) {
+    capabilities.edit_lorebooks = true;
+  }
+
+  if (resultType && Object.prototype.hasOwnProperty.call(CUSTOM_AGENT_RESULT_CAPABILITY, resultType)) {
+    const capability = CUSTOM_AGENT_RESULT_CAPABILITY[resultType as AgentResultType];
+    if (capability) capabilities[capability] = true;
+  }
+
+  return capabilities;
+}
+
+export function customAgentHasCapability(
+  settings: Record<string, unknown> | null | undefined,
+  capability: CustomAgentCapability,
+): boolean {
+  return normalizeCustomAgentCapabilities(settings)[capability] === true;
+}
+
+export function getCustomAgentResultCapability(resultType: AgentResultType): CustomAgentCapability | null {
+  return CUSTOM_AGENT_RESULT_CAPABILITY[resultType] ?? null;
+}
 
 export function getDefaultBuiltInAgentSettings(agentType: string): Record<string, unknown> {
   const builtIn = BUILT_IN_AGENT_MANIFESTS.find((agent) => agent.id === agentType);

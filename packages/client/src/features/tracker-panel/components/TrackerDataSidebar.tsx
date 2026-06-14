@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useUIStore } from "../../../stores/ui.store";
+import { useState, type CSSProperties } from "react";
+import { TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR, useUIStore } from "../../../stores/ui.store";
 import { useChatStore } from "../../../stores/chat.store";
 import { useGameStatePatcher } from "../../../hooks/use-game-state-patcher";
 import { cn } from "../../../lib/utils";
@@ -9,6 +9,9 @@ import { EmptySection } from "./controls/SectionControls";
 import { TrackerSectionList } from "./TrackerSectionList";
 import { TrackerSkeleton } from "./TrackerSkeleton";
 import { TrackerSidebarHeader } from "./TrackerSidebarHeader";
+
+const TRACKER_PANEL_NEUTRAL_VARS =
+  "[--accent:rgb(39_39_42)] [--accent-foreground:rgb(244_244_245)] [--background:rgb(18_18_21)] [--border:rgb(63_63_70)] [--card:rgb(24_24_27)] [--foreground:rgb(244_244_245)] [--input:rgb(63_63_70)] [--muted:rgb(39_39_42)] [--muted-foreground:rgb(161_161_170)] [--popover:rgb(24_24_27)] [--popover-foreground:rgb(244_244_245)] [--primary:rgb(212_212_216)] [--primary-foreground:rgb(18_18_21)] [--ring:rgb(161_161_170)] [--secondary:rgb(39_39_42)] [--tracker-panel-card-background:color-mix(in_srgb,var(--background)_22%,transparent)] [--tracker-panel-section-background:color-mix(in_srgb,var(--card)_6%,transparent)]";
 
 export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolean } = {}) {
   const activeChatId = useChatStore((s) => s.activeChatId);
@@ -20,6 +23,7 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
   const trackerPanelThoughtBubbleDisplay = useUIStore((s) => s.trackerPanelThoughtBubbleDisplay);
   const trackerPanelDockedThoughtsAlwaysVisible = useUIStore((s) => s.trackerPanelDockedThoughtsAlwaysVisible);
   const trackerPanelSizeProfile = useUIStore((s) => s.trackerPanelSizeProfile);
+  const trackerPanelBackgroundColor = useUIStore((s) => s.trackerPanelBackgroundColor);
   const trackerTemperatureUnit = useUIStore((s) => s.trackerTemperatureUnit);
   const toggleTrackerPanelSectionCollapsed = useUIStore((s) => s.toggleTrackerPanelSectionCollapsed);
   const setTrackerPanelOpen = useUIStore((s) => s.setTrackerPanelOpen);
@@ -47,16 +51,35 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
   const [addMode, setAddMode] = useState(false);
   const hasFixedTrackerPanel = orderedTrackerSections.length > 0;
   const showTrackerSections = !!activeChatId && !isLoadingGameState && !!currentGameState && hasFixedTrackerPanel;
+  const trackerPanelHasCustomBackground =
+    trackerPanelBackgroundColor.trim().toLowerCase() !== TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR;
+  const trackerPanelSurfaceStyle = trackerPanelHasCustomBackground
+    ? ({
+        backgroundColor: trackerPanelBackgroundColor,
+        "--background": trackerPanelBackgroundColor,
+        "--card": trackerPanelBackgroundColor,
+        "--muted": `color-mix(in srgb, ${trackerPanelBackgroundColor} 82%, var(--foreground) 18%)`,
+        "--popover": trackerPanelBackgroundColor,
+        "--secondary": `color-mix(in srgb, ${trackerPanelBackgroundColor} 86%, var(--foreground) 14%)`,
+        "--tracker-card-neutral-material": `color-mix(in srgb, ${trackerPanelBackgroundColor} 90%, var(--foreground) 10%)`,
+        "--tracker-card-neutral-surface-bottom": `color-mix(in srgb, ${trackerPanelBackgroundColor} 96%, var(--foreground) 4%)`,
+        "--tracker-card-neutral-surface-top": `color-mix(in srgb, ${trackerPanelBackgroundColor} 92%, var(--foreground) 8%)`,
+        "--tracker-panel-card-background": `color-mix(in srgb, ${trackerPanelBackgroundColor} 88%, var(--foreground) 12%)`,
+        "--tracker-panel-section-background": trackerPanelBackgroundColor,
+      } as CSSProperties)
+    : undefined;
 
   return (
     <section
       data-component="TrackerDataSidebar"
       data-tracker-size-profile={trackerPanelSizeProfile}
       className={cn(
-        "@container relative flex flex-col bg-[color-mix(in_srgb,var(--background)_8%,transparent)] backdrop-blur-sm",
+        "@container relative flex flex-col bg-zinc-950/95 text-zinc-100 backdrop-blur-sm",
+        TRACKER_PANEL_NEUTRAL_VARS,
         fillHeight ? "overflow-hidden" : "overflow-visible",
         fillHeight ? "h-full" : "min-h-0",
       )}
+      style={trackerPanelSurfaceStyle}
     >
       <div className="pointer-events-none absolute inset-0 z-0 opacity-[0.08] [background-image:linear-gradient(color-mix(in_srgb,var(--foreground)_12%,transparent)_1px,transparent_1px),linear-gradient(90deg,color-mix(in_srgb,var(--foreground)_9%,transparent)_1px,transparent_1px)] [background-size:8px_8px]" />
       <TrackerSidebarHeader

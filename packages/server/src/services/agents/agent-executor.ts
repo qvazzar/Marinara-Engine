@@ -13,8 +13,8 @@ import {
   compactQuestProgressForContext,
   DEFAULT_AGENT_CONTEXT_SIZE,
   DEFAULT_AGENT_MAX_TOKENS,
-  MAX_AGENT_MAX_TOKENS,
   MIN_AGENT_MAX_TOKENS,
+  normalizeCustomAgentCapabilities,
   getDefaultAgentPrompt,
 } from "@marinara-engine/shared";
 import { isDebugAgentsEnabled } from "../../config/runtime-config.js";
@@ -33,6 +33,15 @@ function stripHtmlTags(text: string): string {
     .replace(/<\/?[a-zA-Z][^>]*>/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 /** Minimal agent config needed for execution. */
@@ -131,8 +140,10 @@ export function formatToolPayloadForLog(payload: string, maxLength = 400): strin
 }
 
 function normalizeAgentMaxTokens(value: unknown, fallback = DEFAULT_AGENT_MAX_TOKENS): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  return Math.max(MIN_AGENT_MAX_TOKENS, Math.min(MAX_AGENT_MAX_TOKENS, Math.trunc(value)));
+  const parsed =
+    typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : fallback;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(MIN_AGENT_MAX_TOKENS, Math.trunc(parsed));
 }
 
 function applyProviderMaxTokensOverride(provider: BaseLLMProvider, maxTokens: number): number {
@@ -572,10 +583,7 @@ export async function executeAgentBatch(
   const startTime = Date.now();
   const perAgentTokens = configs.map((c) => normalizeAgentMaxTokens(c.settings.maxTokens));
   const temperature = Math.min(...configs.map((c) => (c.settings.temperature as number) ?? 0.3));
-  const rawBatchMaxTokens = Math.min(
-    perAgentTokens.reduce((sum, tokens) => sum + tokens, 0),
-    MAX_AGENT_MAX_TOKENS,
-  );
+  const rawBatchMaxTokens = perAgentTokens.reduce((sum, tokens) => sum + tokens, 0);
   const batchMaxTokens = applyProviderMaxTokensOverride(provider, rawBatchMaxTokens);
 
   try {
@@ -919,6 +927,59 @@ function shouldRunAgentIndividually(config: Pick<AgentExecConfig, "type">): bool
   );
 }
 
+function buildCustomAgentCapabilityBlock(config: AgentExecConfig, context: AgentContext): string {
+  const capabilities = normalizeCustomAgentCapabilities(config.settings);
+  const enabled = Object.entries(capabilities)
+    .filter(([, value]) => value === true)
+    .map(([key]) => key);
+  if (enabled.length === 0) return "";
+
+  const parts: string[] = ["<custom_agent_abilities>"];
+  parts.push(`Enabled ability toggles: ${enabled.join(", ")}.`);
+  parts.push(
+    `Only use these abilities when your selected output format or available tools explicitly support the action.`,
+  );
+
+  if (capabilities.edit_messages) {
+    parts.push(
+      `Message editing is enabled. For Text Rewrite, replace only the assistant response provided in <assistant_response>.`,
+    );
+  }
+
+  if (capabilities.edit_trackers) {
+    parts.push(
+      `Tracker editing is enabled. Return a tracker result type only when you intend to update the matching tracker state.`,
+    );
+  }
+
+  if (capabilities.change_frontend_styling) {
+    parts.push(
+      `Frontend styling is enabled. Return CSS in the configured result format only for deliberate temporary visual effects.`,
+    );
+  }
+
+  if (capabilities.edit_main_prompt) {
+    parts.push(
+      `Main prompt editing is enabled. Return prompt patch JSON instead of ordinary prose when you need to alter the outbound prompt.`,
+    );
+    const promptPreview = typeof context.memory._mainPromptPreview === "string" ? context.memory._mainPromptPreview : "";
+    if (promptPreview.trim()) {
+      parts.push(`<main_generation_prompt_preview>`);
+      parts.push(escapeXml(promptPreview));
+      parts.push(`</main_generation_prompt_preview>`);
+    }
+  }
+
+  if (capabilities.access_vectors) {
+    parts.push(
+      `Vector and embedding access is enabled for this agent's configuration. Use available source material and tools rather than inventing vector search results.`,
+    );
+  }
+
+  parts.push("</custom_agent_abilities>");
+  return parts.join("\n");
+}
+
 function buildStandardAgentMessages(config: AgentExecConfig, template: string, context: AgentContext): ChatMessage[] {
   // Build the agent's system prompt with <role> + <lore> + <agents> + extras
   const systemParts: string[] = [];
@@ -937,10 +998,17 @@ function buildStandardAgentMessages(config: AgentExecConfig, template: string, c
     systemParts.push(``);
     systemParts.push(extras);
   }
+  const customCapabilityBlock = buildCustomAgentCapabilityBlock(config, context);
+  if (customCapabilityBlock) {
+    systemParts.push(``);
+    systemParts.push(customCapabilityBlock);
+  }
 
   // Build multi-turn message array for this agent (sliced to its own contextSize)
   const agentContextSize = normalizeAgentContextSize(config.settings.contextSize);
-  return buildAgentMessages(systemParts.join("\n"), context, config.type, agentContextSize);
+  return buildAgentMessages(systemParts.join("\n"), context, config.type, agentContextSize, [config.type], {
+    includeMessageIds: normalizeCustomAgentCapabilities(config.settings).edit_messages === true,
+  });
 }
 
 export function buildKnowledgeRetrievalAgentMessagesForTest(
@@ -1205,6 +1273,7 @@ function buildAgentMessages(
   agentType: string,
   contextSize = 5,
   contextAgentTypes: string[] = [agentType],
+  options: { includeMessageIds?: boolean } = {},
 ): ChatMessage[] {
   // ── 1. System message — already contains <role>, <lore>, <agents>, and extras ──
   const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }];
@@ -1232,6 +1301,9 @@ function buildAgentMessages(
       const msg = recent[msgIdx]!;
       const role: "user" | "assistant" = msg.role === "assistant" ? "assistant" : "user";
       let content = stripHtmlTags(msg.content).slice(0, 2000);
+      if (options.includeMessageIds && msg.id) {
+        content = `<message_id>${msg.id}</message_id>\n${content}`;
+      }
 
       // Append committed tracker data only to the last 3 assistant messages,
       // and only for agents whose output is structured (not text agents — see above).
@@ -1400,13 +1472,6 @@ function buildAvailableSpritesBlock(context: AgentContext): string {
 function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): string {
   const parts: string[] = [];
 
-  const escapeXml = (value: string) =>
-    value
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&apos;");
   // Card Evolution Auditor needs the FULL character card (not just description)
   // so it can emit exact-match oldText edits. Gated on agent type because
   // forwarding every field would bloat context for agents that don't need it.
@@ -1680,6 +1745,8 @@ const AGENT_RESULT_TYPES = new Set<AgentResultType>([
   "party_action",
   "game_map_update",
   "game_state_transition",
+  "prompt_patch",
+  "frontend_theme_update",
 ]);
 
 const TEXT_RESULT_TYPES = new Set<AgentResultType>(["context_injection", "director_event"]);

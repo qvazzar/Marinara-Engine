@@ -42,6 +42,13 @@ export type SaveLorebookEntryFn = (entry: {
   mode: "create" | "replace" | "append";
 }) => Promise<Record<string, unknown>>;
 
+/** Message replacement function injected from the route layer. */
+export type ReplaceChatMessageContentFn = (input: {
+  messageId: string;
+  content: string;
+  reason?: string;
+}) => Promise<Record<string, unknown>>;
+
 /** Spotify API credentials injected from the route layer. */
 export interface SpotifyCredentials {
   accessToken: string;
@@ -153,6 +160,7 @@ export interface ToolExecutionContext {
   customTools?: CustomToolDef[];
   searchLorebook?: LorebookSearchFn;
   saveLorebookEntry?: SaveLorebookEntryFn;
+  replaceChatMessageContent?: ReplaceChatMessageContentFn;
   spotify?: SpotifyCredentials;
   spotifyRepeatAfterPlay?: "off" | "track" | "context";
 }
@@ -214,6 +222,8 @@ async function executeSingleTool(
       return searchLorebook(args, context?.searchLorebook);
     case "save_lorebook_entry":
       return saveLorebookEntry(args, context?.saveLorebookEntry);
+    case "edit_chat_message":
+      return editChatMessage(args, context?.replaceChatMessageContent);
     case "read_chat_summary":
       return readChatSummary(context?.chatMeta);
     case "append_chat_summary":
@@ -247,6 +257,7 @@ async function executeSingleTool(
           "trigger_event",
           "search_lorebook",
           "save_lorebook_entry",
+          "edit_chat_message",
           "read_chat_summary",
           "append_chat_summary",
           "read_chat_variable",
@@ -628,6 +639,27 @@ async function saveLorebookEntry(
     keys: normalizeLorebookEntryKeys(args.keys, name),
     tag,
     mode: normalizeLorebookWriteMode(args.mode),
+  });
+}
+
+async function editChatMessage(
+  args: Record<string, unknown>,
+  replaceFn?: ReplaceChatMessageContentFn,
+): Promise<Record<string, unknown>> {
+  if (!replaceFn) {
+    return { error: "Message editing is not available in this context." };
+  }
+  if (typeof args.messageId !== "string" || !args.messageId.trim()) {
+    return { error: "edit_chat_message requires a non-empty messageId" };
+  }
+  if (typeof args.content !== "string" || !args.content.trim()) {
+    return { error: "edit_chat_message requires non-empty content" };
+  }
+
+  return replaceFn({
+    messageId: args.messageId.trim(),
+    content: trimToUtf8Bytes(args.content.trim(), MAX_APPEND_BYTES),
+    reason: typeof args.reason === "string" ? args.reason.trim().slice(0, 240) : undefined,
   });
 }
 

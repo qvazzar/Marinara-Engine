@@ -24,8 +24,10 @@ type EditableGenerationParameterOverrides = Partial<EditableGenerationParameters
 const REASONING_LEVELS = [null, "low", "medium", "high", "xhigh", "maximum"] as const;
 const VERBOSITY_LEVELS = [null, "low", "medium", "high"] as const;
 const OPENROUTER_SERVICE_TIERS = [null, "flex", "priority"] as const;
-const MAX_GENERATION_OUTPUT_TOKENS = 128000;
 const THINKING_TAG_CONTENT_PLACEHOLDER = "{{thinking}}";
+const PARAM_CHOICE_ACTIVE_CLASS = "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30";
+const PARAM_CHOICE_IDLE_CLASS =
+  "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]";
 
 export const CHAT_PARAMETER_DEFAULTS: EditableGenerationParameters = {
   temperature: 1,
@@ -155,7 +157,6 @@ export function GenerationParametersFields({
           value={value.maxTokens}
           onChange={(nextValue) => set("maxTokens", nextValue)}
           min={1}
-          max={MAX_GENERATION_OUTPUT_TOKENS}
           step={256}
         />
         <ParamInput
@@ -239,9 +240,7 @@ export function GenerationParametersFields({
                   onClick={() => set("serviceTier", tier)}
                   className={cn(
                     "rounded-lg px-2 py-1 text-[0.625rem] font-medium transition-all",
-                    value.serviceTier === tier
-                      ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
-                      : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                    value.serviceTier === tier ? PARAM_CHOICE_ACTIVE_CLASS : PARAM_CHOICE_IDLE_CLASS,
                   )}
                 >
                   {tier ? tier.charAt(0).toUpperCase() + tier.slice(1) : "Default"}
@@ -265,9 +264,7 @@ export function GenerationParametersFields({
                 onClick={() => set("reasoningEffort", level)}
                 className={cn(
                   "rounded-lg px-2 py-1 text-[0.625rem] font-medium transition-all",
-                  value.reasoningEffort === level
-                    ? "bg-purple-400/15 text-purple-400 ring-1 ring-purple-400/30"
-                    : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                  value.reasoningEffort === level ? PARAM_CHOICE_ACTIVE_CLASS : PARAM_CHOICE_IDLE_CLASS,
                 )}
               >
                 {level ? level.charAt(0).toUpperCase() + level.slice(1) : "None"}
@@ -290,9 +287,7 @@ export function GenerationParametersFields({
                 onClick={() => set("verbosity", level)}
                 className={cn(
                   "rounded-lg px-2 py-1 text-[0.625rem] font-medium transition-all",
-                  value.verbosity === level
-                    ? "bg-blue-400/15 text-blue-400 ring-1 ring-blue-400/30"
-                    : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                  value.verbosity === level ? PARAM_CHOICE_ACTIVE_CLASS : PARAM_CHOICE_IDLE_CLASS,
                 )}
               >
                 {level ? level.charAt(0).toUpperCase() + level.slice(1) : "None"}
@@ -526,7 +521,7 @@ function ParamInput({
   value: number;
   onChange: (next: number) => void;
   min: number;
-  max: number;
+  max?: number;
   step: number;
   help?: string;
 }) {
@@ -540,13 +535,17 @@ function ParamInput({
 
   const commit = () => {
     const nextValue = parseFloat(draft);
-    if (!Number.isNaN(nextValue) && nextValue >= min && nextValue <= max) {
+    if (!Number.isNaN(nextValue) && nextValue >= min && (max === undefined || nextValue <= max)) {
       onChange(nextValue);
       setDraft(String(nextValue));
       setError(null);
       return;
     }
-    setError(`Enter a value from ${min.toLocaleString()} to ${max.toLocaleString()}.`);
+    setError(
+      max === undefined
+        ? `Enter a value of ${min.toLocaleString()} or higher.`
+        : `Enter a value from ${min.toLocaleString()} to ${max.toLocaleString()}.`,
+    );
   };
 
   return (
@@ -570,7 +569,7 @@ function ParamInput({
           }
         }}
         min={min}
-        max={max}
+        {...(max === undefined ? {} : { max })}
         step={step}
         className="mt-0.5 w-full rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
       />

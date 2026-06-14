@@ -1,6 +1,5 @@
 import {
   DEFAULT_AGENT_MAX_TOKENS,
-  MAX_AGENT_MAX_TOKENS,
   MIN_AGENT_MAX_TOKENS,
 } from "@marinara-engine/shared";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
@@ -13,7 +12,7 @@ export function normalizeMaxContext(value: unknown): number | undefined {
 export function normalizeAgentMaxTokens(value: unknown, fallback = DEFAULT_AGENT_MAX_TOKENS): number {
   const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
   if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(MIN_AGENT_MAX_TOKENS, Math.min(MAX_AGENT_MAX_TOKENS, Math.trunc(parsed)));
+  return Math.max(MIN_AGENT_MAX_TOKENS, Math.trunc(parsed));
 }
 
 export function applyProviderMaxTokensOverride(provider: BaseLLMProvider, maxTokens: number): number {

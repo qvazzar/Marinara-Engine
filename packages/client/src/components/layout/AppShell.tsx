@@ -11,6 +11,7 @@ import {
   RIGHT_PANEL_WIDTH_MIN,
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
+  TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR,
   useUIStore,
 } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
@@ -158,6 +159,7 @@ export function AppShell() {
   const trackerPanelSide = useUIStore((s) => s.trackerPanelSide);
   const trackerPanelHideHudWidgets = useUIStore((s) => s.trackerPanelHideHudWidgets);
   const trackerPanelSizeProfile = useUIStore((s) => s.trackerPanelSizeProfile);
+  const trackerPanelBackgroundColor = useUIStore((s) => s.trackerPanelBackgroundColor);
   const setTrackerPanelOpen = useUIStore((s) => s.setTrackerPanelOpen);
   const [sidebarDragWidth, setSidebarDragWidth] = useState<number | null>(null);
   const [rightPanelDragWidth, setRightPanelDragWidth] = useState<number | null>(null);
@@ -167,6 +169,8 @@ export function AppShell() {
   const liveSidebarWidth = sidebarDragWidth ?? rightPanelDragWidth ?? sharedSidebarWidth;
   const liveRightPanelWidth = rightPanelDragWidth ?? sidebarDragWidth ?? sharedSidebarWidth;
   const trackerPanelWidth = getTrackerPanelWidthForProfile(trackerPanelSizeProfile);
+  const trackerPanelHasCustomBackground =
+    trackerPanelBackgroundColor.trim().toLowerCase() !== TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR;
 
   // Track mobile breakpoint for right-panel animation strategy
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
@@ -435,8 +439,11 @@ export function AppShell() {
 
   const showAmbientDecor = isPageActive && !activeChatId && !detailView && !botBrowserOpen && !gameAssetsBrowserOpen;
   const hasDetailView = detailView != null;
+  const trackerPanelModeAvailable =
+    activeChat?.mode === "roleplay" || activeChat?.mode === "visual_novel" || activeChat?.mode === "game";
   const trackerPanelActive = trackerPanelEnabled && trackerPanelOpen;
-  const trackerPanelSurfaceAvailable = !botBrowserOpen && !gameAssetsBrowserOpen && !hasDetailView;
+  const trackerPanelSurfaceAvailable =
+    trackerPanelModeAvailable && !botBrowserOpen && !gameAssetsBrowserOpen && !hasDetailView;
   const trackerPanelVisible = trackerPanelActive && trackerPanelSurfaceAvailable;
   useEffect(() => {
     if (trackerPanelVisible) {
@@ -657,7 +664,7 @@ export function AppShell() {
         data-tracker-size-profile={trackerPanelSizeProfile}
         aria-label="Tracker data panel"
         className={cn(
-          "mari-tracker-panel fixed z-30 hidden overflow-hidden bg-[var(--background)]/20 shadow-2xl ring-1 ring-[var(--border)]/35 backdrop-blur-2xl transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] md:block",
+          "mari-tracker-panel fixed z-30 hidden overflow-hidden bg-zinc-950/95 shadow-2xl ring-1 ring-zinc-700/80 backdrop-blur-2xl transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] md:block",
           side === "left" ? "rounded-r-xl" : "rounded-l-xl",
         )}
         style={{
@@ -671,6 +678,7 @@ export function AppShell() {
           ...(side === "left"
             ? { left: sidebarOpen ? liveSidebarWidth + RESIZER_HITBOX : 0 }
             : { right: rightPanelOpen ? liveRightPanelWidth + RESIZER_HITBOX : 0 }),
+          ...(trackerPanelHasCustomBackground ? { backgroundColor: trackerPanelBackgroundColor } : {}),
         }}
       >
         <div className="mari-tracker-panel-scroll max-h-[inherit] overflow-x-hidden overflow-y-auto">
@@ -808,9 +816,10 @@ export function AppShell() {
               data-component="TrackerDataSidebarMobile"
               aria-label="Tracker data panel"
               className={cn(
-                "mari-tracker-panel !fixed inset-y-0 z-50 w-[calc(100vw-0.5rem)] max-w-[24rem] overflow-hidden bg-[var(--background)]/65 pt-[env(safe-area-inset-top)] shadow-2xl backdrop-blur-xl",
+                "mari-tracker-panel !fixed inset-y-0 z-50 w-[calc(100vw-0.5rem)] max-w-[24rem] overflow-hidden bg-zinc-950/95 pt-[env(safe-area-inset-top)] shadow-2xl ring-1 ring-zinc-700/80 backdrop-blur-xl",
                 trackerPanelSide === "left" ? "left-0" : "right-0",
               )}
+              style={trackerPanelHasCustomBackground ? { backgroundColor: trackerPanelBackgroundColor } : undefined}
             >
               <Suspense fallback={<SidePanelFallback />}>
                 <TrackerDataSidebar fillHeight />

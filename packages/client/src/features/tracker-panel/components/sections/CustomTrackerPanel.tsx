@@ -136,7 +136,7 @@ function CustomFieldList({
                   <button
                     type="button"
                     onClick={() => removeField(index)}
-                    className="absolute right-1 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full bg-[var(--background)]/85 text-[var(--destructive)] shadow-sm ring-1 ring-[var(--border)]/70 backdrop-blur-sm transition-all hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-[var(--primary)] active:scale-90"
+                    className="absolute right-1 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full bg-[var(--background)]/85 text-[var(--destructive)] shadow-sm ring-1 ring-[var(--border)]/70 backdrop-blur-sm transition-all hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-[var(--border)] active:scale-90"
                     title="Remove field"
                     aria-label={`Remove ${visibleText(field.name, "field")}`}
                   >
@@ -172,7 +172,7 @@ export function CustomTrackerPanel({
   onToggleCollapsed?: () => void;
 }) {
   return (
-    <section className="relative z-10 overflow-hidden border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--card)_10%,transparent)] shadow-[inset_0_1px_0_color-mix(in_srgb,var(--foreground)_5%,transparent)]">
+    <section className="relative z-10 overflow-hidden border-b border-[var(--border)] bg-[var(--tracker-panel-section-background,color-mix(in_srgb,var(--card)_10%,transparent))] shadow-[inset_0_1px_0_color-mix(in_srgb,var(--foreground)_5%,transparent)]">
       <TrackerReadabilityVeil strength="strong" />
       <div className="relative z-10">
         <SectionHeader

@@ -83,6 +83,32 @@ function applyAgentBackgroundChoice(chosen: string | null | undefined) {
     .catch(() => {});
 }
 
+function applyAgentFrontendStyle(chatId: string, raw: unknown) {
+  if (typeof document === "undefined") return;
+  if (!raw || typeof raw !== "object") return;
+  const data = raw as Record<string, unknown>;
+  const css = typeof data.css === "string" ? data.css.trim() : "";
+  if (!css) return;
+  const durationMs =
+    typeof data.durationMs === "number" && Number.isFinite(data.durationMs)
+      ? Math.max(1_000, Math.min(10 * 60_000, Math.trunc(data.durationMs)))
+      : 60_000;
+  const id = `marinara-agent-style-${chatId}`;
+  let style = document.getElementById(id) as HTMLStyleElement | null;
+  if (!style) {
+    style = document.createElement("style");
+    style.id = id;
+    document.head.appendChild(style);
+  }
+  const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  style.dataset.agentStyleToken = token;
+  style.textContent = css;
+  window.setTimeout(() => {
+    const current = document.getElementById(id) as HTMLStyleElement | null;
+    if (current?.dataset.agentStyleToken === token) current.remove();
+  }, durationMs);
+}
+
 const editableCharacterCardFieldSet = new Set<string>(EDITABLE_CHARACTER_CARD_FIELDS);
 
 function formatToolDebugPayload(value: unknown, maxLength = 1_200): string {
@@ -1364,6 +1390,10 @@ export function useGenerate() {
                 if (bg.chosen) {
                   applyAgentBackgroundChoice(bg.chosen);
                 }
+              }
+
+              if (result.success && result.resultType === "frontend_theme_update" && result.data) {
+                applyAgentFrontendStyle(params.chatId, result.data);
               }
 
               // Apply quest updates directly so the widget updates immediately

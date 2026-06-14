@@ -70,7 +70,7 @@ import { useSceneAnalysis } from "../../hooks/use-scene-analysis";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { parsePartyDialogue } from "../../lib/party-dialogue-parser";
 import { dispatchSpotifySceneTrackChange } from "../../lib/spotify-playback-events";
-import { ActiveWorldInfoButton, ActiveWorldInfoModal } from "../chat/ActiveWorldInfoButton";
+import { ActiveLorebookEntriesButton, ActiveLorebookEntriesModal } from "../chat/ActiveLorebookEntriesButton";
 import type {
   PartyDialogueLine,
   CombatSummary,
@@ -153,6 +153,21 @@ type GameAssetGenerationResult = {
   generatedIllustration: { tag: string; segment?: number } | null;
   generatedNpcAvatars: Array<{ name: string; avatarUrl: string }>;
 };
+
+const GAME_TOP_ICON_BUTTON =
+  "flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white";
+const GAME_MOBILE_ROOT_BUTTON =
+  "flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/50 text-white/85 backdrop-blur-md transition-colors hover:bg-black/65 hover:text-white";
+const GAME_MOBILE_ICON_BUTTON =
+  "flex h-8 w-8 items-center justify-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white";
+const GAME_ACTION_MENU =
+  "flex w-72 max-w-[calc(100vw-2rem)] flex-col gap-1 rounded-xl border border-white/15 bg-black/80 p-1.5 shadow-xl backdrop-blur-md";
+const GAME_MOBILE_ACTIONS_MENU =
+  "absolute right-0 top-11 flex w-9 flex-col items-center gap-1 rounded-xl border border-white/15 bg-black/70 p-0.5 shadow-lg backdrop-blur-xl";
+const GAME_MOBILE_ACTION_MENU =
+  "flex w-72 max-w-[calc(100vw-4rem)] flex-col gap-1 rounded-xl border border-white/15 bg-black/85 p-1.5 shadow-xl backdrop-blur-xl";
+const GAME_ACTION_MENU_ITEM =
+  "flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent";
 
 type PreparedCombatState = {
   messageId: string;
@@ -1514,7 +1529,6 @@ import {
   AlertTriangle,
   BookOpen,
   Folder,
-  Globe,
   HelpCircle,
   History,
   Image,
@@ -2233,7 +2247,7 @@ export function GameSurface({
   const imagePromptReviewResolveRef = useRef<((overrides: GameImagePromptOverride[] | null) => void) | null>(null);
   const [volumePopoverOpen, setVolumePopoverOpen] = useState(false);
   const [retryMenuOpen, setRetryMenuOpen] = useState(false);
-  const [mobileWorldInfoOpen, setMobileWorldInfoOpen] = useState(false);
+  const [mobileActiveContextOpen, setMobileActiveContextOpen] = useState(false);
   const [persistedGameAudioSettings] = useState(readPersistedGameAudioSettings);
   const [masterVolume, setMasterVolume] = useState(persistedGameAudioSettings.masterVolume);
   const [musicVolume, setMusicVolume] = useState(persistedGameAudioSettings.musicVolume);
@@ -8085,27 +8099,27 @@ export function GameSurface({
                 <div className="pointer-events-auto hidden items-center gap-1.5 md:flex">
                   <button
                     onClick={() => setTutorialOpen(true)}
-                    className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                    className={GAME_TOP_ICON_BUTTON}
                     title="Game Mode Tutorial"
                   >
                     <HelpCircle size={14} />
                   </button>
                   <button
                     onClick={() => setHistoryOpen(true)}
-                    className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                    className={GAME_TOP_ICON_BUTTON}
                     title="History"
                   >
                     <History size={14} />
                   </button>
-                  <ActiveWorldInfoButton
+                  <ActiveLorebookEntriesButton
                     chatId={activeChatId}
                     iconSize={14}
-                    buttonClassName="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                    buttonClassName={GAME_TOP_ICON_BUTTON}
                   />
                   {sessionStatus !== "concluded" ? (
                     <button
                       onClick={handleRequestEndSession}
-                      className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                      className={GAME_TOP_ICON_BUTTON}
                       title="End Session"
                     >
                       <Square size={13} />
@@ -8122,7 +8136,7 @@ export function GameSurface({
                   )}
                   <button
                     onClick={() => setJournalOpen(true)}
-                    className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                    className={GAME_TOP_ICON_BUTTON}
                     title="Journal"
                   >
                     <BookOpen size={14} />
@@ -8130,7 +8144,7 @@ export function GameSurface({
                   <div className="relative" ref={volumePopoverRef}>
                     <button
                       onClick={() => setVolumePopoverOpen((v) => !v)}
-                      className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                      className={GAME_TOP_ICON_BUTTON}
                       title="Volume"
                     >
                       {audioMuted || masterVolume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />}
@@ -8158,14 +8172,14 @@ export function GameSurface({
                   </div>
                   <button
                     onClick={() => setGalleryOpen(true)}
-                    className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                    className={GAME_TOP_ICON_BUTTON}
                     title="Gallery"
                   >
                     <Image size={14} />
                   </button>
                   <button
                     onClick={openGameAssetsBrowser}
-                    className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                    className={GAME_TOP_ICON_BUTTON}
                     title="Game Assets"
                   >
                     <Folder size={14} />
@@ -8173,7 +8187,7 @@ export function GameSurface({
                   <div className="relative" ref={retryMenuRef}>
                     <button
                       onClick={() => setRetryMenuOpen((open) => !open)}
-                      className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                      className={GAME_TOP_ICON_BUTTON}
                       title="Retry..."
                       aria-label="Retry..."
                     >
@@ -8183,13 +8197,13 @@ export function GameSurface({
                       />
                     </button>
                     {retryMenuOpen && (
-                      <div className="absolute right-0 top-11 z-50 flex w-72 max-w-[calc(100vw-2rem)] flex-col gap-1 rounded-xl border border-white/15 bg-black/80 p-1.5 shadow-xl backdrop-blur-md">
+                      <div className={cn(GAME_ACTION_MENU, "absolute right-0 top-11 z-50")}>
                         <button
                           onClick={() => {
                             void handleRetryTurn();
                           }}
                           disabled={!canRetryTurn}
-                          className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+                          className={GAME_ACTION_MENU_ITEM}
                         >
                           <RotateCcw size={13} />
                           <span>Retry Turn</span>
@@ -8197,7 +8211,7 @@ export function GameSurface({
                         <button
                           onClick={handleRetryScene}
                           disabled={!canRetryScene}
-                          className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+                          className={GAME_ACTION_MENU_ITEM}
                         >
                           <RefreshCw size={13} className={sceneAnalysis.isPending ? "animate-spin" : ""} />
                           <span>Retry Scene Analysis</span>
@@ -8206,7 +8220,7 @@ export function GameSurface({
                           <button
                             onClick={handleRetrySpotifyMusic}
                             disabled={!canRetrySpotifyMusic}
-                            className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+                            className={GAME_ACTION_MENU_ITEM}
                           >
                             {spotifyRetryPending ? (
                               <RefreshCw size={13} className="animate-spin" />
@@ -8236,7 +8250,7 @@ export function GameSurface({
                             retryAssetGeneration({ showSuccessToast: true });
                           }}
                           disabled={!canRetryAssets}
-                          className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+                          className={GAME_ACTION_MENU_ITEM}
                         >
                           <Image size={13} />
                           <span>Retry Assets Image Generation</span>
@@ -8246,7 +8260,7 @@ export function GameSurface({
                   </div>
                   <button
                     onClick={onOpenSettings}
-                    className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 text-white/80 backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                    className={GAME_TOP_ICON_BUTTON}
                     title="Chat Settings"
                   >
                     <Settings2 size={14} />
@@ -8265,20 +8279,20 @@ export function GameSurface({
                         });
                         setMobileRetryMenuOpen(false);
                       }}
-                      className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/50 text-white/85 backdrop-blur-md transition-colors hover:bg-black/65 hover:text-white"
+                      className={GAME_MOBILE_ROOT_BUTTON}
                       title="Game actions"
                     >
                       <MoreHorizontal size={15} />
                     </button>
 
                     {mobileActionsOpen && (
-                      <div className="absolute right-0 top-11 flex w-9 flex-col items-center gap-1 rounded-xl border border-white/15 bg-black/70 p-0.5 backdrop-blur-xl shadow-lg">
+                      <div className={GAME_MOBILE_ACTIONS_MENU}>
                         <button
                           onClick={() => {
                             setTutorialOpen(true);
                             setMobileActionsOpen(false);
                           }}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+                          className={GAME_MOBILE_ICON_BUTTON}
                           title="Game Mode Tutorial"
                         >
                           <HelpCircle size={14} />
@@ -8288,21 +8302,21 @@ export function GameSurface({
                             setHistoryOpen(true);
                             setMobileActionsOpen(false);
                           }}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                          className={GAME_MOBILE_ICON_BUTTON}
                           title="History"
                         >
                           <History size={14} />
                         </button>
                         <button
                           onClick={() => {
-                            setMobileWorldInfoOpen(true);
+                            setMobileActiveContextOpen(true);
                             setMobileActionsOpen(false);
                           }}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-                          title="Active World Info"
-                          aria-label="Active World Info"
+                          className={GAME_MOBILE_ICON_BUTTON}
+                          title="Active Context"
+                          aria-label="Active Context"
                         >
-                          <Globe size={14} />
+                          <BookOpen size={14} />
                         </button>
                         {sessionStatus !== "concluded" ? (
                           <button
@@ -8310,7 +8324,7 @@ export function GameSurface({
                               handleRequestEndSession();
                               setMobileActionsOpen(false);
                             }}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-white/80 transition-colors hover:bg-white/10"
+                            className={GAME_MOBILE_ICON_BUTTON}
                             title="End Session"
                           >
                             <Square size={13} />
@@ -8333,7 +8347,7 @@ export function GameSurface({
                             setJournalOpen(true);
                             setMobileActionsOpen(false);
                           }}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                          className={GAME_MOBILE_ICON_BUTTON}
                           title="Journal"
                         >
                           <BookOpen size={14} />
@@ -8344,7 +8358,7 @@ export function GameSurface({
                               setVolumePopoverOpen((open) => !open);
                               setMobileRetryMenuOpen(false);
                             }}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                            className={GAME_MOBILE_ICON_BUTTON}
                             title="Volume"
                           >
                             {audioMuted || masterVolume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />}
@@ -8377,7 +8391,7 @@ export function GameSurface({
                             setGalleryOpen(true);
                             setMobileActionsOpen(false);
                           }}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                          className={GAME_MOBILE_ICON_BUTTON}
                           title="Gallery"
                         >
                           <Image size={14} />
@@ -8387,7 +8401,7 @@ export function GameSurface({
                             openGameAssetsBrowser();
                             setMobileActionsOpen(false);
                           }}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                          className={GAME_MOBILE_ICON_BUTTON}
                           title="Game Assets"
                         >
                           <Folder size={14} />
@@ -8395,7 +8409,7 @@ export function GameSurface({
                         <div className="relative">
                           <button
                             onClick={() => setMobileRetryMenuOpen((v) => !v)}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                            className={GAME_MOBILE_ICON_BUTTON}
                             title="Retry"
                             aria-label="Retry"
                           >
@@ -8405,7 +8419,7 @@ export function GameSurface({
                             />
                           </button>
                           {mobileRetryMenuOpen && (
-                            <div className="absolute right-10 top-0 z-50 flex w-72 max-w-[calc(100vw-4rem)] flex-col gap-1 rounded-xl border border-white/15 bg-black/85 p-1.5 shadow-xl backdrop-blur-xl">
+                            <div className={cn(GAME_MOBILE_ACTION_MENU, "absolute right-10 top-0 z-50")}>
                               <button
                                 onClick={() => {
                                   setMobileRetryMenuOpen(false);
@@ -8413,7 +8427,7 @@ export function GameSurface({
                                   void handleRetryTurn();
                                 }}
                                 disabled={!canRetryTurn}
-                                className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+                                className={GAME_ACTION_MENU_ITEM}
                               >
                                 <RotateCcw size={13} />
                                 <span>Retry Turn</span>
@@ -8425,7 +8439,7 @@ export function GameSurface({
                                   setMobileActionsOpen(false);
                                 }}
                                 disabled={!canRetryScene}
-                                className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+                                className={GAME_ACTION_MENU_ITEM}
                               >
                                 <RefreshCw size={13} className={sceneAnalysis.isPending ? "animate-spin" : ""} />
                                 <span>Retry Scene Analysis</span>
@@ -8434,7 +8448,7 @@ export function GameSurface({
                                 <button
                                   onClick={handleRetrySpotifyMusic}
                                   disabled={!canRetrySpotifyMusic}
-                                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+                                  className={GAME_ACTION_MENU_ITEM}
                                 >
                                   {spotifyRetryPending ? (
                                     <RefreshCw size={13} className="animate-spin" />
@@ -8465,7 +8479,7 @@ export function GameSurface({
                                   retryAssetGeneration({ showSuccessToast: true });
                                 }}
                                 disabled={!canRetryAssets}
-                                className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+                                className={GAME_ACTION_MENU_ITEM}
                               >
                                 <Image size={13} />
                                 <span>Retry Assets Image Generation</span>
@@ -8478,7 +8492,7 @@ export function GameSurface({
                             onOpenSettings();
                             setMobileActionsOpen(false);
                           }}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                          className={GAME_MOBILE_ICON_BUTTON}
                           title="Chat Settings"
                         >
                           <Settings2 size={14} />
@@ -8489,10 +8503,10 @@ export function GameSurface({
                 </div>
               </div>
 
-              <ActiveWorldInfoModal
+              <ActiveLorebookEntriesModal
                 chatId={activeChatId}
-                open={mobileWorldInfoOpen}
-                onClose={() => setMobileWorldInfoOpen(false)}
+                open={mobileActiveContextOpen}
+                onClose={() => setMobileActiveContextOpen(false)}
               />
 
               {pendingReaction && (
