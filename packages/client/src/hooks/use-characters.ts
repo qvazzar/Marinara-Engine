@@ -32,6 +32,7 @@ export const characterKeys = {
   detail: (id: string) => [...characterKeys.all, "detail", id] as const,
   versions: (id: string) => [...characterKeys.detail(id), "versions"] as const,
   gallery: (id: string) => [...characterKeys.all, "gallery", id] as const,
+  personaGallery: (id: string) => ["personas", "gallery", id] as const,
   personas: ["personas"] as const,
   groups: ["character-groups"] as const,
   groupDetail: (id: string) => ["character-groups", "detail", id] as const,
@@ -373,6 +374,73 @@ export function useDeleteCharacterGalleryImage(characterId: string) {
     mutationFn: (imageId: string) => api.delete(`/characters/${characterId}/gallery/${imageId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: characterKeys.gallery(characterId) });
+    },
+  });
+}
+
+// ── Persona Gallery ──
+
+export interface PersonaGalleryImage {
+  id: string;
+  personaId: string;
+  filePath: string;
+  prompt: string;
+  provider: string;
+  model: string;
+  width: number | null;
+  height: number | null;
+  createdAt: string;
+  url: string;
+}
+
+export function usePersonaGalleryImages(personaId: string | null) {
+  return useQuery({
+    queryKey: characterKeys.personaGallery(personaId ?? ""),
+    queryFn: () => api.get<PersonaGalleryImage[]>(`/characters/personas/${personaId}/gallery`),
+    enabled: !!personaId,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useUploadPersonaGalleryImage(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (files: File[]) => {
+      const uploads = await Promise.allSettled(
+        files.map((file) => {
+          const formData = new FormData();
+          formData.append("file", file);
+          return api.upload<PersonaGalleryImage>(`/characters/personas/${personaId}/gallery/upload`, formData);
+        }),
+      );
+
+      const successfulUploads = uploads.filter(
+        (result): result is PromiseFulfilledResult<PersonaGalleryImage> => result.status === "fulfilled",
+      );
+
+      if (successfulUploads.length !== uploads.length) {
+        const failedCount = uploads.length - successfulUploads.length;
+        throw new Error(
+          failedCount === 1
+            ? "One persona gallery image failed to upload."
+            : `${failedCount} persona gallery images failed to upload.`,
+        );
+      }
+
+      return successfulUploads.map((result) => result.value);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.personaGallery(personaId) });
+    },
+  });
+}
+
+export function useDeletePersonaGalleryImage(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (imageId: string) => api.delete(`/characters/personas/${personaId}/gallery/${imageId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.personaGallery(personaId) });
     },
   });
 }

@@ -6,7 +6,16 @@
 // ──────────────────────────────────────────────
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
-import { usePersonas, useUpdatePersona, useUploadPersonaAvatar, useDeletePersona } from "../../hooks/use-characters";
+import {
+  usePersonas,
+  useUpdatePersona,
+  useUploadPersonaAvatar,
+  useDeletePersona,
+  usePersonaGalleryImages,
+  useUploadPersonaGalleryImage,
+  useDeletePersonaGalleryImage,
+  type PersonaGalleryImage,
+} from "../../hooks/use-characters";
 import { useConnections } from "../../hooks/use-connections";
 import { useUIStore } from "../../stores/ui.store";
 import {
@@ -29,6 +38,7 @@ import {
   Tag,
   Image,
   Upload,
+  Download,
   FolderOpen,
   Loader2,
   Wand2,
@@ -44,6 +54,7 @@ import { extractColorsFromImage } from "../../lib/avatar-color-extraction";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { ColorPicker } from "../ui/ColorPicker";
 import { ExpandedTextarea } from "../ui/ExpandedTextarea";
+import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { api } from "../../lib/api-client";
 import { parseTrackerCardColorConfig, serializeTrackerCardColorConfig } from "../../lib/tracker-card-colors";
 import {
@@ -79,6 +90,7 @@ const TABS = [
   { id: "scenario", label: "Scenario", icon: MapPin },
   { id: "lorebook", label: "Lorebook", icon: Library },
   { id: "sprites", label: "Sprites", icon: Image },
+  { id: "gallery", label: "Gallery", icon: Camera },
   { id: "colors", label: "Colors", icon: Palette },
   { id: "stats", label: "Stats", icon: Activity },
 ] as const;
@@ -166,6 +178,156 @@ function formatPersonaFieldValue<K extends keyof PersonaFormData>(
     ) as PersonaFormData[K];
   }
   return value;
+}
+
+// ── Gallery Tab ──
+
+function PersonaGalleryTab({ personaId, personaName }: { personaId: string; personaName?: string }) {
+  const { data: images, isLoading } = usePersonaGalleryImages(personaId);
+  const upload = useUploadPersonaGalleryImage(personaId);
+  const remove = useDeletePersonaGalleryImage(personaId);
+  const [lightbox, setLightbox] = useState<PersonaGalleryImage | null>(null);
+
+  const handleUpload = useCallback(
+    (files: File[]) => {
+      if (files.length === 0) return;
+      upload.mutate(files);
+    },
+    [upload],
+  );
+
+  const handleDelete = useCallback(
+    async (image: PersonaGalleryImage) => {
+      if (
+        !(await showConfirmDialog({
+          title: "Delete Persona Image",
+          message: "Delete this persona gallery image?",
+          confirmLabel: "Delete",
+          tone: "destructive",
+        }))
+      ) {
+        return;
+      }
+      remove.mutate(image.id);
+      if (lightbox?.id === image.id) setLightbox(null);
+    },
+    [lightbox?.id, remove],
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="mb-4">
+        <h2 className="text-lg font-bold">Persona Gallery</h2>
+        <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
+          Keep reference art and alternate looks attached to this persona, independent of any chat.
+        </p>
+      </div>
+
+      <ImageUploadDropzone
+        label="Upload Persona Images"
+        pending={upload.isPending}
+        pendingLabel="Uploading…"
+        dragLabel="Drop persona images to upload"
+        onFilesSelected={handleUpload}
+        icon={<Upload size="1rem" />}
+        className="w-full"
+      />
+
+      {isLoading ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="shimmer aspect-square rounded-xl" />
+          ))}
+        </div>
+      ) : images && images.length > 0 ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+          {images.map((image) => (
+            <div
+              key={image.id}
+              className="group relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md"
+            >
+              <button
+                type="button"
+                className="block aspect-square w-full bg-[var(--secondary)]"
+                onClick={() => setLightbox(image)}
+              >
+                <img
+                  src={image.url}
+                  alt={image.prompt || personaName || "Persona image"}
+                  className="h-full w-full object-cover"
+                />
+              </button>
+              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/75 via-black/25 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
+                <span className="max-w-[8rem] truncate text-[0.6875rem] font-medium text-white/85">
+                  {new Date(image.createdAt).toLocaleDateString()}
+                </span>
+                <div className="flex gap-1">
+                  <a
+                    href={image.url}
+                    download
+                    className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25"
+                    title="Download"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Download size="0.75rem" />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(image)}
+                    className="rounded-lg bg-red-500/35 p-1.5 text-white transition-colors hover:bg-red-500/55"
+                    title="Delete"
+                  >
+                    <Trash2 size="0.75rem" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
+          <Camera size="1.75rem" className="text-[var(--muted-foreground)]/40" />
+          <div>
+            <p className="text-sm font-medium text-[var(--muted-foreground)]">No persona images yet</p>
+            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
+              Upload images here to keep them tied to {personaName || "this persona"} instead of a specific chat.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 max-md:pt-[env(safe-area-inset-top)]"
+          onClick={() => setLightbox(null)}
+        >
+          <div className="relative max-h-[90vh] max-w-[90vw] w-[min(90vw,90vh)]" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={lightbox.url}
+              alt={lightbox.prompt || personaName || "Persona image"}
+              className="max-h-[85vh] w-full rounded-lg object-contain shadow-2xl"
+            />
+            <div className="absolute right-2 top-2 flex gap-2">
+              <a
+                href={lightbox.url}
+                download
+                className="rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
+              >
+                <Download size="0.875rem" />
+              </a>
+              <button
+                type="button"
+                onClick={() => setLightbox(null)}
+                className="rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
+              >
+                <X size="0.875rem" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function PersonaEditor() {
@@ -653,6 +815,9 @@ export function PersonaEditor() {
                 defaultAppearance={formData.appearance || formData.description}
                 defaultAvatarUrl={avatarPreview}
               />
+            )}
+            {activeTab === "gallery" && personaId && (
+              <PersonaGalleryTab personaId={personaId} personaName={formData.name} />
             )}
             {activeTab === "stats" && <PersonaStatsTab formData={formData} updateField={updateField} />}
           </div>
