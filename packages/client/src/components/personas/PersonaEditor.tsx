@@ -191,7 +191,7 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
   const handleUpload = useCallback(
     (files: File[]) => {
       if (files.length === 0) return;
-      upload.mutate(files);
+      upload.mutate(files, { onError: (err) => toast.error(err.message) });
     },
     [upload],
   );
