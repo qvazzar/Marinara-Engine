@@ -234,13 +234,13 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
       />
 
       {isLoading ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+        <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="shimmer aspect-square rounded-xl" />
           ))}
         </div>
       ) : images && images.length > 0 ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+        <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
           {images.map((image) => (
             <div
               key={image.id}
