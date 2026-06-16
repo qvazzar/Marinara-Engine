@@ -73,6 +73,15 @@ function getNextUnnamedFolderName(folders: Array<{ name: string }>) {
   return `unnamed ${index}`;
 }
 
+function parseDroppedPersonaIds(payload: string): unknown {
+  if (!payload) return undefined;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+}
+
 function estimateTokens(p: PersonaRow): number {
   const text = [p.description, p.personality, p.scenario, p.backstory, p.appearance].join("");
   return Math.ceil(text.length / 4);
@@ -277,8 +286,12 @@ export function PersonasPanel() {
   );
 
   const handlePersonaDrop = useCallback(
-    (folderId: string | null, personaIds?: string[]) => {
-      const ids = personaIds ?? (draggedPersonaId ? [draggedPersonaId] : []);
+    (folderId: string | null, personaIds?: unknown) => {
+      const ids = Array.isArray(personaIds)
+        ? personaIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+        : draggedPersonaId
+          ? [draggedPersonaId]
+          : [];
       if (ids.length === 0) return;
       void movePersonasToFolder(ids, folderId);
       setDraggedPersonaId(null);
@@ -645,7 +658,7 @@ export function PersonasPanel() {
                 event.preventDefault();
                 event.stopPropagation();
                 const payload = event.dataTransfer.getData("application/x-marinara-persona-ids");
-                handlePersonaDrop(group.id, payload ? (JSON.parse(payload) as string[]) : undefined);
+                handlePersonaDrop(group.id, parseDroppedPersonaIds(payload));
               }}
               className="flex flex-col rounded-lg transition-colors"
             >
@@ -876,7 +889,7 @@ export function PersonasPanel() {
         onDrop={(event) => {
           event.preventDefault();
           const payload = event.dataTransfer.getData("application/x-marinara-persona-ids");
-          handlePersonaDrop(null, payload ? (JSON.parse(payload) as string[]) : undefined);
+          handlePersonaDrop(null, parseDroppedPersonaIds(payload));
         }}
         className={cn(
           "stagger-children flex min-h-8 flex-col gap-1 rounded-xl transition-colors",

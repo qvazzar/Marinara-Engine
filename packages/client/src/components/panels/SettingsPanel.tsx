@@ -8,6 +8,7 @@ import {
   useUIStore,
   getDefaultAppAccentColor,
   getDefaultChatChromeTextColor,
+  getDefaultChatTextColor,
   getTrackerPanelWidthForProfile,
   type ConversationMessageStyle,
   type GameDialogueDisplayMode,
@@ -2153,8 +2154,8 @@ function AppearanceSettings() {
               compact
               label="Chat Text Color"
               helpText="Controls the main chat message text color. Leave it on the scheme default to keep dark and light mode readable."
-              emptyText={`Scheme default ${getDefaultChatChromeTextColor(theme)}`}
-              emptyPreviewValue={getDefaultChatChromeTextColor(theme)}
+              emptyText={`Scheme default ${getDefaultChatTextColor(theme)}`}
+              emptyPreviewValue={getDefaultChatTextColor(theme)}
               clearLabel="Reset to default"
             />
 

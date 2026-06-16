@@ -84,6 +84,8 @@ export const TRACKER_PANEL_WIDTH_MAX = TRACKER_PANEL_SIZE_PROFILE_WIDTHS.expande
 export const TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR = "#09090b";
 export const DEFAULT_APP_ACCENT_DARK = "#d4d4d4";
 export const DEFAULT_APP_ACCENT_LIGHT = "#1a1025";
+export const DEFAULT_CHAT_TEXT_DARK = "#d4d4d4";
+export const DEFAULT_CHAT_TEXT_LIGHT = "#1a1025";
 export const DEFAULT_CHAT_CHROME_TEXT_DARK = "#d4d4d4";
 export const DEFAULT_CHAT_CHROME_TEXT_LIGHT = "#1a1025";
 const IMAGE_DIMENSION_MIN = 64;
@@ -130,6 +132,10 @@ function normalizeUserActivity(activity: string): string {
 
 export function getDefaultAppAccentColor(theme: "dark" | "light") {
   return theme === "light" ? DEFAULT_APP_ACCENT_LIGHT : DEFAULT_APP_ACCENT_DARK;
+}
+
+export function getDefaultChatTextColor(theme: "dark" | "light") {
+  return theme === "light" ? DEFAULT_CHAT_TEXT_LIGHT : DEFAULT_CHAT_TEXT_DARK;
 }
 
 export function getDefaultChatChromeTextColor(theme: "dark" | "light") {

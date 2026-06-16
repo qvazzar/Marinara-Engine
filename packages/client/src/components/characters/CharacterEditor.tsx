@@ -1583,7 +1583,17 @@ function DialogueTab({
   formData: CharacterData;
   updateField: <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => void;
 }) {
+  const greetingKeysRef = useRef<string[]>([]);
+
+  while (greetingKeysRef.current.length < formData.alternate_greetings.length) {
+    greetingKeysRef.current.push(generateClientId());
+  }
+  if (greetingKeysRef.current.length > formData.alternate_greetings.length) {
+    greetingKeysRef.current.length = formData.alternate_greetings.length;
+  }
+
   const addGreeting = () => {
+    greetingKeysRef.current.push(generateClientId());
     updateField("alternate_greetings", [...formData.alternate_greetings, ""]);
   };
 
@@ -1594,6 +1604,7 @@ function DialogueTab({
   };
 
   const removeGreeting = (i: number) => {
+    greetingKeysRef.current.splice(i, 1);
     updateField(
       "alternate_greetings",
       formData.alternate_greetings.filter((_, idx) => idx !== i),
@@ -1641,7 +1652,7 @@ function DialogueTab({
         </div>
         {formData.alternate_greetings.map((g, i) => (
           <MacroTextarea
-            key={i}
+            key={greetingKeysRef.current[i] ?? i}
             value={g}
             onChange={(value) => updateGreeting(i, value)}
             rows={3}
@@ -2830,7 +2841,6 @@ function StatsTab({
               ))}
             </div>
           </div>
-
         </>
       )}
     </div>
@@ -2960,7 +2970,6 @@ function ColorsTab({
         label="Message Box Color"
         helpText="Background color for this character's chat message bubbles. Use a semi-transparent color for best results (e.g. rgba)."
       />
-
     </div>
   );
 }

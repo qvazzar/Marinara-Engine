@@ -2525,6 +2525,7 @@ summary[class*="cursor-pointer"],
 
   [data-chat-mode="roleplay"] .mari-roleplay-message-row {
     --mari-roleplay-mobile-avatar-space: calc((2.5rem * var(--roleplay-avatar-scale, 1)) + 0.5rem);
+
     gap: 0.5rem;
     padding-left: 0;
     padding-right: 0;

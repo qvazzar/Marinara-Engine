@@ -1987,6 +1987,10 @@ function SectionContentTextarea({
   }, [value]);
 
   const commit = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
     if (local !== value) onCommit(local);
   }, [local, value, onCommit]);
 
@@ -2003,10 +2007,6 @@ function SectionContentTextarea({
   // Commit on blur immediately
   const handleBlur = () => {
     focusedRef.current = false;
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
     commit();
   };
 
@@ -2028,6 +2028,7 @@ function SectionContentTextarea({
       onChange={handleChange}
       onBlur={handleBlur}
       onFocus={handleFocus}
+      onExpandedClose={commit}
       title={sectionName ? `Edit: ${sectionName}` : "Edit Prompt"}
       className="min-h-[7.5rem] w-full rounded-lg bg-[var(--secondary)] p-2.5 font-mono text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
       placeholder="Prompt content… (supports {{user}}, {{char}}, {{// comment}}, {{trim}} macros)"

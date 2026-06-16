@@ -523,6 +523,7 @@ export function GameMapPanel({
         <span className="text-[0.625rem] text-[var(--marinara-chat-chrome-panel-muted)]">No map yet</span>
         {onGenerateMap && (
           <button
+            type="button"
             onClick={onGenerateMap}
             disabled={disabled}
             className="flex items-center gap-1 rounded-md border border-[var(--marinara-chat-chrome-button-border)] bg-[var(--marinara-chat-chrome-button-bg)] px-2 py-1 text-[0.625rem] font-medium text-[var(--marinara-chat-chrome-button-text-hover)] transition-colors hover:border-[var(--marinara-chat-chrome-button-border-hover)] hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
@@ -775,6 +776,7 @@ export function MobileMapButton({
       {/* Floating map icon */}
       <div className="flex items-center">
         <button
+          type="button"
           onClick={() => setOpen((value) => !value)}
           className={getChatToolbarButtonClass({ open, className: "shadow-lg shadow-black/25" })}
           aria-expanded={open}
@@ -848,6 +850,7 @@ export function MobileMapButton({
                 )}
               </div>
               <button
+                type="button"
                 onClick={() => {
                   setOpen(false);
                   setSelectedNode(null);
@@ -867,6 +870,7 @@ export function MobileMapButton({
                   <span className="text-xs">No map yet</span>
                   {onGenerateMap && (
                     <button
+                      type="button"
                       onClick={() => {
                         onGenerateMap();
                         setOpen(false);
@@ -940,6 +944,7 @@ export function MobileMapButton({
                 </span>
                 {canTravel && selectedNode !== currentNode?.id && (
                   <button
+                    type="button"
                     onClick={handleTravel}
                     className="shrink-0 rounded-lg border border-[var(--marinara-chat-chrome-button-border)] bg-[var(--marinara-chat-chrome-button-bg)] px-3 py-1.5 text-[0.6875rem] font-semibold text-[var(--marinara-chat-chrome-button-text-hover)] transition-colors hover:border-[var(--marinara-chat-chrome-button-border-hover)] hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] active:opacity-80"
                   >

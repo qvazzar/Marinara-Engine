@@ -72,6 +72,15 @@ function getNextUnnamedFolderName(folders: Array<{ name: string }>) {
   return `unnamed ${index}`;
 }
 
+function parseDroppedCharacterIds(payload: string): unknown {
+  if (!payload) return undefined;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+}
+
 function getCharacterTags(char: ParsedCharacterRow): string[] {
   return Array.isArray(char.parsed.tags) ? (char.parsed.tags as string[]).filter(Boolean) : [];
 }
@@ -531,8 +540,12 @@ export function CharactersPanel() {
   );
 
   const handleCharacterDrop = useCallback(
-    (folderId: string | null, charIds?: string[]) => {
-      const ids = charIds ?? (draggedCharacterId ? [draggedCharacterId] : []);
+    (folderId: string | null, charIds?: unknown) => {
+      const ids = Array.isArray(charIds)
+        ? charIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+        : draggedCharacterId
+          ? [draggedCharacterId]
+          : [];
       if (ids.length === 0) return;
       void moveCharactersToFolder(ids, folderId);
       setDraggedCharacterId(null);
@@ -923,7 +936,7 @@ export function CharactersPanel() {
                 event.preventDefault();
                 event.stopPropagation();
                 const payload = event.dataTransfer.getData("application/x-marinara-character-ids");
-                handleCharacterDrop(group.id, payload ? (JSON.parse(payload) as string[]) : undefined);
+                handleCharacterDrop(group.id, parseDroppedCharacterIds(payload));
               }}
               className="flex flex-col rounded-lg transition-colors"
             >
@@ -1259,7 +1272,7 @@ export function CharactersPanel() {
         onDrop={(event) => {
           event.preventDefault();
           const payload = event.dataTransfer.getData("application/x-marinara-character-ids");
-          handleCharacterDrop(null, payload ? (JSON.parse(payload) as string[]) : undefined);
+          handleCharacterDrop(null, parseDroppedCharacterIds(payload));
         }}
         className={cn(
           "stagger-children flex min-h-8 flex-col gap-1 rounded-xl transition-colors",

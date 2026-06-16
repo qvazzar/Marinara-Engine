@@ -106,6 +106,7 @@ export function ChatToolbarMenu({
     const measure = () => {
       if (mobileQuery.matches) {
         setOverflowCollapsed(false);
+        setOpen(false);
         return;
       }
 
@@ -123,6 +124,7 @@ export function ChatToolbarMenu({
 
       if (!desktop && neededDesktopWidthRef.current > 0 && availableWidth > neededDesktopWidthRef.current + 24) {
         setOverflowCollapsed(false);
+        setOpen(false);
       }
     };
 
