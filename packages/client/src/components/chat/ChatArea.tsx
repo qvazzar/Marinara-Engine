@@ -1959,6 +1959,7 @@ export function ChatArea() {
     return (
       <Suspense fallback={surfaceFallback}>
         <>
+          {cardCssInjector}
           <GameSurface
             activeChatId={activeChatId}
             chat={chat!}
