@@ -113,7 +113,7 @@ Wrap rules in `@chat-mode` blocks to target a specific surface; CSS outside any 
 
 Standard `@media` queries work normally inside `@chat-mode` blocks for responsive layouts.
 
-> **Game mode** does not apply card CSS yet — a `@chat-mode game { … }` block is harmless but has no effect.
+> **Game mode** has baseline support: in **Chat** mode, card CSS reaches the whole game surface (scoped to `.mari-card-css`), so `[data-card-css] { … }` themes the game area and `@chat-mode game { … }` targets it specifically. Game uses its own layout — the message-bubble hooks above don't exist there, so target broadly (e.g. the area background). Per-character (Exclusive) scoping of game narration is a planned enhancement, not in yet.
 
 ---
 
