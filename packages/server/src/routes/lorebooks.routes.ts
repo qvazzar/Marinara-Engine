@@ -14,9 +14,11 @@ import {
   updateLorebookFolderSchema,
   LOCAL_SIDECAR_CONNECTION_ID,
   stripMacroComments,
+  canReparentFolder,
   type CreateLorebookEntryInput,
   type LorebookEntryTimingState,
   type LorebookEntry,
+  type LorebookFolder,
 } from "@marinara-engine/shared";
 import type { ExportEnvelope } from "@marinara-engine/shared";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
@@ -549,17 +551,27 @@ export async function lorebooksRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>("/:id/folders", async (req, reply) => {
     const input = createLorebookFolderSchema.parse(req.body);
     if (input.parentFolderId !== null) {
-      // v1 reserves nesting for a follow-up PR. Accept the field shape but
-      // refuse to persist non-null values rather than silently dropping them.
-      return reply.status(400).send({ error: "Nested folders are not supported in this version" });
+      // Nesting under a parent: the parent must exist in this lorebook. A brand-new
+      // folder has no descendants, so a missing/foreign parent is the only risk
+      // here — the full descendant-cycle check runs on move (PATCH) below.
+      const parent = await storage.getFolder(input.parentFolderId, req.params.id);
+      if (!parent) {
+        return reply.status(400).send({ error: "Parent folder not found in this lorebook" });
+      }
     }
     return storage.createFolder(req.params.id, input);
   });
 
   app.patch<{ Params: { id: string; folderId: string } }>("/:id/folders/:folderId", async (req, reply) => {
     const input = updateLorebookFolderSchema.parse(req.body);
-    if (input.parentFolderId !== undefined && input.parentFolderId !== null) {
-      return reply.status(400).send({ error: "Nested folders are not supported in this version" });
+    // Re-parenting: validate against the lorebook's folder set (no self-parent,
+    // same lorebook, no descendant cycle) before persisting.
+    if (input.parentFolderId !== undefined) {
+      const folders = (await storage.listFolders(req.params.id)) as LorebookFolder[];
+      const check = canReparentFolder(folders, req.params.folderId, input.parentFolderId);
+      if (!check.ok) {
+        return reply.status(400).send({ error: check.reason });
+      }
     }
     // Scope by lorebookId so /lorebooks/A/folders/B can't update folder B if
     // it actually belongs to lorebook X.

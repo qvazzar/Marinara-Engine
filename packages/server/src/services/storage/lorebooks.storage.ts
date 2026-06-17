@@ -794,10 +794,17 @@ export function createLorebooksStorage(db: DB) {
       const folder = (await this.getFolder(folderId, lorebookId)) as Record<string, unknown> | null;
       if (!folder) return;
       const ownerLorebookId = folder.lorebookId as string;
+      // Entries in this folder fall back to root...
       await db
         .update(lorebookEntries)
         .set({ folderId: null, updatedAt: now() })
         .where(and(eq(lorebookEntries.lorebookId, ownerLorebookId), eq(lorebookEntries.folderId, folderId)));
+      // ...and direct child folders are promoted to the top level (not cascade-
+      // deleted), so deleting a parent lifts its subtree up one level intact.
+      await db
+        .update(lorebookFolders)
+        .set({ parentFolderId: null, updatedAt: now() })
+        .where(and(eq(lorebookFolders.lorebookId, ownerLorebookId), eq(lorebookFolders.parentFolderId, folderId)));
       await db
         .delete(lorebookFolders)
         .where(and(eq(lorebookFolders.id, folderId), eq(lorebookFolders.lorebookId, ownerLorebookId)));
