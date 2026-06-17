@@ -23,11 +23,13 @@ import { ChevronDown, Folder, GripVertical, ToggleLeft, ToggleRight, Trash2 } fr
 import { cn } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useUpdateLorebookFolder, useDeleteLorebookFolder } from "../../hooks/use-lorebooks";
-import type { LorebookFolder } from "@marinara-engine/shared";
+import { canReparentFolder, type LorebookFolder } from "@marinara-engine/shared";
 
 interface Props {
   folder: LorebookFolder;
   lorebookId: string;
+  /** All folders in this lorebook — builds the parent picker + validates moves. */
+  folders: LorebookFolder[];
   /** Number of entries currently inside this folder (for the count badge). */
   entryCount: number;
   /** UI-only collapse state — owned by the parent editor and persisted in localStorage. */
@@ -49,6 +51,7 @@ interface Props {
 export function LorebookFolderRow({
   folder,
   lorebookId,
+  folders,
   entryCount,
   isCollapsed,
   onToggleCollapse,
@@ -68,6 +71,7 @@ export function LorebookFolderRow({
   // Optimistic mirrors so toggle/rename feel snappy while the mutation flushes.
   const [localEnabled, setLocalEnabled] = useState(folder.enabled);
   const [localName, setLocalName] = useState(folder.name);
+  const [localParentId, setLocalParentId] = useState(folder.parentFolderId);
 
   const lastSyncedRef = useRef(folder);
   useEffect(() => {
@@ -75,6 +79,7 @@ export function LorebookFolderRow({
     lastSyncedRef.current = folder;
     setLocalEnabled(folder.enabled);
     setLocalName(folder.name);
+    setLocalParentId(folder.parentFolderId);
   }, [folder]);
 
   const handleEnableToggle = useCallback(
@@ -121,6 +126,25 @@ export function LorebookFolderRow({
       );
     }
   }, [localName, folder.name, lorebookId, folder.id, updateFolder]);
+
+  const handleParentChange = useCallback(
+    (parentFolderId: string | null) => {
+      const previous = localParentId;
+      // Optimistic flip; roll back if the move is rejected server-side.
+      setLocalParentId(parentFolderId);
+      updateFolder.mutate(
+        { lorebookId, folderId: folder.id, parentFolderId },
+        { onError: () => setLocalParentId(previous) },
+      );
+    },
+    [localParentId, lorebookId, folder.id, updateFolder],
+  );
+
+  // Valid parents only: same lorebook, not this folder, not one of its own
+  // descendants — so the picker can never offer a move that would cycle.
+  const parentOptions = folders.filter(
+    (candidate) => candidate.id !== folder.id && canReparentFolder(folders, folder.id, candidate.id).ok,
+  );
 
   const handleDelete = useCallback(
     async (e: ReactMouseEvent) => {
@@ -231,6 +255,25 @@ export function LorebookFolderRow({
           placeholder="Untitled folder"
           className="min-w-0 flex-1 truncate bg-transparent px-1 text-sm font-semibold outline-none transition-colors hover:bg-[var(--accent)]/40 focus:bg-[var(--accent)]/40 focus:ring-1 focus:ring-[var(--ring)] rounded"
         />
+
+        {/* Parent folder picker — nest this folder under another (cycle-safe options) */}
+        {parentOptions.length > 0 && (
+          <select
+            value={localParentId ?? ""}
+            onChange={(e) => handleParentChange(e.target.value || null)}
+            onClick={(e) => e.stopPropagation()}
+            title="Nest this folder under another folder"
+            aria-label="Parent folder"
+            className="shrink-0 max-w-[7rem] truncate rounded bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)] outline-none ring-1 ring-transparent transition-colors hover:ring-[var(--border)] focus:ring-[var(--ring)]"
+          >
+            <option value="">(top level)</option>
+            {parentOptions.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>
+                {candidate.name.trim() || "Untitled folder"}
+              </option>
+            ))}
+          </select>
+        )}
 
         {/* Entry count badge */}
         <span

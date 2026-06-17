@@ -77,6 +77,7 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   testPrimaryKeys,
   testSecondaryKeys,
+  buildFolderForest,
   type Lorebook,
   type LorebookEntry,
   type LorebookFolder,
@@ -607,6 +608,9 @@ export function LorebookEditor() {
     return map;
   }, [entries, folders]);
 
+  // Folder hierarchy: flat parentFolderId rows → sorted roots + child lists.
+  const folderForest = useMemo(() => buildFolderForest(folders), [folders]);
+
   const canReorderEntries = showFolderGrouping && entries.length > 1 && !reorderEntries.isPending;
   const canReorderFolders = showFolderGrouping && folders.length > 1 && !reorderFolders.isPending;
 
@@ -1040,6 +1044,137 @@ export function LorebookEditor() {
       </div>
     );
   }
+
+  // Recursive folder renderer: a folder header, then (when expanded) its entries
+  // followed by its child folders nested inside. `renderedFolderIds` guards a
+  // malformed cycle from rendering a folder twice.
+  const renderedFolderIds = new Set<string>();
+  const renderFolder = (folder: LorebookFolder): ReactNode => {
+    if (!lorebookId || renderedFolderIds.has(folder.id)) return null;
+    renderedFolderIds.add(folder.id);
+    const fIdx = folders.findIndex((f) => f.id === folder.id);
+    const folderEntries = entriesByContainer.get(folder.id) ?? [];
+    const isCollapsed = collapsedFolderIds.has(folder.id);
+    const childFolders = folderForest.childrenByParent.get(folder.id) ?? [];
+    const showFolderDropBefore =
+      folderDropIdx === fIdx &&
+      draggingFolderIdx !== null &&
+      draggingFolderIdx !== fIdx &&
+      draggingFolderIdx !== fIdx - 1;
+    const showFolderDropAfter =
+      fIdx === folders.length - 1 &&
+      folderDropIdx === folders.length &&
+      draggingFolderIdx !== null &&
+      draggingFolderIdx !== fIdx;
+    return (
+      <div key={folder.id} className="space-y-1">
+        {showFolderDropBefore && <div className="mx-2 mb-1 h-0.5 rounded-full bg-amber-400" />}
+        <LorebookFolderRow
+          folder={folder}
+          lorebookId={lorebookId}
+          folders={folders}
+          entryCount={folderEntries.length}
+          isCollapsed={isCollapsed}
+          onToggleCollapse={() => toggleFolderCollapsed(folder.id)}
+          draggable={canReorderFolders}
+          isDragging={draggingFolderIdx === fIdx}
+          isDragReady={folderDragReadyIdx === fIdx}
+          onDragHandleMouseDown={() => {
+            if (canReorderFolders) setFolderDragReadyIdx(fIdx);
+          }}
+          onDragHandleMouseUp={() => setFolderDragReadyIdx(null)}
+          onDragStart={(e) => handleFolderDragStart(fIdx, folder.id, e)}
+          onDragOver={(e) => {
+            e.stopPropagation();
+            if (draggingEntryIdx !== null) handleFolderHeaderDragOver(folder.id, e);
+            else handleFolderDragOverHeader(fIdx, e);
+          }}
+          onDrop={(e) => {
+            e.stopPropagation();
+            if (draggingEntryIdx !== null) commitEntryDrop(e);
+            else commitFolderDrop(e);
+          }}
+          onDragEnd={() => {
+            resetFolderDragState();
+            resetEntryDragState();
+          }}
+        />
+        {!isCollapsed && (
+          <div
+            className="ml-2 space-y-1.5 border-l border-[var(--border)] pl-2 sm:ml-3 sm:pl-2.5"
+            onDragOver={(e) => handleFolderBodyDragOver(folder.id, e)}
+            onDrop={(e) => {
+              e.stopPropagation();
+              commitEntryDrop(e);
+            }}
+          >
+            {folderEntries.length === 0 && childFolders.length === 0 && (
+              <p className="py-2 text-[0.625rem] italic text-[var(--muted-foreground)]">
+                Empty — drag an entry here or pick this folder from an entry's folder selector.
+              </p>
+            )}
+            {folderEntries.map((entry, eIdx) => {
+              const isDropTarget = dropTargetContainer === folder.id && draggingEntryIdx !== null;
+              const sameContainer = dragSourceContainer === folder.id;
+              const showDropBefore =
+                isDropTarget &&
+                sameContainer &&
+                entryDropIdx === eIdx &&
+                draggingEntryIdx !== eIdx &&
+                draggingEntryIdx !== eIdx - 1;
+              const showDropAfter =
+                isDropTarget &&
+                sameContainer &&
+                eIdx === folderEntries.length - 1 &&
+                entryDropIdx === folderEntries.length &&
+                draggingEntryIdx !== eIdx;
+              return (
+                <div key={entry.id}>
+                  {showDropBefore && <div className="mx-2 mb-1 h-0.5 rounded-full bg-amber-400" />}
+                  <LorebookEntryRow
+                    entry={entry}
+                    lorebookId={lorebookId}
+                    isExpanded={expandedEntryId === entry.id}
+                    onToggleExpand={() => toggleEntryExpanded(entry.id)}
+                    characters={characters}
+                    characterTags={characterTags}
+                    folders={folders}
+                    draggable={canReorderEntries}
+                    isDragging={sameContainer && draggingEntryIdx === eIdx}
+                    isDragReady={sameContainer && entryDragReadyIdx === eIdx}
+                    onDragHandleMouseDown={() => {
+                      if (canReorderEntries) {
+                        setEntryDragReadyIdx(eIdx);
+                        setDragSourceContainer(folder.id);
+                      }
+                    }}
+                    onDragHandleMouseUp={() => setEntryDragReadyIdx(null)}
+                    onDragStart={(e) => handleEntryDragStart(folder.id, eIdx, entry.id, e)}
+                    onDragOver={(e) => {
+                      e.stopPropagation();
+                      handleEntryDragOver(folder.id, eIdx, e);
+                    }}
+                    onDrop={(e) => {
+                      e.stopPropagation();
+                      commitEntryDrop(e);
+                    }}
+                    onDragEnd={resetEntryDragState}
+                    selectionMode={entrySelectionMode}
+                    isSelected={selectedEntryIds.has(entry.id)}
+                    onToggleSelected={() => toggleEntrySelection(entry.id)}
+                    previewMatch={previewMatches.get(entry.id)}
+                  />
+                  {showDropAfter && <div className="mx-2 mt-1 h-0.5 rounded-full bg-amber-400" />}
+                </div>
+              );
+            })}
+            {childFolders.map((child) => renderFolder(child))}
+          </div>
+        )}
+        {showFolderDropAfter && <div className="mx-2 mt-1 h-0.5 rounded-full bg-amber-400" />}
+      </div>
+    );
+  };
 
   // ── Main editor ──
   return (
@@ -1743,150 +1878,9 @@ export function LorebookEditor() {
                 {/* Entries — folder-grouped view (default sort, no search) */}
                 {lorebookId && showFolderGrouping && (entries.length > 0 || folders.length > 0) && (
                   <div className="space-y-3">
-                    {/* Folder block */}
+                    {/* Folder block — nested tree (folders may contain sub-folders) */}
                     {folders.length > 0 && (
-                      <div className="space-y-1.5">
-                        {folders.map((folder, fIdx) => {
-                          const folderEntries = entriesByContainer.get(folder.id) ?? [];
-                          const isCollapsed = collapsedFolderIds.has(folder.id);
-                          const showFolderDropBefore =
-                            folderDropIdx === fIdx &&
-                            draggingFolderIdx !== null &&
-                            draggingFolderIdx !== fIdx &&
-                            draggingFolderIdx !== fIdx - 1;
-                          const showFolderDropAfter =
-                            fIdx === folders.length - 1 &&
-                            folderDropIdx === folders.length &&
-                            draggingFolderIdx !== null &&
-                            draggingFolderIdx !== fIdx;
-                          return (
-                            <div key={folder.id} className="space-y-1">
-                              {showFolderDropBefore && <div className="mx-2 mb-1 h-0.5 rounded-full bg-amber-400" />}
-                              {/*
-                                When an entry from a different container is being
-                                dragged toward this folder, paint a faint amber ring
-                                around the header to mirror the root drop-zone hint.
-                                The ring goes ON the wrapper div above the folder row
-                                because LorebookFolderRow already manages its own ring
-                                state for collapse/dragging visuals.
-                              */}
-                              <LorebookFolderRow
-                                folder={folder}
-                                lorebookId={lorebookId}
-                                entryCount={folderEntries.length}
-                                isCollapsed={isCollapsed}
-                                onToggleCollapse={() => toggleFolderCollapsed(folder.id)}
-                                draggable={canReorderFolders}
-                                isDragging={draggingFolderIdx === fIdx}
-                                isDragReady={folderDragReadyIdx === fIdx}
-                                onDragHandleMouseDown={() => {
-                                  if (canReorderFolders) setFolderDragReadyIdx(fIdx);
-                                }}
-                                onDragHandleMouseUp={() => setFolderDragReadyIdx(null)}
-                                onDragStart={(e) => handleFolderDragStart(fIdx, folder.id, e)}
-                                onDragOver={(e) => {
-                                  e.stopPropagation();
-                                  // Two roles for the same dragOver: if the user is dragging
-                                  // an entry, this header is a cross-container drop target;
-                                  // otherwise it's a sibling for folder reorder.
-                                  if (draggingEntryIdx !== null) handleFolderHeaderDragOver(folder.id, e);
-                                  else handleFolderDragOverHeader(fIdx, e);
-                                }}
-                                onDrop={(e) => {
-                                  e.stopPropagation();
-                                  if (draggingEntryIdx !== null) commitEntryDrop(e);
-                                  else commitFolderDrop(e);
-                                }}
-                                onDragEnd={() => {
-                                  resetFolderDragState();
-                                  resetEntryDragState();
-                                }}
-                              />
-                              {!isCollapsed && (
-                                <div
-                                  className="ml-2 space-y-1.5 border-l border-[var(--border)] pl-2 sm:ml-3 sm:pl-2.5"
-                                  onDragOver={(e) => handleFolderBodyDragOver(folder.id, e)}
-                                  onDrop={(e) => {
-                                    e.stopPropagation();
-                                    commitEntryDrop(e);
-                                  }}
-                                >
-                                  {folderEntries.length === 0 && (
-                                    <p className="py-2 text-[0.625rem] italic text-[var(--muted-foreground)]">
-                                      Empty — drag an entry here or pick this folder from an entry's folder selector.
-                                    </p>
-                                  )}
-                                  {folderEntries.map((entry, eIdx) => {
-                                    const isDropTarget = dropTargetContainer === folder.id && draggingEntryIdx !== null;
-                                    const sameContainer = dragSourceContainer === folder.id;
-                                    // Position bars only render for SAME-container drops because
-                                    // cross-container moves deliberately preserve the entry's
-                                    // existing Order (per the user's spec). Showing a bar
-                                    // between two entries during a cross-container drag would
-                                    // promise a position the move won't honor — the folder
-                                    // header's amber ring carries the "drop into this folder"
-                                    // affordance instead.
-                                    const showDropBefore =
-                                      isDropTarget &&
-                                      sameContainer &&
-                                      entryDropIdx === eIdx &&
-                                      draggingEntryIdx !== eIdx &&
-                                      draggingEntryIdx !== eIdx - 1;
-                                    const showDropAfter =
-                                      isDropTarget &&
-                                      sameContainer &&
-                                      eIdx === folderEntries.length - 1 &&
-                                      entryDropIdx === folderEntries.length &&
-                                      draggingEntryIdx !== eIdx;
-                                    return (
-                                      <div key={entry.id}>
-                                        {showDropBefore && (
-                                          <div className="mx-2 mb-1 h-0.5 rounded-full bg-amber-400" />
-                                        )}
-                                        <LorebookEntryRow
-                                          entry={entry}
-                                          lorebookId={lorebookId}
-                                          isExpanded={expandedEntryId === entry.id}
-                                          onToggleExpand={() => toggleEntryExpanded(entry.id)}
-                                          characters={characters}
-                                          characterTags={characterTags}
-                                          folders={folders}
-                                          draggable={canReorderEntries}
-                                          isDragging={sameContainer && draggingEntryIdx === eIdx}
-                                          isDragReady={sameContainer && entryDragReadyIdx === eIdx}
-                                          onDragHandleMouseDown={() => {
-                                            if (canReorderEntries) {
-                                              setEntryDragReadyIdx(eIdx);
-                                              setDragSourceContainer(folder.id);
-                                            }
-                                          }}
-                                          onDragHandleMouseUp={() => setEntryDragReadyIdx(null)}
-                                          onDragStart={(e) => handleEntryDragStart(folder.id, eIdx, entry.id, e)}
-                                          onDragOver={(e) => {
-                                            e.stopPropagation();
-                                            handleEntryDragOver(folder.id, eIdx, e);
-                                          }}
-                                          onDrop={(e) => {
-                                            e.stopPropagation();
-                                            commitEntryDrop(e);
-                                          }}
-                                          onDragEnd={resetEntryDragState}
-                                          selectionMode={entrySelectionMode}
-                                          isSelected={selectedEntryIds.has(entry.id)}
-                                          onToggleSelected={() => toggleEntrySelection(entry.id)}
-                                          previewMatch={previewMatches.get(entry.id)}
-                                        />
-                                        {showDropAfter && <div className="mx-2 mt-1 h-0.5 rounded-full bg-amber-400" />}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              {showFolderDropAfter && <div className="mx-2 mt-1 h-0.5 rounded-full bg-amber-400" />}
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <div className="space-y-1.5">{folderForest.roots.map((folder) => renderFolder(folder))}</div>
                     )}
 
                     {/* Root entries (entries with no folder).

@@ -19,6 +19,7 @@ import type {
   CreateLorebookFolderInput,
   UpdateLorebookFolderInput,
 } from "@marinara-engine/shared";
+import { collectEffectivelyDisabledFolderIds } from "@marinara-engine/shared";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "../import/import-timestamps.js";
 
 function resolveTimestamps(overrides?: TimestampOverrides | null) {
@@ -455,14 +456,21 @@ export function createLorebooksStorage(db: DB) {
         relevantBooks.filter((book) => book.excludeFromVectorization).map((book) => book.id),
       );
 
-      // Build the disabled-folder ID set for the relevant lorebooks. Done as
-      // an in-memory filter (rather than a SQL anti-join) because folder
-      // counts per book are small and this keeps the existing query shape.
-      const disabledFolderRows = await db
-        .select({ id: lorebookFolders.id })
+      // Build the *effectively* disabled-folder ID set: a folder is gated if it
+      // OR any ancestor is disabled (folders can nest). Fetch all folders for the
+      // relevant books and resolve ancestry in memory — per-book folder counts are
+      // small and this keeps the existing query shape.
+      const folderRows = await db
+        .select({
+          id: lorebookFolders.id,
+          parentFolderId: lorebookFolders.parentFolderId,
+          enabled: lorebookFolders.enabled,
+        })
         .from(lorebookFolders)
-        .where(and(inArray(lorebookFolders.lorebookId, bookIds), eq(lorebookFolders.enabled, "false")));
-      const disabledFolderIds = new Set(disabledFolderRows.map((r) => r.id));
+        .where(inArray(lorebookFolders.lorebookId, bookIds));
+      const disabledFolderIds = collectEffectivelyDisabledFolderIds(
+        folderRows.map((r) => ({ id: r.id, parentFolderId: r.parentFolderId, enabled: r.enabled === "true" })),
+      );
 
       const rows = await db
         .select()
