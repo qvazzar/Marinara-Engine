@@ -221,6 +221,7 @@ function latestAssistantMessage(messages: Iterable<Message>): Message | null {
 async function buildPendingCardUpdates(
   qc: QueryClient,
   chatId: string,
+  agentType: string,
   agentName: string,
   rawData: unknown,
 ): Promise<PendingCardUpdate[]> {
@@ -292,6 +293,8 @@ async function buildPendingCardUpdates(
     return [
       {
         id: `card-update-${characterId}-${timestamp}-${index}`,
+        chatId,
+        agentType,
         characterId,
         characterName,
         updates: grouped,
@@ -1475,7 +1478,7 @@ export function useGenerate() {
               // Character card updates are never applied automatically — enqueue
               // them for the user-approval modal. (Card Evolution Auditor.)
               if (result.success && result.resultType === "character_card_update") {
-                buildPendingCardUpdates(qc, params.chatId, result.agentName, result.data)
+                buildPendingCardUpdates(qc, params.chatId, result.agentType, result.agentName, result.data)
                   .then((pendingEntries) => {
                     if (pendingEntries.length > 0) {
                       for (const pending of pendingEntries) {
@@ -2507,7 +2510,7 @@ export function useGenerate() {
                 if (isActiveChat()) useUIStore.getState().openModal("agent-write-approval");
               }
               if (result.success && result.resultType === "character_card_update") {
-                buildPendingCardUpdates(qc, chatId, result.agentName, result.data)
+                buildPendingCardUpdates(qc, chatId, result.agentType, result.agentName, result.data)
                   .then((pendingEntries) => {
                     if (pendingEntries.length > 0) {
                       for (const pending of pendingEntries) {
