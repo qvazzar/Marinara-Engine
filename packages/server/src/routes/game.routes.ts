@@ -5184,9 +5184,12 @@ export async function gameRoutes(app: FastifyInstance) {
     // commit during that window. Re-reading gamePartyCharacterIds / gameCharacterCards /
     // gameSetupConfig from the queue-serialized `current` metadata keeps that concurrent change
     // from being reverted by this blob-level write (#2627, residual concurrency facet of #2613).
-    let mergedChatCharacterIds = currentPartyIds.filter((id) => !isPartyNpcId(id));
-    const updatedSession = await chats.patchMetadata(chat.id, (current) => {
-      const { patch, mergedChatCharacterIds: merged } = mergeRecruitIntoGameMetadata({
+    // The denormalized characterIds mirror rides in the same patchMetadataWithCharacterIds critical
+    // section as the metadata patch, so both are written under the per-chat queue and the returned
+    // chat reflects both — a concurrent party op can neither interleave between the two writes nor
+    // leave characterIds out of sync with the queued-final gamePartyCharacterIds.
+    const updatedSession = await chats.patchMetadataWithCharacterIds(chat.id, (current) => {
+      const { patch, mergedChatCharacterIds } = mergeRecruitIntoGameMetadata({
         current,
         recruitId,
         recruitName,
@@ -5195,17 +5198,12 @@ export async function gameRoutes(app: FastifyInstance) {
         fallbackSetupConfig: setupConfig,
         chatCharacterIds,
       });
-      mergedChatCharacterIds = merged;
-      return patch;
+      return { metadata: patch, characterIds: mergedChatCharacterIds };
     });
     if (!updatedSession) throw new Error("Failed to update game session");
-    // Mirror the merged library-character party onto the denormalized characterIds column, then reload
-    // so the returned chat reflects this write too (patchMetadata's returned chat predates it).
-    await chats.update(chat.id, { characterIds: mergedChatCharacterIds });
-    const refreshedSession = (await chats.getById(chat.id)) ?? updatedSession;
 
     return {
-      sessionChat: refreshedSession,
+      sessionChat: updatedSession,
       added: !alreadyInParty,
       characterName: recruitName,
       cardCreated: existingCardIndex < 0,
@@ -5299,25 +5297,22 @@ export async function gameRoutes(app: FastifyInstance) {
     // during this handler is not reverted by a stale blob write. gameCharacterCards is left untouched —
     // removing a member never deletes its card — which also preserves a concurrent recruit's freshly
     // added card (#2627, residual concurrency facet of #2613).
-    let mergedChatCharacterIds = currentPartyIds.filter((id) => id !== removed.id && !isPartyNpcId(id));
-    const updatedSession = await chats.patchMetadata(chat.id, (current) => {
-      const { patch, mergedChatCharacterIds: merged } = removeMemberFromGameMetadata({
+    // The characterIds mirror rides in the same patchMetadataWithCharacterIds critical section as the
+    // metadata patch, so both writes are serialized under the per-chat queue and the returned chat
+    // reflects both.
+    const updatedSession = await chats.patchMetadataWithCharacterIds(chat.id, (current) => {
+      const { patch, mergedChatCharacterIds } = removeMemberFromGameMetadata({
         current,
         removedId: removed.id,
         fallbackSetupConfig: setupConfig,
         chatCharacterIds,
       });
-      mergedChatCharacterIds = merged;
-      return patch;
+      return { metadata: patch, characterIds: mergedChatCharacterIds };
     });
     if (!updatedSession) throw new Error("Failed to update game session");
-    // Mirror the merged library-character party onto the denormalized characterIds column, then reload
-    // so the returned chat reflects this write too (patchMetadata's returned chat predates it).
-    await chats.update(chat.id, { characterIds: mergedChatCharacterIds });
-    const refreshedSession = (await chats.getById(chat.id)) ?? updatedSession;
 
     return {
-      sessionChat: refreshedSession,
+      sessionChat: updatedSession,
       removed: true,
       characterName: removed.name,
     };
