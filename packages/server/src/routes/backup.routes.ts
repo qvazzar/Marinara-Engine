@@ -376,6 +376,26 @@ export function sanitizeProfileTableRows(tableName: string, rows: Array<Record<s
   return rows;
 }
 
+// Columns blanked by sanitizeProfileTableRows on export. On the conflict-UPDATE
+// path these must be omitted from the `set` object so an existing row keeps its
+// stored secret (Drizzle leaves an unmentioned column untouched) — only the
+// fresh-insert path carries the blanks.
+const REDACTED_UPDATE_COLUMNS: Record<string, string> = {
+  api_connections: "apiKeyEncrypted",
+  agent_configs: "settings",
+  custom_tools: "webhookUrl",
+};
+
+export function buildProfileUpdateSet(
+  tableName: string,
+  cleanRow: Record<string, unknown>,
+): Record<string, unknown> {
+  const updateSet: Record<string, unknown> = { ...cleanRow };
+  const secretColumn = REDACTED_UPDATE_COLUMNS[tableName];
+  if (secretColumn) delete updateSet[secretColumn];
+  return updateSet;
+}
+
 async function buildProfileTableSnapshot(app: FastifyInstance): Promise<ProfileTableSnapshots> {
   const tables: ProfileTableSnapshots = {};
 
@@ -648,17 +668,10 @@ async function importProfileStorageSnapshot(
       if (tableName === "api_connections") cleanRow.apiKeyEncrypted = "";
       const insert = app.db.insert(table as any).values(cleanRow as any) as any;
       if (primaryKey) {
-        // On the UPDATE (conflict) path, never overwrite redacted secret columns.
-        // The export blanks these (sanitizeProfileTableRows / redactAgentSecrets), so
-        // writing cleanRow would wipe live secrets on rows that still exist — an
-        // unrecoverable loss since the archive does not carry them. Omitting a column
-        // from `set` preserves its stored value. Fresh inserts still use the blanked
-        // cleanRow, which is correct (no prior secret to keep).
-        const updateSet: Record<string, unknown> = { ...cleanRow };
-        if (tableName === "api_connections") delete updateSet.apiKeyEncrypted;
-        else if (tableName === "agent_configs") delete updateSet.settings;
-        else if (tableName === "custom_tools") delete updateSet.webhookUrl;
-        await insert.onConflictDoUpdate({ target: primaryKey, set: updateSet });
+        // Preserve live secrets on rows that still exist: the export redacts secret
+        // columns, so upserting the blanks would wipe them unrecoverably. The fresh
+        // insert above still carries the blanks (no prior secret to keep).
+        await insert.onConflictDoUpdate({ target: primaryKey, set: buildProfileUpdateSet(tableName, cleanRow) });
       } else {
         await insert;
       }
