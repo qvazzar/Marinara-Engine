@@ -43,7 +43,7 @@ import { QuickPersonaSwitcher } from "./QuickPersonaSwitcher";
 import { QuickSwitcherMobile } from "./QuickSwitcherMobile";
 import { EmojiPicker } from "../ui/EmojiPicker";
 import { CustomEmojiTab } from "./CustomEmojiTab";
-import { useCustomEmojis, type CustomEmoji } from "../../hooks/use-custom-emojis";
+import { useConversationCustomEmojis, type ConversationCustomEmoji } from "../../hooks/use-conversation-custom-emojis";
 import { GifPicker } from "../ui/GifPicker";
 import { SpeechToTextButton } from "../ui/SpeechToTextButton";
 import { SlashCommandFeedback } from "./SlashCommandFeedback";
@@ -156,10 +156,10 @@ export function ConversationInput({
   const [selectedMention, setSelectedMention] = useState(0);
   const [mentionStartPos, setMentionStartPos] = useState(0);
   // :emoji: autocomplete
-  const [emojiCompletions, setEmojiCompletions] = useState<CustomEmoji[]>([]);
+  const [emojiCompletions, setEmojiCompletions] = useState<ConversationCustomEmoji[]>([]);
   const [selectedEmojiCompletion, setSelectedEmojiCompletion] = useState(0);
   const [emojiStartPos, setEmojiStartPos] = useState(0);
-  const { data: customEmojiList } = useCustomEmojis();
+  const { list: customEmojiList } = useConversationCustomEmojis();
   const [charPickerOpen, setCharPickerOpen] = useState(false);
   const [charPickerPos, setCharPickerPos] = useState<{ left: number; top: number } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1447,7 +1447,7 @@ export function ConversationInput({
         <div className="absolute bottom-full left-0 right-0 mb-1 max-h-56 overflow-y-auto rounded-lg border border-foreground/10 bg-[var(--card)] shadow-lg">
           {emojiCompletions.map((em, i) => (
             <button
-              key={em.id}
+              key={em.name}
               onMouseDown={(e) => {
                 e.preventDefault();
                 insertEmoji(em.name);
@@ -1459,7 +1459,7 @@ export function ConversationInput({
             >
               <img src={em.url} alt={`:${em.name}:`} className="h-5 w-5 shrink-0 object-contain" />
               <span className="min-w-0 flex-1 truncate font-medium">:{em.name}:</span>
-              <span className="hidden shrink-0 text-xs text-foreground/40 sm:inline">Global</span>
+              <span className="hidden shrink-0 text-xs text-foreground/40 sm:inline">{em.source}</span>
             </button>
           ))}
         </div>
