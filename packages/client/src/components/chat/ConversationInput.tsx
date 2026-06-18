@@ -46,6 +46,7 @@ import { QuickSwitcherMobile } from "./QuickSwitcherMobile";
 import { EmojiPicker } from "../ui/EmojiPicker";
 import { CustomEmojiTab } from "./CustomEmojiTab";
 import { StickerPicker } from "./StickerPicker";
+import { showChoiceDialog } from "../../lib/app-dialogs";
 import { useConversationCustomEmojis, type ConversationCustomEmoji } from "../../hooks/use-conversation-custom-emojis";
 import { GifPicker } from "../ui/GifPicker";
 import { SpeechToTextButton } from "../ui/SpeechToTextButton";
@@ -1279,19 +1280,42 @@ export function ConversationInput({
   const handleStickerSelect = useCallback(
     async (name: string) => {
       if (!activeChatId) return;
-      const content = `sticker:${name}:`;
-      // Mirror the GIF send guards: while streaming or in manual group order, just persist the message.
+      const token = `sticker:${name}:`;
+      // Let the user choose: send it now (triggering a reply) or drop it into the composer to keep typing.
+      const choice = await showChoiceDialog({
+        title: "Send sticker",
+        message: "Send the sticker now and let the character reply, or add it to your message so you can keep typing?",
+        choices: [
+          { key: "send", label: "Send & reply" },
+          { key: "insert", label: "Add to message" },
+        ],
+      });
+      if (choice === "insert") {
+        handleEmojiSelect(token); // inserts the token at the cursor; nothing is sent until the user submits
+        return;
+      }
+      if (choice !== "send") return; // dismissed
+
+      // "Send & reply" — post the sticker as its own message (mirror the GIF send guards).
       if (isStreaming) {
-        createMessage.mutate({ role: "user", content, characterId: null });
+        createMessage.mutate({ role: "user", content: token, characterId: null });
         return;
       }
       if (groupResponseOrder === "manual" && activeCharacterNames.length > 1) {
-        createMessage.mutate({ role: "user", content, characterId: null });
+        createMessage.mutate({ role: "user", content: token, characterId: null });
         return;
       }
-      await generate({ chatId: activeChatId, connectionId: null, userMessage: content });
+      await generate({ chatId: activeChatId, connectionId: null, userMessage: token });
     },
-    [activeChatId, isStreaming, groupResponseOrder, activeCharacterNames.length, generate, createMessage],
+    [
+      activeChatId,
+      isStreaming,
+      groupResponseOrder,
+      activeCharacterNames.length,
+      generate,
+      createMessage,
+      handleEmojiSelect,
+    ],
   );
 
   const handleCharacterResponse = useCallback(

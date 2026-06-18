@@ -4,6 +4,7 @@ import {
   type AppDialogState,
   type ConfirmDialogState,
   type PromptDialogState,
+  type ChoiceDialogState,
 } from "../stores/dialog.store";
 
 type ActiveDialogResolver = {
@@ -16,6 +17,7 @@ let activeResolver: ActiveDialogResolver | null = null;
 function resolveFallback(kind: AppDialogState["kind"]) {
   if (kind === "confirm") return false;
   if (kind === "prompt") return null;
+  if (kind === "choice") return null;
   return undefined;
 }
 
@@ -89,6 +91,15 @@ export function showPromptDialog(options: Omit<PromptDialogState, "kind">): Prom
   return openDialog<string | null>({
     kind: "prompt",
     confirmLabel: "Confirm",
+    cancelLabel: "Cancel",
+    ...options,
+  });
+}
+
+/** A stacked-button choice dialog. Resolves the chosen `key`, or null if dismissed. */
+export function showChoiceDialog(options: Omit<ChoiceDialogState, "kind">): Promise<string | null> {
+  return openDialog<string | null>({
+    kind: "choice",
     cancelLabel: "Cancel",
     ...options,
   });

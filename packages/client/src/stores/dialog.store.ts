@@ -28,7 +28,13 @@ export type PromptDialogState = AppDialogCommon & {
   previewImageUrl?: string;
 };
 
-export type AppDialogState = AlertDialogState | ConfirmDialogState | PromptDialogState;
+export type ChoiceDialogState = AppDialogCommon & {
+  kind: "choice";
+  /** Buttons shown stacked; resolves the chosen key. The first is styled as the primary action. */
+  choices: Array<{ key: string; label: string; tone?: AppDialogTone }>;
+};
+
+export type AppDialogState = AlertDialogState | ConfirmDialogState | PromptDialogState | ChoiceDialogState;
 
 interface DialogStoreState {
   dialog: AppDialogState | null;

@@ -3,7 +3,7 @@ import { Modal } from "./Modal";
 import { dismissActiveDialog, resolveActiveDialog } from "../../lib/app-dialogs";
 import { useDialogStore } from "../../stores/dialog.store";
 
-function getDialogTitle(kind: "alert" | "confirm" | "prompt", title?: string) {
+function getDialogTitle(kind: "alert" | "confirm" | "prompt" | "choice", title?: string) {
   if (title) return title;
   if (kind === "alert") return "Notice";
   if (kind === "prompt") return "Input Required";
@@ -131,6 +131,34 @@ export function AppDialogRenderer() {
               className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${confirmToneClass}`}
             >
               {dialog.confirmLabel ?? "OK"}
+            </button>
+          </div>
+        )}
+
+        {dialog.kind === "choice" && (
+          <div className="space-y-2">
+            {dialog.choices.map((choice, i) => (
+              <button
+                key={choice.key}
+                type="button"
+                onClick={() => resolveActiveDialog(choice.key)}
+                className={`w-full rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  choice.tone === "destructive"
+                    ? "bg-[var(--destructive)] text-white hover:bg-[var(--destructive)]/85"
+                    : i === 0
+                      ? "bg-[var(--primary)] text-white hover:bg-[var(--primary)]/85"
+                      : "ring-1 ring-[var(--border)] text-[var(--foreground)] hover:bg-[var(--accent)]"
+                }`}
+              >
+                {choice.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={dismissActiveDialog}
+              className="w-full rounded-lg px-3 py-2 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            >
+              {dialog.cancelLabel ?? "Cancel"}
             </button>
           </div>
         )}
