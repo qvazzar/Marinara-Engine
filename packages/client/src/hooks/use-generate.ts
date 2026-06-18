@@ -31,7 +31,7 @@ type RetryAgentsOptions = {
   secretPlotRerollMode?: "full" | "turn_only";
 };
 
-type RetryAgentsFn = (chatId: string, agentTypes: string[], options?: RetryAgentsOptions) => Promise<void>;
+type RetryAgentsFn = (chatId: string, agentTypes: string[], options?: RetryAgentsOptions) => Promise<boolean>;
 
 /** Show a persistent, copyable error toast and log to console */
 function showError(msg: string, options?: Pick<ExternalToast, "action">) {
@@ -2404,7 +2404,7 @@ export function useGenerate() {
   );
 
   const retryAgents = useCallback(
-    async (chatId: string, agentTypes: string[], options?: RetryAgentsOptions) => {
+    async (chatId: string, agentTypes: string[], options?: RetryAgentsOptions): Promise<boolean> => {
       const isActiveChat = () => useChatStore.getState().activeChatId === chatId;
       const abortController = new AbortController();
       setProcessing(true);
@@ -2680,7 +2680,7 @@ export function useGenerate() {
           }
         }
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (error instanceof DOMException && error.name === "AbortError") return false;
         hasError = true;
         const msg =
           error instanceof Error
@@ -2698,6 +2698,7 @@ export function useGenerate() {
           void refreshVisibleGameStateAfterGeneration(chatId);
         }
       }
+      return !hasError;
     },
     [
       addResult,

@@ -171,7 +171,11 @@ export function CharacterCardUpdateModal({ open, onClose }: Props) {
     setBusyAction("regenerate");
     setError(null);
     try {
-      await retryAgents(entry.chatId, [entry.agentType]);
+      const didRegenerate = await retryAgents(entry.chatId, [entry.agentType]);
+      if (!didRegenerate) {
+        setError("Failed to regenerate character card updates");
+        return;
+      }
       closeAndAdvance();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to regenerate character card updates");
