@@ -2071,7 +2071,9 @@ export function ChatArea() {
             onCloseSettings={handleCloseSettingsPanel}
             onCloseFiles={() => setFilesOpen(false)}
             onCloseGallery={handleCloseGalleryPanel}
-            onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
+            onIllustrate={() => {
+              void retryAgents(activeChatId, ["illustrator"]);
+            }}
             onWizardFinish={() => {
               setWizardOpen(false);
               handleOpenSettingsPanel();
@@ -2268,7 +2270,9 @@ export function ChatArea() {
           onCloseSettings={handleCloseSettingsPanel}
           onCloseFiles={() => setFilesOpen(false)}
           onCloseGallery={handleCloseGalleryPanel}
-          onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
+          onIllustrate={() => {
+            void retryAgents(activeChatId, ["illustrator"]);
+          }}
           onWizardFinish={() => {
             setWizardOpen(false);
             handleOpenSettingsPanel();

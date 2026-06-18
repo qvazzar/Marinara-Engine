@@ -60,6 +60,7 @@ import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { MacroTextarea } from "../ui/MacroTextarea";
+import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { api } from "../../lib/api-client";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
 import { type WrapFormat, type MarkerType } from "@marinara-engine/shared";
@@ -2168,6 +2169,7 @@ function SectionContentTextarea({
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedRef = useRef(false);
   const formatQuotes = useQuoteFormatter();
+  const quoteFormat = useUIStore((s) => s.quoteFormat);
 
   // Only sync from parent when not actively editing
   useEffect(() => {
@@ -2217,6 +2219,7 @@ function SectionContentTextarea({
       onBlur={handleBlur}
       onFocus={handleFocus}
       onExpandedClose={commit}
+      formatOnChange={(textarea) => applyTextareaQuoteFormat(textarea, quoteFormat)}
       title={sectionName ? `Edit: ${sectionName}` : "Edit Prompt"}
       className="min-h-[7.5rem] w-full rounded-lg bg-[var(--secondary)] p-2.5 font-mono text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
       placeholder="Prompt content… (supports {{user}}, {{char}}, {{// comment}}, {{trim}} macros)"

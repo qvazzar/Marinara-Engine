@@ -1051,7 +1051,7 @@ export function ChatSettingsDrawer({
     description: "Routes relevant lorebook entries into the next prompt by ID.",
   });
   const hapticAgentMeta = getAgentDisplayMeta("haptic", {
-    name: "Love Toys Control",
+    name: "Haptic Feedback",
     description: "Analyzes narrative content and controls connected intimate toys in real time.",
   });
 
@@ -4700,11 +4700,11 @@ export function ChatSettingsDrawer({
                   </div>
                 </button>
                 <AgentSettingsToggle
-                  label="Review Agent Writes"
+                  label="Review Agent Outputs"
                   description={
                     agentWriteApprovalRequired
-                      ? "Lorebook and summary updates from agents wait for your approval."
-                      : "Lorebook and summary updates from agents can be committed automatically."
+                      ? "Lorebook, summary, and character card updates from agents wait for your approval."
+                      : "Lorebook and summary updates from agents can be committed automatically. Character card edits still ask first."
                   }
                   enabled={agentWriteApprovalRequired}
                   onToggle={() =>
@@ -5049,7 +5049,7 @@ export function ChatSettingsDrawer({
                         <div className="space-y-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
                           <p className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
                             This agent never edits cards directly. It proposes exact oldText/newText replacements from
-                            durable roleplay changes, then asks you to approve them.
+                            durable roleplay changes, then asks you to review, edit, approve, or regenerate them.
                           </p>
                           <button
                             type="button"
@@ -5783,7 +5783,7 @@ export function ChatSettingsDrawer({
                       </AgentSettingsCard>
                     )}
 
-                    {/* Love Toys Control — not for game mode */}
+                    {/* Haptic Feedback — not for game mode */}
                     {metadata.enableAgents && !isGame && hapticActive && (
                       <AgentSettingsCard
                         id={getAgentSettingsMenuId(chat.id, "haptic")}
