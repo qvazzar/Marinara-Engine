@@ -1102,6 +1102,7 @@ export function SettingsPanel() {
               id={`settings-panel-${tab.id}`}
               role="tabpanel"
               aria-labelledby={`settings-tab-${tab.id}`}
+              hidden={!active}
               className="absolute inset-0 overflow-y-auto p-3"
               style={active ? undefined : { clipPath: "inset(100%)", pointerEvents: "none" }}
             >

@@ -13,6 +13,7 @@ import {
   type LLMUsage,
 } from "../base-provider.js";
 import { isClaudeAdaptiveOnlyNoSamplingModel, shouldSuppressUnknownModelParameters } from "@marinara-engine/shared";
+import { logger } from "../../../lib/logger.js";
 
 const DEFAULT_CACHING_AT_DEPTH = 5;
 
@@ -122,6 +123,8 @@ function fileContentBlocks(files?: ChatMessage["files"]): AnthropicContentBlock[
         source: { type: "base64", media_type: match[1], data: match[2] },
         ...(file.filename ? { title: file.filename } : {}),
       });
+    } else {
+      logger.warn("Skipping unsupported Anthropic file attachment %s", file.filename ?? "unnamed file");
     }
   }
   return blocks;

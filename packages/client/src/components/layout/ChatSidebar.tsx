@@ -1399,6 +1399,7 @@ function FolderRow({
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(folder.name);
   const [isDropTarget, setIsDropTarget] = useState(false);
+  const canToggleCollapse = !forceExpanded;
   const isExpanded = forceExpanded || !folder.collapsed;
 
   return (
@@ -1459,12 +1460,14 @@ function FolderRow({
           aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}`}
           onClick={(e) => {
             e.stopPropagation();
+            if (!canToggleCollapse) return;
             onToggleCollapse(folder);
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               e.stopPropagation();
+              if (!canToggleCollapse) return;
               onToggleCollapse(folder);
             }
           }}

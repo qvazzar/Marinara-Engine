@@ -502,14 +502,15 @@ async function addGeneratedIllustrationToGallery(opts: {
 // ──────────────────────────────────────────────
 
 const MAX_GAME_HUD_WIDGETS = 4;
+const trimmedWidgetString = (max: number) => z.string().trim().min(1).max(max);
 
 const hudWidgetSchema = z.object({
-  id: z.string().min(1).max(80),
+  id: trimmedWidgetString(80),
   type: z.enum(["progress_bar", "gauge", "relationship_meter", "counter", "stat_block", "list", "inventory_grid", "timer"]),
-  label: z.string().min(1).max(120),
-  icon: z.string().max(16).optional(),
+  label: trimmedWidgetString(120),
+  icon: z.string().trim().max(16).optional(),
   position: z.enum(["hud_left", "hud_right"]),
-  accent: z.string().max(32).optional(),
+  accent: z.string().trim().max(32).optional(),
   config: z.record(z.unknown()).default({}),
 });
 
@@ -3127,8 +3128,12 @@ export async function gameRoutes(app: FastifyInstance) {
           : {};
       updates.gameBlueprint = { ...currentBlueprint, hudWidgets: customHudWidgets };
       updates.gameWidgetState = customHudWidgets;
+      const currentSetupConfig =
+        updates.gameSetupConfig && typeof updates.gameSetupConfig === "object" && !Array.isArray(updates.gameSetupConfig)
+          ? (updates.gameSetupConfig as Record<string, unknown>)
+          : (setupConfig ?? {});
       updates.gameSetupConfig = {
-        ...(setupConfig ?? {}),
+        ...currentSetupConfig,
         enableCustomWidgets: true,
         customHudWidgets,
       };
@@ -5913,15 +5918,16 @@ export async function gameRoutes(app: FastifyInstance) {
 
     const meta = parseMeta(chat.metadata);
     const setupConfig = (meta.gameSetupConfig as GameSetupConfig | null) ?? null;
+    const enableCustomWidgets = widgets.length > 0;
     await chats.updateMetadata(req.params.chatId, {
       ...meta,
       gameWidgetState: widgets,
-      enableCustomWidgets: widgets.length > 0 || meta.enableCustomWidgets === true,
+      enableCustomWidgets,
       ...(setupConfig
         ? {
             gameSetupConfig: {
               ...setupConfig,
-              enableCustomWidgets: widgets.length > 0 || setupConfig.enableCustomWidgets === true,
+              enableCustomWidgets,
               customHudWidgets: widgets.length > 0 ? widgets : undefined,
             },
           }

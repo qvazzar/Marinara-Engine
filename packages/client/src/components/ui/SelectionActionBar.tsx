@@ -43,7 +43,7 @@ export function SelectionActionBar({
         <button
           type="button"
           onClick={onDelete}
-          disabled={selectedCount === 0 || deleteDisabled}
+          disabled={selectedCount === 0 || deleteDisabled || exporting}
           className="mari-chrome-control mari-chrome-control--danger flex-1 px-3 py-2 text-xs"
         >
           <Trash2 size="0.75rem" />

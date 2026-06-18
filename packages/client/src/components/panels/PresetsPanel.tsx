@@ -656,7 +656,7 @@ export function PresetsPanel() {
       const isBulkSelected = selectedPresetIds.has(preset.id);
       const sectionCount = getSectionCount(preset);
       const wrapFormat = (preset.wrapFormat ?? "xml") as string;
-      const isDefault = preset.isDefault === "true";
+      const isDefault = String(preset.isDefault) === "true";
 
       return (
         <div
@@ -734,6 +734,7 @@ export function PresetsPanel() {
             <div className="absolute right-2 top-1/2 -translate-y-1/2 flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 max-md:opacity-100">
               {canAssignToActiveChat && (
                 <button
+                  type="button"
                   onClick={(event) => {
                     event.stopPropagation();
                     selectPreset(preset.id);
@@ -741,13 +742,15 @@ export function PresetsPanel() {
 	                  className={cn(
 	                    "mari-chrome-control mari-chrome-control--small p-1.5",
 	                    isSelected && "mari-chrome-control--selected",
-	                  )}
+                  )}
                   title={isSelected ? "Unassign from chat" : "Assign to chat"}
+                  aria-label={isSelected ? "Unassign preset from chat" : "Assign preset to chat"}
                 >
                   <Check size="0.75rem" />
                 </button>
               )}
               <button
+                type="button"
                 onClick={(event) => {
                   event.stopPropagation();
                   setDefaultPreset.mutate(preset.id);
@@ -759,20 +762,24 @@ export function PresetsPanel() {
                     : "text-[var(--muted-foreground)] hover:bg-yellow-500/10 hover:text-yellow-500",
                 )}
                 title={isDefault ? "Default preset" : "Set as default"}
+                aria-label={isDefault ? "Default preset" : "Set as default preset"}
               >
                 <Star size="0.75rem" className={isDefault ? "fill-yellow-500" : ""} />
               </button>
               <button
+                type="button"
                 onClick={(event) => {
                   event.stopPropagation();
                   duplicatePreset.mutate(preset.id);
-	                }}
-	                className="mari-chrome-control mari-chrome-control--small p-1.5"
-	                title="Duplicate"
-	              >
+                }}
+                className="mari-chrome-control mari-chrome-control--small p-1.5"
+                title="Duplicate"
+                aria-label="Duplicate preset"
+              >
                 <Copy size="0.75rem" />
               </button>
               <button
+                type="button"
                 onClick={async (event) => {
                   event.stopPropagation();
                   if (
@@ -786,9 +793,10 @@ export function PresetsPanel() {
                     deletePreset.mutate(preset.id);
                   }
                 }}
-	                className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1.5"
-	                title="Delete"
-	              >
+                className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1.5"
+                title="Delete"
+                aria-label="Delete preset"
+              >
                 <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
               </button>
             </div>
@@ -946,25 +954,29 @@ export function PresetsPanel() {
                   )}
                   <div className="absolute right-2 top-1/2 flex -translate-y-1/2 shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 max-md:opacity-100">
                     <button
+                      type="button"
                       onClick={(event) => {
                         event.stopPropagation();
                         setEditingFolderId(folder.id);
                         setEditFolderName(folder.name);
                       }}
-	                      className="mari-chrome-control mari-chrome-control--small p-1"
-	                      title="Rename folder"
-	                    >
+                      className="mari-chrome-control mari-chrome-control--small p-1"
+                      title="Rename folder"
+                      aria-label="Rename folder"
+                    >
                       <Pencil size="0.6875rem" />
                     </button>
                     <button
+                      type="button"
                       onClick={(event) => {
                         event.stopPropagation();
                         deletePresetFolder.mutate(folder.id);
                         if (expandedFolderId === folder.id) setExpandedFolderId(null);
                       }}
-	                      className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
-	                      title="Delete folder"
-	                    >
+                      className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
+                      title="Delete folder"
+                      aria-label="Delete folder"
+                    >
                       <Trash2 size="0.6875rem" className="text-[var(--destructive)]" />
                     </button>
                   </div>
@@ -1130,24 +1142,29 @@ function RegexSection({
       action={
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={handleCreateRegex}
             className="mari-chrome-control mari-chrome-control--small p-1.5"
             title="Create regex"
+            aria-label="Create regex"
           >
             <Plus size="0.8125rem" />
           </button>
           <label
             className="mari-chrome-control mari-chrome-control--small cursor-pointer p-1.5"
             title="Import regexes from JSON"
+            aria-label="Import regexes from JSON"
           >
             <input type="file" accept="application/json" className="hidden" onChange={handleImportRegex} />
             <Download size="0.8125rem" />
           </label>
           <button
+            type="button"
             onClick={handleExportRegex}
             disabled={sortedRegexScripts.length === 0}
             className="mari-chrome-control mari-chrome-control--small p-1.5"
             title="Export regexes to JSON"
+            aria-label="Export regexes to JSON"
           >
             <Upload size="0.8125rem" />
           </button>
@@ -1232,10 +1249,12 @@ function RegexSection({
                   </span>
                 </div>
               </button>
-	              <button
-	                className="mari-chrome-control mari-chrome-control--small mt-0.5 shrink-0 p-1"
-	                title={enabled ? "Disable regex" : "Enable regex"}
-	                onClick={(event) => {
+              <button
+                type="button"
+                className="mari-chrome-control mari-chrome-control--small mt-0.5 shrink-0 p-1"
+                title={enabled ? "Disable regex" : "Enable regex"}
+                aria-label={enabled ? "Disable regex" : "Enable regex"}
+                onClick={(event) => {
                   event.stopPropagation();
                   updateRegex.mutate({ id: script.id, enabled: !enabled });
                 }}
@@ -1246,10 +1265,12 @@ function RegexSection({
 	                  <ToggleLeft size="0.875rem" />
 	                )}
 	              </button>
-	              <button
-	                className="mari-chrome-control mari-chrome-control--small mt-0.5 shrink-0 p-1"
-	                title="Edit regex"
-	                onClick={() => openRegexDetail(script.id)}
+              <button
+                type="button"
+                className="mari-chrome-control mari-chrome-control--small mt-0.5 shrink-0 p-1"
+                title="Edit regex"
+                aria-label="Edit regex"
+                onClick={() => openRegexDetail(script.id)}
               >
                 <Pencil size="0.8125rem" />
               </button>
@@ -1257,6 +1278,7 @@ function RegexSection({
                 type="button"
                 className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger mt-0.5 shrink-0 p-1"
                 title="Delete regex"
+                aria-label="Delete regex"
                 onClick={async () => {
                   if (
                     await showConfirmDialog({
@@ -1310,24 +1332,29 @@ function FunctionsSection({
       action={
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={handleCreateFunction}
             className="mari-chrome-control mari-chrome-control--small p-1.5"
             title="Create function"
+            aria-label="Create function"
           >
             <Plus size="0.8125rem" />
           </button>
           <label
             className="mari-chrome-control mari-chrome-control--small cursor-pointer p-1.5"
             title="Import functions from JSON"
+            aria-label="Import functions from JSON"
           >
             <input type="file" accept="application/json,.json" className="hidden" onChange={handleImportFunctions} />
             <Download size="0.8125rem" />
           </label>
           <button
+            type="button"
             onClick={handleExportFunctions}
             disabled={customToolRows.length === 0}
             className="mari-chrome-control mari-chrome-control--small p-1.5"
             title="Export functions to JSON"
+            aria-label="Export functions to JSON"
           >
             <Upload size="0.8125rem" />
           </button>
@@ -1376,10 +1403,12 @@ function FunctionsSection({
                   {tool.description || "No description"}
                 </div>
               </button>
-	              <button
-	                className="mari-chrome-control mari-chrome-control--small mt-0.5 shrink-0 p-1"
-	                title={enabled ? "Disable function" : "Enable function"}
-	                onClick={(event) => {
+              <button
+                type="button"
+                className="mari-chrome-control mari-chrome-control--small mt-0.5 shrink-0 p-1"
+                title={enabled ? "Disable function" : "Enable function"}
+                aria-label={enabled ? "Disable function" : "Enable function"}
+                onClick={(event) => {
                   event.stopPropagation();
                   updateCustomTool.mutate({ id: tool.id, enabled: !enabled });
                 }}
@@ -1390,10 +1419,12 @@ function FunctionsSection({
 	                  <ToggleLeft size="0.875rem" />
 	                )}
 	              </button>
-	              <button
-	                className="mari-chrome-control mari-chrome-control--small mt-0.5 shrink-0 p-1"
-	                title="Edit function"
-	                onClick={() => openToolDetail(tool.id)}
+              <button
+                type="button"
+                className="mari-chrome-control mari-chrome-control--small mt-0.5 shrink-0 p-1"
+                title="Edit function"
+                aria-label="Edit function"
+                onClick={() => openToolDetail(tool.id)}
               >
                 <Pencil size="0.8125rem" />
               </button>
@@ -1401,6 +1432,7 @@ function FunctionsSection({
                 type="button"
                 className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger mt-0.5 shrink-0 p-1"
                 title="Delete function"
+                aria-label="Delete function"
                 onClick={async () => {
                   if (
                     await showConfirmDialog({

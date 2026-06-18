@@ -215,7 +215,10 @@ export function buildInitialAgentAddSetupState({
   const proseBanned = readString(settings.banned, DEFAULT_PROSE_GUARDIAN_BANNED_WORDS);
   const proseAvoid = readString(settings.avoid, DEFAULT_PROSE_GUARDIAN_AVOID);
   const spotifySourceType = normalizeSpotifySourceType(metadata.spotifySourceType);
-  const musicProvider = settings.musicProvider === "youtube" ? "youtube" : musicPlayerSource;
+  const musicProvider =
+    settings.musicProvider === "spotify" || settings.musicProvider === "youtube"
+      ? settings.musicProvider
+      : musicPlayerSource;
   const spriteScale = normalizeSpriteDisplayValue(
     metadata.spriteScale,
     roleplaySpriteScale,
@@ -886,16 +889,18 @@ function ExpressionSetupFields({
     const sprites = spriteQueries[index]?.data;
     return Array.isArray(sprites) && sprites.length > 0;
   });
+  const selectableSpriteIds = new Set(subjectsWithSprites.map((subject) => subject.id));
+  const selectedSpriteIds = value.spriteCharacterIds.filter((id) => selectableSpriteIds.has(id));
   const loading =
     spriteSubjects.length > 0 && subjectsWithSprites.length === 0 && spriteQueries.some((query) => query.isLoading);
 
   const toggleSprite = (id: string) => {
-    if (value.spriteCharacterIds.includes(id)) {
-      onChange({ spriteCharacterIds: value.spriteCharacterIds.filter((current) => current !== id) });
+    if (selectedSpriteIds.includes(id)) {
+      onChange({ spriteCharacterIds: selectedSpriteIds.filter((current) => current !== id) });
       return;
     }
-    if (value.spriteCharacterIds.length >= 3) return;
-    onChange({ spriteCharacterIds: [...value.spriteCharacterIds, id] });
+    if (selectedSpriteIds.length >= 3) return;
+    onChange({ spriteCharacterIds: [...selectedSpriteIds, id] });
   };
 
   const toggleDisplayMode = (mode: SpriteDisplayMode) => {
@@ -920,8 +925,8 @@ function ExpressionSetupFields({
         {subjectsWithSprites.length > 0 ? (
           <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--background)]/75 p-2">
             {subjectsWithSprites.map((subject) => {
-              const active = value.spriteCharacterIds.includes(subject.id);
-              const maxed = !active && value.spriteCharacterIds.length >= 3;
+              const active = selectedSpriteIds.includes(subject.id);
+              const maxed = !active && selectedSpriteIds.length >= 3;
               return (
                 <button
                   key={subject.id}

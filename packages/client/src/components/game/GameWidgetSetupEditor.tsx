@@ -185,14 +185,17 @@ export function createDefaultGameHudWidget(type: HudWidgetType, widgets: readonl
 export function normalizeGameHudWidgets(value: unknown): HudWidget[] {
   if (!Array.isArray(value)) return [];
   const normalized: HudWidget[] = [];
+  const usedIds = new Set<string>();
 
   for (const entry of value) {
     if (!entry || typeof entry !== "object" || normalized.length >= MAX_GAME_SETUP_WIDGETS) continue;
     const raw = entry as Partial<HudWidget>;
     const type = isHudWidgetType(raw.type) ? raw.type : "progress_bar";
     const label = typeof raw.label === "string" && raw.label.trim() ? raw.label.trim() : formatWidgetTypeLabel(type);
-    const id =
+    const preferredId =
       typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : nextWidgetId(label, normalized);
+    const id = usedIds.has(preferredId) ? nextWidgetId(label, normalized) : preferredId;
+    usedIds.add(id);
     normalized.push({
       id,
       type,

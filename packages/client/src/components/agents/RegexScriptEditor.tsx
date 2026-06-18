@@ -442,6 +442,8 @@ export function RegexScriptEditor() {
             onClick={handleSave}
             disabled={isPending || !!regexError || !!characterScopeError}
             className="mari-editor-action mari-editor-action--primary inline-flex disabled:opacity-50"
+            title="Save regex script"
+            aria-label="Save regex script"
           >
             <Save size="0.8125rem" /> <span className="max-md:hidden">Save</span>
           </button>

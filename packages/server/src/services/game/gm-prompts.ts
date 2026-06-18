@@ -960,7 +960,7 @@ export function buildSetupPrompt(ctx: SetupPromptContext = {}): string {
           `Available HUD widget types for the blueprint:`,
           `  progress_bar: config = { startingValue: number, value: number, max: number }`,
           `  gauge: config = { startingValue: number, value: number, max: number, dangerBelow?: number }`,
-          `  relationship_meter: config = { startingValue: number, value: number, max: number, milestones?: [{ value: number, label: string }] }`,
+          `  relationship_meter: config = { startingValue: number, value: number, max: number, milestones?: [{ at: number, label: string }] }`,
           `  counter: config = { count: number }`,
           `  stat_block: config = { stats: [{ name: string, value: string|number }] }`,
           `  list: config = { items: string[] }`,

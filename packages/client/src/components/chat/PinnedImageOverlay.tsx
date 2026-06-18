@@ -229,11 +229,7 @@ function PinnedImageViewer({
             "absolute -bottom-2 -right-2 z-10 flex h-7 w-7 cursor-nwse-resize items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-button-border)] bg-[var(--marinara-chat-chrome-button-bg)] text-[var(--marinara-chat-chrome-button-text)] shadow-lg transition-all duration-150 hover:border-[var(--marinara-chat-chrome-button-border-hover)] hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marinara-chat-chrome-focus-ring)] active:scale-95",
             controlsVisibilityClass,
           )}
-          role="slider"
           aria-label="Resize pinned image"
-          aria-valuemin={120}
-          aria-valuemax={Math.round(Math.min(getViewport().width, getViewport().height))}
-          aria-valuenow={Math.round(size.w)}
           tabIndex={0}
           onPointerDown={onResizeStart}
           onPointerMove={onResizeMove}

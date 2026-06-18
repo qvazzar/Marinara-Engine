@@ -449,7 +449,11 @@ export function ConversationMessageAttachments({
               <img src={att.url || att.data} alt={att.filename || att.name || "image"} className="max-h-80 max-w-full rounded-lg" loading="lazy" />
             </button>
             <button
-              onClick={() => onRemove(i)}
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRemove(i);
+              }}
               title="Remove from message"
               className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white/80 transition-opacity hover:bg-black/80 hover:text-white sm:opacity-0 sm:group-hover/att:opacity-100"
             >
@@ -464,7 +468,11 @@ export function ConversationMessageAttachments({
             <FileText size="0.875rem" className="shrink-0 text-[var(--primary)]" />
             <span className="min-w-0 max-w-[16rem] truncate">{att.filename || att.name || "attachment"}</span>
             <button
-              onClick={() => onRemove(i)}
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRemove(i);
+              }}
               title="Remove from message"
               className="rounded-full p-0.5 text-foreground/45 transition-colors hover:bg-foreground/10 hover:text-[var(--destructive)] sm:opacity-0 sm:group-hover/att:opacity-100"
             >

@@ -1329,9 +1329,10 @@ export const ChatInput = memo(function ChatInput({
             <button
               type="button"
               onClick={() => onStartEncounter?.()}
+              disabled={isStreaming}
               className={cn(
                 ROLEPLAY_AGENT_ACTION_BUTTON_CLASS,
-                "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80",
+                "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80 disabled:hover:bg-transparent disabled:hover:text-foreground/50",
               )}
               title="Start Combat Encounter"
             >

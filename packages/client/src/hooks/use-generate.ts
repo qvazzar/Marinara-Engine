@@ -1406,6 +1406,18 @@ export function useGenerate() {
                 }
               }
 
+              const writeApproval = result.success
+                ? readAgentWriteApprovalProposal(result.data, {
+                    chatId: params.chatId,
+                    agentType: result.agentType,
+                    agentName: result.agentName,
+                  })
+                : null;
+              if (writeApproval) {
+                enqueuePendingAgentWriteApproval(createPendingAgentWriteApproval(writeApproval));
+                if (isActiveChat()) useUIStore.getState().openModal("agent-write-approval");
+              }
+
               // Only update agent/game/UI stores for the active chat so a
               // background generation doesn't corrupt what the user sees.
               if (!isActiveChat()) break;
@@ -1458,18 +1470,6 @@ export function useGenerate() {
                     setYoutubePlay({ searchQuery: d.searchQuery.trim(), mood: (d.mood as string) ?? "" });
                   }
                 }
-              }
-
-              const writeApproval = result.success
-                ? readAgentWriteApprovalProposal(result.data, {
-                    chatId: params.chatId,
-                    agentType: result.agentType,
-                    agentName: result.agentName,
-                  })
-                : null;
-              if (writeApproval) {
-                enqueuePendingAgentWriteApproval(createPendingAgentWriteApproval(writeApproval));
-                useUIStore.getState().openModal("agent-write-approval");
               }
 
               // Character card updates are never applied automatically — enqueue
@@ -1691,7 +1691,7 @@ export function useGenerate() {
               const proposal = readAgentWriteApprovalProposal(event.data, { chatId: params.chatId });
               if (proposal) {
                 enqueuePendingAgentWriteApproval(createPendingAgentWriteApproval(proposal));
-                useUIStore.getState().openModal("agent-write-approval");
+                if (isActiveChat()) useUIStore.getState().openModal("agent-write-approval");
               }
               break;
             }
@@ -2504,7 +2504,7 @@ export function useGenerate() {
                 : null;
               if (writeApproval) {
                 enqueuePendingAgentWriteApproval(createPendingAgentWriteApproval(writeApproval));
-                useUIStore.getState().openModal("agent-write-approval");
+                if (isActiveChat()) useUIStore.getState().openModal("agent-write-approval");
               }
               if (result.success && result.resultType === "character_card_update") {
                 buildPendingCardUpdates(qc, chatId, result.agentName, result.data)
@@ -2628,7 +2628,7 @@ export function useGenerate() {
               const proposal = readAgentWriteApprovalProposal(event.data, { chatId });
               if (proposal) {
                 enqueuePendingAgentWriteApproval(createPendingAgentWriteApproval(proposal));
-                useUIStore.getState().openModal("agent-write-approval");
+                if (isActiveChat()) useUIStore.getState().openModal("agent-write-approval");
               }
               break;
             }

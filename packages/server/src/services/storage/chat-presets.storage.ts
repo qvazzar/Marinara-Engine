@@ -30,8 +30,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function sanitizePresetAgentIds(value: unknown) {
   if (!Array.isArray(value)) return [];
-  return value.filter((agentId): agentId is string => {
-    return typeof agentId === "string" && agentId.trim().length > 0 && !isRetiredBuiltInAgentId(agentId);
+  return value.flatMap((agentId) => {
+    if (typeof agentId !== "string") return [];
+    const normalizedAgentId = agentId.trim();
+    return normalizedAgentId && !isRetiredBuiltInAgentId(normalizedAgentId) ? [normalizedAgentId] : [];
   });
 }
 
@@ -39,8 +41,9 @@ function sanitizePresetAgentMap(value: unknown) {
   if (!isRecord(value)) return {};
   const out: Record<string, unknown> = {};
   for (const [agentId, agentValue] of Object.entries(value)) {
-    if (isRetiredBuiltInAgentId(agentId)) continue;
-    out[agentId] = agentValue;
+    const normalizedAgentId = agentId.trim();
+    if (!normalizedAgentId || isRetiredBuiltInAgentId(normalizedAgentId)) continue;
+    out[normalizedAgentId] = agentValue;
   }
   return out;
 }

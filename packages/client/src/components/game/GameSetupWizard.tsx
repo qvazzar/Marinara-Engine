@@ -1808,6 +1808,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                     value={gameSystemPromptDraft}
                     onChange={(event) => setGameSystemPromptDraft(event.target.value)}
                     rows={10}
+                    maxLength={16000}
                     className="max-h-72 min-h-48 w-full resize-y rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-all placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]/40"
                   />
                   <div className="flex flex-wrap items-center justify-between gap-2">

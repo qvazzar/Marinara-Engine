@@ -98,12 +98,14 @@ export function parseLorebookWriteApprovalText(text: string): Array<Record<strin
     const keys: string[] = [];
     let tag = "";
     let contentStart = 0;
+    let sawMetadata = false;
 
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
       const line = lines[lineIndex]!;
       const keyMatch = line.match(/^Keys:\s*(.*)$/i);
       const tagMatch = line.match(/^Tag:\s*(.*)$/i);
       if (keyMatch) {
+        sawMetadata = true;
         keys.push(
           ...keyMatch[1]!
             .split(",")
@@ -114,12 +116,14 @@ export function parseLorebookWriteApprovalText(text: string): Array<Record<strin
         continue;
       }
       if (tagMatch) {
+        sawMetadata = true;
         tag = tagMatch[1]!.trim();
         contentStart = lineIndex + 1;
         continue;
       }
       if (!line.trim()) {
         contentStart = lineIndex + 1;
+        if (sawMetadata) break;
         continue;
       }
       break;

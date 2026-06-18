@@ -359,7 +359,7 @@ export function SummaryPopover({
   const tokenWarning = enabledTokenEstimate > SUMMARY_TOKEN_WARNING_THRESHOLD;
   const entryMutationPending =
     updateSummaryEntry.isPending || deleteSummaryEntry.isPending || toggleSummaryEntry.isPending;
-  const automaticSummariesOn = automaticSummaryEnabled || activeAgentIds.includes(SUMMARY_AGENT_ID);
+  const automaticSummariesOn = automaticSummaryEnabled;
 
   useEffect(() => {
     if (!automaticIntervalFocused.current) {

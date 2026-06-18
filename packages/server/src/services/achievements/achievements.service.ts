@@ -65,7 +65,10 @@ function isDuplicateUnlockError(error: unknown): boolean {
   const code = typeof maybeCode === "string" ? maybeCode.toUpperCase() : "";
   const message = error.message.toLowerCase();
   return (
-    code.includes("CONSTRAINT") ||
+    code === "23505" ||
+    code === "SQLITE_CONSTRAINT_PRIMARYKEY" ||
+    code === "SQLITE_CONSTRAINT_UNIQUE" ||
+    message.includes("duplicate key value violates unique constraint") ||
     message.includes("duplicate primary key") ||
     (message.includes("unique") && message.includes("achievement_unlocks"))
   );

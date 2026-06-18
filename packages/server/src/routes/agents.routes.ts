@@ -327,14 +327,18 @@ export async function agentsRoutes(app: FastifyInstance) {
 
     // Before wiping all memory, preserve Narrative Director's secret plot arc.
     // The arc is long-term structure that only clears when the Director is removed from the chat.
-    let preservedArc: unknown = null;
-    let directorConfigId: string | null = null;
+    let preservedArc: unknown;
+    let preservedConfigId: string | null = null;
     try {
-      const directorConfig = await storage.getByType("director");
-      if (directorConfig) {
-        directorConfigId = directorConfig.id;
-        const mem = await storage.getMemory(directorConfigId, chatId);
-        if (mem.overarchingArc) preservedArc = mem.overarchingArc;
+      for (const type of ["director", "secret-plot-driver"]) {
+        const config = await storage.getByType(type);
+        if (!config) continue;
+        const mem = await storage.getMemory(config.id, chatId);
+        if (mem.overarchingArc !== undefined && mem.overarchingArc !== null) {
+          preservedArc = mem.overarchingArc;
+          preservedConfigId = config.id;
+          break;
+        }
       }
     } catch {
       /* non-critical */
@@ -344,9 +348,9 @@ export async function agentsRoutes(app: FastifyInstance) {
     await storage.clearMemoryForChat(chatId);
 
     // Restore the overarching arc
-    if (preservedArc && directorConfigId) {
+    if (preservedArc !== undefined && preservedConfigId) {
       try {
-        await storage.setMemory(directorConfigId, chatId, "overarchingArc", preservedArc);
+        await storage.setMemory(preservedConfigId, chatId, "overarchingArc", preservedArc);
       } catch {
         /* non-critical */
       }

@@ -571,6 +571,7 @@ function resolveRoleplayChatSummary(chatMode: string, chatMetadata: Record<strin
 }
 
 function isAutomaticRoleplaySummaryEnabled(chatMetadata: Record<string, unknown>): boolean {
+  if (chatMetadata.automaticSummaryEnabled === false) return false;
   if (chatMetadata.automaticSummaryEnabled === true) return true;
   const activeAgentIds = Array.isArray(chatMetadata.activeAgentIds) ? chatMetadata.activeAgentIds : [];
   return chatMetadata.enableAgents === true && activeAgentIds.includes(RETIRED_CHAT_SUMMARY_AGENT_ID);
@@ -4183,6 +4184,7 @@ export async function generateRoutes(app: FastifyInstance) {
         agentContext.memory._mainPromptPreview = promptPreviewForAgents(finalMessages);
         const pipeline = createAgentPipeline(pipelineAgents, agentContext, sendAgentEvent);
         let directorSecretPlotResults: AgentResult[] = [];
+        let directorSecretPlotArcForPrompt: unknown = directorSecretPlotMemory.overarchingArc;
 
         // ────────────────────────────────────────
         // Phase 1: Pre-generation agents
@@ -4242,6 +4244,7 @@ export async function generateRoutes(app: FastifyInstance) {
             if (result.success && result.data && typeof result.data === "object") {
               const plotData = result.data as Record<string, unknown>;
               if (plotData.overarchingArc !== undefined) {
+                directorSecretPlotArcForPrompt = plotData.overarchingArc;
                 try {
                   await agentsStore.setMemory(secretAgent.id, input.chatId, "overarchingArc", plotData.overarchingArc);
                   const nextState = buildSecretPlotStateFromMemory({ overarchingArc: plotData.overarchingArc });
@@ -4707,10 +4710,15 @@ export async function generateRoutes(app: FastifyInstance) {
         if (directorSecretPlotAgent) {
           try {
             const plotMem = await agentsStore.getMemory(directorSecretPlotAgent.id, input.chatId);
-            const secretPlotBlock = formatSecretPlotSystemBlock(plotMem.overarchingArc, wrapFormat);
+            const secretPlotBlock = formatSecretPlotSystemBlock(
+              directorSecretPlotArcForPrompt ?? plotMem.overarchingArc,
+              wrapFormat,
+            );
             appendSecretPlotSystemMessage(finalMessages, secretPlotBlock);
           } catch (plotInjectErr) {
             logger.error(plotInjectErr, "[narrative-director] Failed to inject secret plot");
+            const secretPlotBlock = formatSecretPlotSystemBlock(directorSecretPlotArcForPrompt, wrapFormat);
+            appendSecretPlotSystemMessage(finalMessages, secretPlotBlock);
           }
         }
 
@@ -6365,8 +6373,10 @@ export async function generateRoutes(app: FastifyInstance) {
               model: summaryModel,
               temperature: 0.5,
               maxTokens: 2048,
+              signal: abortController.signal,
             },
           );
+          if (abortController.signal.aborted) return;
           const newText = result.content ? parseChatSummaryText(result.content) : "";
 
           let createdEntry: ChatSummaryEntry | null = null;
