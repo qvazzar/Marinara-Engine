@@ -648,7 +648,17 @@ async function importProfileStorageSnapshot(
       if (tableName === "api_connections") cleanRow.apiKeyEncrypted = "";
       const insert = app.db.insert(table as any).values(cleanRow as any) as any;
       if (primaryKey) {
-        await insert.onConflictDoUpdate({ target: primaryKey, set: cleanRow });
+        // On the UPDATE (conflict) path, never overwrite redacted secret columns.
+        // The export blanks these (sanitizeProfileTableRows / redactAgentSecrets), so
+        // writing cleanRow would wipe live secrets on rows that still exist — an
+        // unrecoverable loss since the archive does not carry them. Omitting a column
+        // from `set` preserves its stored value. Fresh inserts still use the blanked
+        // cleanRow, which is correct (no prior secret to keep).
+        const updateSet: Record<string, unknown> = { ...cleanRow };
+        if (tableName === "api_connections") delete updateSet.apiKeyEncrypted;
+        else if (tableName === "agent_configs") delete updateSet.settings;
+        else if (tableName === "custom_tools") delete updateSet.webhookUrl;
+        await insert.onConflictDoUpdate({ target: primaryKey, set: updateSet });
       } else {
         await insert;
       }
