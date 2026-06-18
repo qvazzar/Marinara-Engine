@@ -5199,11 +5199,13 @@ export async function gameRoutes(app: FastifyInstance) {
       return patch;
     });
     if (!updatedSession) throw new Error("Failed to update game session");
-    // Mirror the merged library-character party onto the denormalized characterIds column.
+    // Mirror the merged library-character party onto the denormalized characterIds column, then reload
+    // so the returned chat reflects this write too (patchMetadata's returned chat predates it).
     await chats.update(chat.id, { characterIds: mergedChatCharacterIds });
+    const refreshedSession = (await chats.getById(chat.id)) ?? updatedSession;
 
     return {
-      sessionChat: updatedSession,
+      sessionChat: refreshedSession,
       added: !alreadyInParty,
       characterName: recruitName,
       cardCreated: existingCardIndex < 0,
@@ -5309,11 +5311,13 @@ export async function gameRoutes(app: FastifyInstance) {
       return patch;
     });
     if (!updatedSession) throw new Error("Failed to update game session");
-    // Mirror the merged library-character party onto the denormalized characterIds column.
+    // Mirror the merged library-character party onto the denormalized characterIds column, then reload
+    // so the returned chat reflects this write too (patchMetadata's returned chat predates it).
     await chats.update(chat.id, { characterIds: mergedChatCharacterIds });
+    const refreshedSession = (await chats.getById(chat.id)) ?? updatedSession;
 
     return {
-      sessionChat: updatedSession,
+      sessionChat: refreshedSession,
       removed: true,
       characterName: removed.name,
     };
