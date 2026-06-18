@@ -783,6 +783,116 @@ function syncSetupConfigPartyIds(setupConfig: GameSetupConfig, partyCharacterIds
   };
 }
 
+export interface MergeRecruitInput {
+  /** Fresh metadata read inside the patchMetadata queue (the queue-serialized current snapshot). */
+  current: Record<string, unknown>;
+  recruitId: string;
+  recruitName: string;
+  /** The card content this request resolved for the recruit (generated, LLM, or reused fallback). */
+  nextCard: Record<string, unknown>;
+  /** Whether a card for this recruit already existed in the pre-LLM snapshot (index >= 0 = reuse path). */
+  existingCardIndex: number;
+  /** Setup-config from the pre-LLM snapshot; used only when `current` carries none. */
+  fallbackSetupConfig: GameSetupConfig;
+  /** Chat `characterIds` column from the request; used only as a fallback party source. */
+  chatCharacterIds: string[];
+}
+
+export interface MergeRecruitResult {
+  patch: {
+    gameSetupConfig: GameSetupConfig;
+    gamePartyCharacterIds: string[];
+    gameCharacterCards: Array<Record<string, unknown>>;
+  };
+  /** Library-character (non-NPC) party ids to mirror onto the denormalized `characterIds` column. */
+  mergedChatCharacterIds: string[];
+}
+
+/**
+ * Merge a single recruit into the freshest committed game metadata.
+ *
+ * Called from inside the `/party/recruit` patchMetadata updater so the recruit's party / card /
+ * setup-config additions reconcile against metadata committed during the (multi-second) recruit-card
+ * LLM window, rather than the pre-LLM snapshot. Re-reading gamePartyCharacterIds / gameCharacterCards /
+ * gameSetupConfig from `current` keeps a concurrent /party/recruit or /party/remove on the same chat
+ * from being reverted on the blob-level metadata write (#2627, residual concurrency facet of #2613).
+ */
+export function mergeRecruitIntoGameMetadata(input: MergeRecruitInput): MergeRecruitResult {
+  const { current, recruitId, recruitName, nextCard, existingCardIndex, fallbackSetupConfig, chatCharacterIds } = input;
+
+  const freshSetupConfig = (current.gameSetupConfig as GameSetupConfig | null) ?? fallbackSetupConfig;
+  const freshCards = (current.gameCharacterCards as Array<Record<string, unknown>>) ?? [];
+  const freshPartyIds = getStoredPartyCharacterIds(current, freshSetupConfig, chatCharacterIds);
+
+  const mergedPartyIds = freshPartyIds.includes(recruitId) ? freshPartyIds : [...freshPartyIds, recruitId];
+
+  const freshExistingCardIndex = findExistingGameCharacterCardIndex(freshCards, recruitName);
+  const mergedCards = [...freshCards];
+  if (freshExistingCardIndex >= 0) {
+    // Only overwrite an existing card when this request generated/built a new one (existingCardIndex < 0).
+    // On the reuse path (existingCardIndex >= 0, no LLM call) keep the freshly committed card so a
+    // concurrent card edit is not clobbered with our stale copy.
+    if (existingCardIndex < 0) mergedCards[freshExistingCardIndex] = nextCard;
+  } else {
+    mergedCards.push(nextCard);
+  }
+
+  return {
+    patch: {
+      gameSetupConfig: syncSetupConfigPartyIds(freshSetupConfig, mergedPartyIds),
+      gamePartyCharacterIds: mergedPartyIds,
+      gameCharacterCards: mergedCards,
+    },
+    mergedChatCharacterIds: mergedPartyIds.filter((id) => !isPartyNpcId(id)),
+  };
+}
+
+export interface RemoveMemberInput {
+  /** Fresh metadata read inside the patchMetadata queue (the queue-serialized current snapshot). */
+  current: Record<string, unknown>;
+  /** The resolved party id (library id or `npc:<slug>`) to drop from the party. */
+  removedId: string;
+  /** Setup-config from the request-time snapshot; used only when `current` carries none. */
+  fallbackSetupConfig: GameSetupConfig;
+  /** Chat `characterIds` column from the request; used only as a fallback party source. */
+  chatCharacterIds: string[];
+}
+
+export interface RemoveMemberResult {
+  patch: {
+    gameSetupConfig: GameSetupConfig;
+    gamePartyCharacterIds: string[];
+  };
+  /** Library-character (non-NPC) party ids to mirror onto the denormalized `characterIds` column. */
+  mergedChatCharacterIds: string[];
+}
+
+/**
+ * Drop a single party member from the freshest committed game metadata.
+ *
+ * Mirror of mergeRecruitIntoGameMetadata for the /party/remove handler: the prune is applied to the
+ * fresh `current` party read inside the patchMetadata queue rather than the request-time snapshot, so a
+ * concurrent /party/recruit (or another /party/remove) that committed first is not reverted by a stale
+ * blob write. gameCharacterCards is intentionally left out of the patch — removing a member from the
+ * party never deletes its card — so the fresh card array is preserved untouched (#2627, residual
+ * concurrency facet of #2613).
+ */
+export function removeMemberFromGameMetadata(input: RemoveMemberInput): RemoveMemberResult {
+  const { current, removedId, fallbackSetupConfig, chatCharacterIds } = input;
+
+  const freshSetupConfig = (current.gameSetupConfig as GameSetupConfig | null) ?? fallbackSetupConfig;
+  const freshPartyIds = getStoredPartyCharacterIds(current, freshSetupConfig, chatCharacterIds);
+  const mergedPartyIds = freshPartyIds.filter((id) => id !== removedId);
+
+  return {
+    patch: {
+      gameSetupConfig: syncSetupConfigPartyIds(freshSetupConfig, mergedPartyIds),
+      gamePartyCharacterIds: mergedPartyIds,
+    },
+    mergedChatCharacterIds: mergedPartyIds.filter((id) => !isPartyNpcId(id)),
+  };
+}
+
 function findGameNpcByName(npcs: GameNpc[], requestedName: string): GameNpc | null {
   const requestedLookup = normalizeCharacterLookupName(requestedName);
   let matches = npcs.filter((npc) => npc.name.toLowerCase() === requestedName.toLowerCase());
@@ -5068,27 +5178,29 @@ export async function gameRoutes(app: FastifyInstance) {
       }
     }
 
-    const updatedPartyIds = alreadyInParty ? currentPartyIds : [...currentPartyIds, recruitId];
-    const updatedCards = [...currentCards];
-    if (existingCardIndex >= 0) {
-      updatedCards[existingCardIndex] = nextCard;
-    } else {
-      updatedCards.push(nextCard);
-    }
-
-    const updatedSetupConfig: GameSetupConfig = {
-      ...setupConfig,
-      partyCharacterIds: updatedPartyIds,
-    };
-
-    const updatedChatCharacterIds = updatedPartyIds.filter((id) => !isPartyNpcId(id));
-    await chats.update(chat.id, { characterIds: updatedChatCharacterIds });
-    const updatedSession = await chats.patchMetadata(chat.id, () => ({
-      gameSetupConfig: updatedSetupConfig,
-      gamePartyCharacterIds: updatedPartyIds,
-      gameCharacterCards: updatedCards,
-    }));
+    // Merge this recruit into the freshest committed party/cards/setup-config from inside the
+    // patchMetadata updater, not the pre-LLM `meta` snapshot. The recruit-card LLM call above can
+    // take several seconds, and a concurrent /party/recruit or /party/remove on the same chat may
+    // commit during that window. Re-reading gamePartyCharacterIds / gameCharacterCards /
+    // gameSetupConfig from the queue-serialized `current` metadata keeps that concurrent change
+    // from being reverted by this blob-level write (#2627, residual concurrency facet of #2613).
+    let mergedChatCharacterIds = currentPartyIds.filter((id) => !isPartyNpcId(id));
+    const updatedSession = await chats.patchMetadata(chat.id, (current) => {
+      const { patch, mergedChatCharacterIds: merged } = mergeRecruitIntoGameMetadata({
+        current,
+        recruitId,
+        recruitName,
+        nextCard,
+        existingCardIndex,
+        fallbackSetupConfig: setupConfig,
+        chatCharacterIds,
+      });
+      mergedChatCharacterIds = merged;
+      return patch;
+    });
     if (!updatedSession) throw new Error("Failed to update game session");
+    // Mirror the merged library-character party onto the denormalized characterIds column.
+    await chats.update(chat.id, { characterIds: mergedChatCharacterIds });
 
     return {
       sessionChat: updatedSession,
@@ -5180,20 +5292,25 @@ export async function gameRoutes(app: FastifyInstance) {
     }
 
     const removed = matches[0]!;
-    const updatedPartyIds = currentPartyIds.filter((id) => id !== removed.id);
-    const updatedSetupConfig: GameSetupConfig = {
-      ...setupConfig,
-      partyCharacterIds: updatedPartyIds,
-    };
-    const updatedChatCharacterIds = updatedPartyIds.filter((id) => !isPartyNpcId(id));
-    await chats.update(chat.id, { characterIds: updatedChatCharacterIds });
-    const updatedSession = await chats.updateMetadata(chat.id, {
-      ...meta,
-      gameSetupConfig: updatedSetupConfig,
-      gamePartyCharacterIds: updatedPartyIds,
-      gameCharacterCards: currentCards,
+    // Apply the prune against the freshest committed party inside the patchMetadata updater rather than
+    // the request-time snapshot, so a concurrent /party/recruit (or another /party/remove) committed
+    // during this handler is not reverted by a stale blob write. gameCharacterCards is left untouched —
+    // removing a member never deletes its card — which also preserves a concurrent recruit's freshly
+    // added card (#2627, residual concurrency facet of #2613).
+    let mergedChatCharacterIds = currentPartyIds.filter((id) => id !== removed.id && !isPartyNpcId(id));
+    const updatedSession = await chats.patchMetadata(chat.id, (current) => {
+      const { patch, mergedChatCharacterIds: merged } = removeMemberFromGameMetadata({
+        current,
+        removedId: removed.id,
+        fallbackSetupConfig: setupConfig,
+        chatCharacterIds,
+      });
+      mergedChatCharacterIds = merged;
+      return patch;
     });
     if (!updatedSession) throw new Error("Failed to update game session");
+    // Mirror the merged library-character party onto the denormalized characterIds column.
+    await chats.update(chat.id, { characterIds: mergedChatCharacterIds });
 
     return {
       sessionChat: updatedSession,
