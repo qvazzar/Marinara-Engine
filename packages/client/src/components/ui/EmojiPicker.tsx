@@ -1231,6 +1231,7 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
         {CATEGORIES.map((cat, i) => (
           <button
             key={cat.label}
+            type="button"
             onClick={() => setActiveCategory(i)}
             className={cn(
               "rounded-md p-1.5 text-sm transition-colors",
@@ -1245,6 +1246,7 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
         ))}
         {customTab && (
           <button
+            type="button"
             onClick={() => setActiveCategory("custom")}
             className={cn(
               "ml-auto flex items-center rounded-md p-1.5 text-sm transition-colors",
@@ -1275,6 +1277,7 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
                   {cat.emojis.map((emoji) => (
                     <button
                       key={emoji}
+                      type="button"
                       onClick={() => handleSelect(emoji)}
                       className="rounded-md p-1 text-xl transition-transform hover:scale-125 hover:bg-foreground/10 active:scale-100"
                     >

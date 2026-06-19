@@ -34,6 +34,7 @@ import { getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../lib/transcript-render-window";
 import { characterKeys } from "../../hooks/use-characters";
 import { useConversationCustomEmojis } from "../../hooks/use-conversation-custom-emojis";
+import { useConversationCustomStickers } from "../../hooks/use-conversation-custom-stickers";
 import { api } from "../../lib/api-client";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
 import type { Message } from "@marinara-engine/shared";
@@ -385,6 +386,7 @@ export function ConversationView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { map: conversationEmojiMap } = useConversationCustomEmojis();
+  const { map: conversationStickerMap } = useConversationCustomStickers();
   const prevScrollHeightRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
   const isNearBottomRef = useRef(true);
@@ -1101,6 +1103,7 @@ export function ConversationView({
                 characterMap={characterMap}
                 personaInfo={personaInfo as any}
                 emojiMap={conversationEmojiMap}
+                stickerMap={conversationStickerMap}
                 chatCharacterIds={chatCharIds}
                 messageIndex={item.index + 1}
                 messageOrderIndex={item.index}
@@ -1132,6 +1135,7 @@ export function ConversationView({
                   characterMap={characterMap}
                   personaInfo={personaInfo as any}
                   emojiMap={conversationEmojiMap}
+                  stickerMap={conversationStickerMap}
                   chatCharacterIds={chatCharIds}
                   hasDraftInput={hasDraftInput}
                   messageStyle={conversationMessageStyle}
@@ -1161,6 +1165,7 @@ export function ConversationView({
             characterMap={characterMap}
             personaInfo={personaInfo as any}
             emojiMap={conversationEmojiMap}
+            stickerMap={conversationStickerMap}
             chatCharacterIds={chatCharIds}
             hasDraftInput={hasDraftInput}
             messageStyle={conversationMessageStyle}

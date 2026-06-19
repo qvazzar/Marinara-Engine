@@ -2,12 +2,13 @@
 // Shared utilities, helpers, and types used across
 // the ConversationMessage* family of components.
 // ──────────────────────────────────────────────
-import { type CSSProperties, type ReactNode, type RefObject } from "react";
+import { Fragment, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { ChevronRight, EyeOff, FileText, X } from "lucide-react";
 import type { MessageExtra, QuoteFormat } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
 import { renderInlineWithCustomEmojis } from "../../lib/custom-emoji-render";
+import { renderWithStickerBlocks } from "../../lib/sticker-render";
 import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { ImagePromptPanel } from "./ImagePromptPanel";
 import { SwipeJumpControl } from "./SwipeJumpControl";
@@ -76,6 +77,7 @@ export interface MessageRenderContext {
   renderedContent: string;
   renderedContentParts: string[] | null;
   emojiMap: Map<string, string>;
+  stickerMap: Map<string, string>;
   groupedSegments: GroupedSegment[] | null;
   visibleSegments: number;
   streamingBubbleDraftContent: string | null;
@@ -334,11 +336,13 @@ export function MessageContent({
   content,
   mentionNames,
   emojiMap,
+  stickerMap,
   onImageOpen,
 }: {
   content: string;
   mentionNames?: string[];
   emojiMap?: Map<string, string>;
+  stickerMap?: Map<string, string>;
   onImageOpen: (url: string) => void;
 }) {
   if (IMAGE_URL_RE.test(content.trim())) {
@@ -357,7 +361,10 @@ export function MessageContent({
     emojiMap && emojiMap.size > 0
       ? (text: string, kp: string) => renderInlineWithCustomEmojis(text, kp, emojiMap, baseInline)
       : baseInline;
-  return <>{renderMarkdownBlocks(compacted, renderInline)}</>;
+  const renderTextBlock = (text: string, kp: string) => (
+    <Fragment key={kp}>{renderMarkdownBlocks(text, renderInline)}</Fragment>
+  );
+  return <>{stickerMap ? renderWithStickerBlocks(compacted, stickerMap, renderTextBlock) : renderTextBlock(compacted, "sc")}</>;
 }
 
 /** Tiny action-bar button. */

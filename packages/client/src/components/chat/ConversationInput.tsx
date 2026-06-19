@@ -5,6 +5,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   Send,
   Smile,
+  Sticker,
   StopCircle,
   X,
   Plus,
@@ -45,6 +46,8 @@ import { QuickPersonaSwitcher } from "./QuickPersonaSwitcher";
 import { QuickSwitcherMobile } from "./QuickSwitcherMobile";
 import { EmojiPicker } from "../ui/EmojiPicker";
 import { CustomEmojiTab } from "./CustomEmojiTab";
+import { StickerPicker } from "./StickerPicker";
+import { showChoiceDialog } from "../../lib/app-dialogs";
 import { useConversationCustomEmojis, type ConversationCustomEmoji } from "../../hooks/use-conversation-custom-emojis";
 import { GifPicker } from "../ui/GifPicker";
 import { SpeechToTextButton } from "../ui/SpeechToTextButton";
@@ -151,6 +154,7 @@ export function ConversationInput({
   const [isTranslatingDraft, setIsTranslatingDraft] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [gifOpen, setGifOpen] = useState(false);
+  const [stickerOpen, setStickerOpen] = useState(false);
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
   const [mobilePickerTab, setMobilePickerTab] = useState<"emoji" | "gifs" | "stickers">("emoji");
   const [isDragging, setIsDragging] = useState(false);
@@ -171,6 +175,7 @@ export function ConversationInput({
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
   const gifButtonRef = useRef<HTMLButtonElement>(null);
+  const stickerButtonRef = useRef<HTMLButtonElement>(null);
   const charPickerBtnRef = useRef<HTMLButtonElement>(null);
   const charPickerMenuRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
@@ -1261,6 +1266,35 @@ export function ConversationInput({
       const value = el.value;
       el.value = value.slice(0, start) + emoji + value.slice(end);
       el.selectionStart = el.selectionEnd = start + emoji.length;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+      syncInputState(el.value);
+      if (activeChatId) setInputDraft(activeChatId, el.value);
+      el.focus();
+    },
+    [activeChatId, setInputDraft, syncInputState],
+  );
+
+  const insertStickerToken = useCallback(
+    (name: string) => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const value = el.value;
+      const before = value.slice(0, start);
+      const after = value.slice(end);
+      // Put the sticker on its own line: a leading newline unless we're already at a line start,
+      // and a trailing newline so the user types their message on the line below it.
+      const lead = before.length === 0 || before.endsWith("\n") ? "" : "\n";
+      const insertText = `${lead}sticker:${name}:\n`;
+      el.value = before + insertText + after;
+      const cursor = before.length + insertText.length;
+      el.selectionStart = el.selectionEnd = cursor;
+      // Grow the textarea now — programmatic value changes don't fire the input-event auto-resize,
+      // so without this the newline'd sticker line stays hidden until the user types.
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
       syncInputState(el.value);
       if (activeChatId) setInputDraft(activeChatId, el.value);
       el.focus();
@@ -1302,6 +1336,47 @@ export function ConversationInput({
       });
     },
     [activeChatId, isStreaming, groupResponseOrder, activeCharacterNames.length, generate, createMessage],
+  );
+
+  const handleStickerSelect = useCallback(
+    async (name: string) => {
+      if (!activeChatId) return;
+      const token = `sticker:${name}:`;
+      // Let the user choose: send it now (triggering a reply) or drop it into the composer to keep typing.
+      const choice = await showChoiceDialog({
+        title: "Send sticker",
+        message: "Send the sticker now and let the character reply, or add it to your message so you can keep typing?",
+        choices: [
+          { key: "send", label: "Send & reply" },
+          { key: "insert", label: "Add to message" },
+        ],
+      });
+      if (choice === "insert") {
+        insertStickerToken(name); // drops the sticker on its own line so the user types below it
+        return;
+      }
+      if (choice !== "send") return; // dismissed
+
+      // "Send & reply" — post the sticker as its own message (mirror the GIF send guards).
+      if (isStreaming) {
+        createMessage.mutate({ role: "user", content: token, characterId: null });
+        return;
+      }
+      if (groupResponseOrder === "manual" && activeCharacterNames.length > 1) {
+        createMessage.mutate({ role: "user", content: token, characterId: null });
+        return;
+      }
+      await generate({ chatId: activeChatId, connectionId: null, userMessage: token });
+    },
+    [
+      activeChatId,
+      isStreaming,
+      groupResponseOrder,
+      activeCharacterNames.length,
+      generate,
+      createMessage,
+      insertStickerToken,
+    ],
   );
 
   const handleCharacterResponse = useCallback(
@@ -1508,15 +1583,12 @@ export function ConversationInput({
               <button
                 key={tab}
                 type="button"
-                disabled={tab === "stickers"}
                 onClick={() => setMobilePickerTab(tab)}
                 className={cn(
                   "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
-                  tab === "stickers"
-                    ? "cursor-not-allowed text-foreground/25"
-                    : mobilePickerTab === tab
-                      ? "bg-foreground/10 text-foreground/80 ring-1 ring-foreground/15"
-                      : "text-foreground/45 hover:bg-foreground/10 hover:text-foreground/70",
+                  mobilePickerTab === tab
+                    ? "bg-foreground/10 text-foreground/80 ring-1 ring-foreground/15"
+                    : "text-foreground/45 hover:bg-foreground/10 hover:text-foreground/70",
                 )}
               >
                 {tab === "gifs" ? "GIFs" : tab === "stickers" ? "Stickers" : "Emoji"}
@@ -1541,9 +1613,12 @@ export function ConversationInput({
               <GifPicker embedded open onClose={() => setMobilePickerOpen(false)} onSelect={handleGifSelect} />
             )}
             {mobilePickerTab === "stickers" && (
-              <div className="flex h-full items-center justify-center px-6 text-center text-xs text-foreground/45">
-                Custom stickers are coming soon.
-              </div>
+              <StickerPicker
+                embedded
+                open
+                onClose={() => setMobilePickerOpen(false)}
+                onSelect={handleStickerSelect}
+              />
             )}
           </div>
         </div>
@@ -1693,6 +1768,7 @@ export function ConversationInput({
               onClick={() => {
                 setGifOpen((v) => !v);
                 setEmojiOpen(false);
+                setStickerOpen(false);
               }}
               className={cn(
                 "flex h-9 w-9 items-center justify-center rounded-xl transition-colors sm:h-8 sm:w-8 sm:rounded-full",
@@ -1719,6 +1795,7 @@ export function ConversationInput({
               onClick={() => {
                 setEmojiOpen((v) => !v);
                 setGifOpen(false);
+                setStickerOpen(false);
               }}
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
@@ -1741,6 +1818,33 @@ export function ConversationInput({
                 label: "Custom emojis",
                 render: (query) => <CustomEmojiTab onInsert={handleEmojiSelect} query={query} />,
               }}
+            />
+          </div>
+
+          <div className="relative hidden sm:block">
+            <button
+              ref={stickerButtonRef}
+              onClick={() => {
+                setStickerOpen((v) => !v);
+                setEmojiOpen(false);
+                setGifOpen(false);
+              }}
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                stickerOpen
+                  ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
+                  : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+              )}
+              title="Stickers"
+            >
+              <Sticker size="1.25rem" />
+            </button>
+            <StickerPicker
+              open={stickerOpen}
+              onClose={() => setStickerOpen(false)}
+              onSelect={handleStickerSelect}
+              anchorRef={stickerButtonRef}
+              containerRef={inputBarRef}
             />
           </div>
 

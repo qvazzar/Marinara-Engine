@@ -38,6 +38,7 @@ export function ConversationMessageGrouped({
     charByName,
     mentionNames,
     emojiMap,
+    stickerMap,
     messageTextStyle,
     showActions,
     forceShowActions,
@@ -138,7 +139,7 @@ export function ConversationMessageGrouped({
                 className="pl-14 py-0.5 text-[0.875rem] leading-relaxed break-words whitespace-pre-wrap text-[var(--muted-foreground)] italic animate-[fadeSlideIn_0.4s_ease-out]"
                 style={messageTextStyle}
               >
-                <MessageContent content={combinedText} mentionNames={mentionNames} emojiMap={emojiMap} onImageOpen={(url) => onImageOpen(url)} />
+                <MessageContent content={combinedText} mentionNames={mentionNames} emojiMap={emojiMap} stickerMap={stickerMap} onImageOpen={(url) => onImageOpen(url)} />
               </div>
             );
           }
@@ -182,13 +183,13 @@ export function ConversationMessageGrouped({
                           )}
                         </div>
                         <div className="text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap" style={messageTextStyle}>
-                          <MessageContent content={paragraphs[0]!} mentionNames={mentionNames} emojiMap={emojiMap} onImageOpen={(url) => onImageOpen(url)} />
+                          <MessageContent content={paragraphs[0]!} mentionNames={mentionNames} emojiMap={emojiMap} stickerMap={stickerMap} onImageOpen={(url) => onImageOpen(url)} />
                         </div>
                       </div>
                     </div>
                     {paragraphs.slice(1).map((para, pi) => (
                       <div key={pi} className="pl-14 mt-0.5 text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap" style={messageTextStyle}>
-                        <MessageContent content={para} mentionNames={mentionNames} emojiMap={emojiMap} onImageOpen={(url) => onImageOpen(url)} />
+                        <MessageContent content={para} mentionNames={mentionNames} emojiMap={emojiMap} stickerMap={stickerMap} onImageOpen={(url) => onImageOpen(url)} />
                       </div>
                     ))}
                   </>
