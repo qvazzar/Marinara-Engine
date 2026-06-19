@@ -217,7 +217,11 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
   const sourceGroups = [...bySource.entries()];
 
   const q = query.trim().toLowerCase();
-  const filteredGlobal = q ? globalList.filter((s) => s.name.toLowerCase().includes(q)) : globalList;
+  const insertableGlobalNames = new Set(
+    conversationStickers.filter((sticker) => sticker.source === "Global").map((sticker) => sticker.name),
+  );
+  const visibleGlobal = editing ? globalList : globalList.filter((sticker) => insertableGlobalNames.has(sticker.name));
+  const filteredGlobal = q ? visibleGlobal.filter((s) => s.name.toLowerCase().includes(q)) : visibleGlobal;
   const filteredGroups: [string, ConversationCustomSticker[]][] = q
     ? sourceGroups
         .map(

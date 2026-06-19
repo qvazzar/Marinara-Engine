@@ -9,8 +9,6 @@ import { cn } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
 import { renderInlineWithCustomEmojis } from "../../lib/custom-emoji-render";
 import { renderWithStickerBlocks } from "../../lib/sticker-render";
-import { useConversationCustomEmojis } from "../../hooks/use-conversation-custom-emojis";
-import { useConversationCustomStickers } from "../../hooks/use-conversation-custom-stickers";
 import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { ImagePromptPanel } from "./ImagePromptPanel";
 import { SwipeJumpControl } from "./SwipeJumpControl";
@@ -78,6 +76,8 @@ export interface MessageRenderContext {
   quoteFormat: QuoteFormat;
   renderedContent: string;
   renderedContentParts: string[] | null;
+  emojiMap: Map<string, string>;
+  stickerMap: Map<string, string>;
   groupedSegments: GroupedSegment[] | null;
   visibleSegments: number;
   streamingBubbleDraftContent: string | null;
@@ -337,15 +337,16 @@ export function HiddenFromAIConversationSummary({ onExpand }: { onExpand: () => 
 export function MessageContent({
   content,
   mentionNames,
+  emojiMap,
+  stickerMap,
   onImageOpen,
 }: {
   content: string;
   mentionNames?: string[];
+  emojiMap?: Map<string, string>;
+  stickerMap?: Map<string, string>;
   onImageOpen: (url: string) => void;
 }) {
-  const { map: emojiMap } = useConversationCustomEmojis();
-  const { map: stickerMap } = useConversationCustomStickers();
-
   if (IMAGE_URL_RE.test(content.trim())) {
     const url = content.trim();
     return (
@@ -359,13 +360,13 @@ export function MessageContent({
     ? (text: string, kp: string) => highlightMentions(applyInlineMarkdown(text, kp), mentionNames, kp)
     : applyInlineMarkdown;
   const renderInline =
-    emojiMap.size > 0
+    emojiMap && emojiMap.size > 0
       ? (text: string, kp: string) => renderInlineWithCustomEmojis(text, kp, emojiMap, baseInline)
       : baseInline;
   const renderTextBlock = (text: string, kp: string) => (
     <Fragment key={kp}>{renderMarkdownBlocks(text, renderInline)}</Fragment>
   );
-  return <>{renderWithStickerBlocks(compacted, stickerMap, renderTextBlock)}</>;
+  return <>{stickerMap ? renderWithStickerBlocks(compacted, stickerMap, renderTextBlock) : renderTextBlock(compacted, "sc")}</>;
 }
 
 /** Tiny action-bar button. */

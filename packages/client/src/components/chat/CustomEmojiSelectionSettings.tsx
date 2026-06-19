@@ -4,7 +4,7 @@
 // emoji "Custom" tab and the sticker selector, so the same setting is reachable
 // and clearly labeled from either.
 // ──────────────────────────────────────────────
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useChat, useUpdateChatMetadata } from "../../hooks/use-chats";
 import { useConnections } from "../../hooks/use-connections";
 import { useChatStore } from "../../stores/chat.store";
@@ -17,22 +17,38 @@ import {
 } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 
+function clampMaxCount(value: number): number {
+  if (!Number.isFinite(value)) return CUSTOM_EMOJI_SELECTION_MIN_COUNT;
+  return Math.min(CUSTOM_EMOJI_SELECTION_MAX_COUNT, Math.max(CUSTOM_EMOJI_SELECTION_MIN_COUNT, Math.round(value)));
+}
+
 export function CustomEmojiSelectionSettings() {
   const activeChatId = useChatStore((s) => s.activeChatId);
   const { data: activeChat } = useChat(activeChatId);
   const updateMeta = useUpdateChatMetadata();
   const { data: connections } = useConnections();
 
-  const selectionPrefs = normalizeCustomEmojiSelection(parseChatMetadata(activeChat?.metadata).customEmojiSelection);
-  const [maxCountDraft, setMaxCountDraft] = useState(selectionPrefs.maxCount);
-  useEffect(() => setMaxCountDraft(selectionPrefs.maxCount), [selectionPrefs.maxCount]);
+  const selectionPrefs = useMemo(
+    () => normalizeCustomEmojiSelection(parseChatMetadata(activeChat?.metadata).customEmojiSelection),
+    [activeChat?.metadata],
+  );
+  const [draftPrefs, setDraftPrefs] = useState(selectionPrefs);
+  const [maxCountDraft, setMaxCountDraft] = useState(draftPrefs.maxCount);
+  useEffect(() => {
+    setDraftPrefs(selectionPrefs);
+    setMaxCountDraft(selectionPrefs.maxCount);
+  }, [selectionPrefs]);
 
   const savePrefs = useCallback(
     (patch: Partial<CustomEmojiSelectionPrefs>) => {
       if (!activeChatId) return;
-      updateMeta.mutate({ id: activeChatId, customEmojiSelection: { ...selectionPrefs, ...patch } });
+      setDraftPrefs((current) => {
+        const next = normalizeCustomEmojiSelection({ ...current, ...patch });
+        updateMeta.mutate({ id: activeChatId, customEmojiSelection: next });
+        return next;
+      });
     },
-    [activeChatId, selectionPrefs, updateMeta],
+    [activeChatId, updateMeta],
   );
 
   return (
@@ -49,7 +65,7 @@ export function CustomEmojiSelectionSettings() {
             onClick={() => savePrefs({ mode })}
             className={cn(
               "flex-1 rounded px-2 py-1 text-xs capitalize transition-colors",
-              selectionPrefs.mode === mode
+              draftPrefs.mode === mode
                 ? "bg-[var(--primary)] text-white"
                 : "bg-foreground/5 text-foreground/60 ring-1 ring-foreground/10 hover:bg-foreground/10",
             )}
@@ -59,16 +75,16 @@ export function CustomEmojiSelectionSettings() {
         ))}
       </div>
       <p className="mb-2 text-[0.625rem] text-foreground/40">
-        {selectionPrefs.mode === "semantic"
+        {draftPrefs.mode === "semantic"
           ? "Offers the emojis and stickers most relevant to the recent conversation (falls back to random if the local embedder is unavailable)."
-          : selectionPrefs.mode === "random"
+          : draftPrefs.mode === "random"
             ? "Offers a random set for each reply."
             : "A model call picks the fitting ones each reply — choose a capable connection below. Falls back to semantic if it's unset or fails."}
       </p>
-      {selectionPrefs.mode === "tool-call" && (
+      {draftPrefs.mode === "tool-call" && (
         <div className="mb-2">
           <select
-            value={selectionPrefs.toolConnectionId ?? ""}
+            value={draftPrefs.toolConnectionId ?? ""}
             onChange={(e) => savePrefs({ toolConnectionId: e.target.value || null })}
             className="w-full rounded bg-foreground/5 px-2 py-1 text-xs text-foreground ring-1 ring-foreground/10 focus:outline-none focus:ring-[var(--primary)]"
           >
@@ -79,7 +95,7 @@ export function CustomEmojiSelectionSettings() {
               </option>
             ))}
           </select>
-          {!selectionPrefs.toolConnectionId && (
+          {!draftPrefs.toolConnectionId && (
             <p className="mt-1 text-[0.625rem] text-amber-400/80">
               No connection set — this falls back to semantic selection.
             </p>
@@ -94,7 +110,11 @@ export function CustomEmojiSelectionSettings() {
           max={CUSTOM_EMOJI_SELECTION_MAX_COUNT}
           value={maxCountDraft}
           onChange={(e) => setMaxCountDraft(Number(e.target.value))}
-          onBlur={() => savePrefs({ maxCount: maxCountDraft })}
+          onBlur={() => {
+            const next = clampMaxCount(maxCountDraft);
+            setMaxCountDraft(next);
+            savePrefs({ maxCount: next });
+          }}
           className="w-16 rounded bg-foreground/5 px-2 py-1 text-right text-foreground ring-1 ring-foreground/10 focus:outline-none focus:ring-[var(--primary)]"
         />
       </label>

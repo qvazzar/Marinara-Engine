@@ -31,6 +31,8 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
     groupedSegments,
     visibleSegments,
     renderedContent,
+    emojiMap,
+    stickerMap,
     streamingBubbleDraftContent,
     isStreaming,
     editing,
@@ -161,7 +163,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                 /* Typing dots + optional stable preview */
                 <div className={cn("space-y-2", streamingBubbleDraftContent && "animate-[fadeSlideIn_0.25s_ease-out]")}>
                   {streamingBubbleDraftContent && (
-                    <MessageContent content={streamingBubbleDraftContent} mentionNames={mentionNames} onImageOpen={(url) => onImageOpen(url)} />
+                    <MessageContent content={streamingBubbleDraftContent} mentionNames={mentionNames} emojiMap={emojiMap} stickerMap={stickerMap} onImageOpen={(url) => onImageOpen(url)} />
                   )}
                   <div className="flex items-center gap-1" aria-label="Still typing">
                     <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:0ms]" />
@@ -180,7 +182,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                     if (!grp.speaker) {
                       return (
                         <div key={i} className="italic text-[var(--muted-foreground)]">
-                          <MessageContent content={combinedText} mentionNames={mentionNames} onImageOpen={(url) => onImageOpen(url)} />
+                          <MessageContent content={combinedText} mentionNames={mentionNames} emojiMap={emojiMap} stickerMap={stickerMap} onImageOpen={(url) => onImageOpen(url)} />
                         </div>
                       );
                     }
@@ -189,13 +191,13 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                         <div className="text-[0.75rem] font-semibold leading-tight opacity-90" style={nameColorStyle(segColor)}>
                           {segName}
                         </div>
-                        <MessageContent content={combinedText} mentionNames={mentionNames} onImageOpen={(url) => onImageOpen(url)} />
+                        <MessageContent content={combinedText} mentionNames={mentionNames} emojiMap={emojiMap} stickerMap={stickerMap} onImageOpen={(url) => onImageOpen(url)} />
                       </div>
                     );
                   })}
                 </div>
               ) : (
-                <MessageContent content={renderedContent} mentionNames={mentionNames} onImageOpen={(url) => onImageOpen(url)} />
+                <MessageContent content={renderedContent} mentionNames={mentionNames} emojiMap={emojiMap} stickerMap={stickerMap} onImageOpen={(url) => onImageOpen(url)} />
               )}
             </div>
           )}

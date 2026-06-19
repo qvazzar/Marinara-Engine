@@ -10,6 +10,7 @@ import { createCustomEmojisStorage } from "../services/storage/custom-emojis.sto
 import { newId } from "../utils/id-generator.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import { assertInsideDir } from "../utils/security.js";
+import { readImageDimensionsFromBuffer, readImageDimensionsFromFile } from "../utils/image-metadata.js";
 import { logger } from "../lib/logger.js";
 import { CUSTOM_EMOJI_NAME_PATTERN, CUSTOM_EMOJI_MAX_DIMENSION, updateCustomEmojiSchema } from "@marinara-engine/shared";
 
@@ -58,6 +59,19 @@ function dimensionTooLarge(value: number | null): boolean {
   return value !== null && value > CUSTOM_EMOJI_MAX_DIMENSION;
 }
 
+function isUniqueNameError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const maybeCode = (error as { code?: unknown }).code;
+  const code = typeof maybeCode === "string" ? maybeCode.toUpperCase() : "";
+  const message = error.message.toLowerCase();
+  return (
+    code === "23505" ||
+    code === "SQLITE_CONSTRAINT_UNIQUE" ||
+    message.includes("duplicate key value violates unique constraint") ||
+    (message.includes("unique") && message.includes("custom_emojis") && message.includes("name"))
+  );
+}
+
 export async function customEmojisRoutes(app: FastifyInstance) {
   const storage = createCustomEmojisStorage(app.db);
 
@@ -86,21 +100,42 @@ export async function customEmojisRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "Invalid path" });
     }
 
-    // Write the bytes, then validate the fields (fields after the file part are only
-    // available once the stream is consumed). Roll the file back on any rejection.
-    await pipeline(data.file, createWriteStream(filePath));
     const cleanup = () => {
       if (existsSync(filePath)) unlinkSync(filePath);
     };
+    // Write the bytes, then validate the fields (fields after the file part are only
+    // available once the stream is consumed). Roll the file back on any rejection.
+    try {
+      await pipeline(data.file, createWriteStream(filePath));
+    } catch (err) {
+      cleanup();
+      logger.warn(err, "Failed to receive custom emoji upload %s", filename);
+      return reply.status(400).send({ error: "Failed to read uploaded emoji image." });
+    }
 
     const fields = data.fields as Record<string, { value?: string } | undefined>;
     const name = (fields?.name?.value ?? "").trim().toLowerCase();
-    const width = readDimension(fields?.width?.value);
-    const height = readDimension(fields?.height?.value);
+    let width = readDimension(fields?.width?.value);
+    let height = readDimension(fields?.height?.value);
 
     if (!CUSTOM_EMOJI_NAME_PATTERN.test(name)) {
       cleanup();
       return reply.status(400).send({ error: "Name must be 1-32 lowercase letters, numbers, or underscores." });
+    }
+    if (dimensionTooLarge(width) || dimensionTooLarge(height)) {
+      cleanup();
+      return reply
+        .status(400)
+        .send({ error: `Custom emojis must be at most ${CUSTOM_EMOJI_MAX_DIMENSION}x${CUSTOM_EMOJI_MAX_DIMENSION}px.` });
+    }
+    try {
+      const dimensions = await readImageDimensionsFromFile(filePath);
+      width = dimensions.width;
+      height = dimensions.height;
+    } catch (err) {
+      cleanup();
+      logger.warn(err, "Failed to validate custom emoji dimensions for %s", filename);
+      return reply.status(400).send({ error: "Could not read emoji image dimensions." });
     }
     if (dimensionTooLarge(width) || dimensionTooLarge(height)) {
       cleanup();
@@ -119,6 +154,9 @@ export async function customEmojisRoutes(app: FastifyInstance) {
       return withUrl(emoji as CustomEmojiRow);
     } catch (err) {
       cleanup();
+      if (isUniqueNameError(err)) {
+        return reply.status(409).send({ error: `An emoji named ":${name}:" already exists.` });
+      }
       logger.error(err, "Failed to persist custom emoji %s", filename);
       return reply.status(500).send({ error: "Failed to save custom emoji" });
     }
@@ -145,9 +183,17 @@ export async function customEmojisRoutes(app: FastifyInstance) {
     if (dup && dup.id !== req.params.id) {
       return reply.status(409).send({ error: `An emoji named ":${name}:" already exists.` });
     }
-    const updated = (await storage.update(req.params.id, { name })) as CustomEmojiRow | null;
-    if (!updated) return reply.status(404).send({ error: "Custom emoji not found" });
-    return withUrl(updated);
+    try {
+      const updated = (await storage.update(req.params.id, { name })) as CustomEmojiRow | null;
+      if (!updated) return reply.status(404).send({ error: "Custom emoji not found" });
+      return withUrl(updated);
+    } catch (err) {
+      if (isUniqueNameError(err)) {
+        return reply.status(409).send({ error: `An emoji named ":${name}:" already exists.` });
+      }
+      logger.error(err, "Failed to rename custom emoji %s", existing.id);
+      return reply.status(500).send({ error: "Failed to rename custom emoji" });
+    }
   });
 
   // ── Delete (+ remove the file) ──
@@ -215,8 +261,14 @@ export async function customEmojisRoutes(app: FastifyInstance) {
         continue;
       }
 
-      const width = typeof entry.width === "number" && entry.width > 0 ? Math.round(entry.width) : null;
-      const height = typeof entry.height === "number" && entry.height > 0 ? Math.round(entry.height) : null;
+      const buffer = Buffer.from(base64, "base64");
+      const dimensions = readImageDimensionsFromBuffer(buffer);
+      if (!dimensions) {
+        skipped++;
+        continue;
+      }
+      const width = dimensions.width;
+      const height = dimensions.height;
       if (dimensionTooLarge(width) || dimensionTooLarge(height)) {
         skipped++;
         continue;
@@ -233,7 +285,7 @@ export async function customEmojisRoutes(app: FastifyInstance) {
       }
 
       try {
-        await writeFile(filePath, Buffer.from(base64, "base64"));
+        await writeFile(filePath, buffer);
         await storage.create({ name, filePath: filename, width, height });
         imported++;
       } catch (err) {

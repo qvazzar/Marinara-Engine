@@ -48,7 +48,11 @@ export function CustomEmojiTab({ onInsert, query }: { onInsert: (token: string) 
 
   // Search filter (by emoji name) over the global pool and each source group.
   const q = query.trim().toLowerCase();
-  const filteredGlobal = q ? list.filter((emoji) => emoji.name.toLowerCase().includes(q)) : list;
+  const insertableGlobalNames = new Set(
+    conversationEmojis.filter((emoji) => emoji.source === "Global").map((emoji) => emoji.name),
+  );
+  const visibleGlobal = editing ? list : list.filter((emoji) => insertableGlobalNames.has(emoji.name));
+  const filteredGlobal = q ? visibleGlobal.filter((emoji) => emoji.name.toLowerCase().includes(q)) : visibleGlobal;
   const filteredGroups: [string, ConversationCustomEmoji[]][] = q
     ? sourceGroups
         .map(

@@ -241,6 +241,7 @@ export function GifPicker({ open, onClose, onSelect, anchorRef, containerRef, em
             {results.map((gif) => (
               <button
                 key={gif.id}
+                type="button"
                 onClick={() => handleSelect(gif)}
                 className="mb-1.5 block w-full overflow-hidden rounded-lg transition-transform hover:scale-[1.02] active:scale-100 break-inside-avoid"
                 title={gif.title}

@@ -29,6 +29,8 @@ export function ConversationMessageLine({ ctx }: { ctx: MessageRenderContext }) 
     quoteFormat,
     renderedContent,
     renderedContentParts,
+    emojiMap,
+    stickerMap,
     isStreaming,
     editing,
     editValue,
@@ -154,12 +156,12 @@ export function ConversationMessageLine({ ctx }: { ctx: MessageRenderContext }) 
                   <div className="space-y-1.5">
                     {renderedContentParts.map((part, i) => (
                       <div key={i} className="animate-[fadeSlideIn_0.4s_ease-out]">
-                        <MessageContent content={part} mentionNames={mentionNames} onImageOpen={(url) => onImageOpen(url)} />
+                        <MessageContent content={part} mentionNames={mentionNames} emojiMap={emojiMap} stickerMap={stickerMap} onImageOpen={(url) => onImageOpen(url)} />
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <MessageContent content={renderedContent} mentionNames={mentionNames} onImageOpen={(url) => onImageOpen(url)} />
+                  <MessageContent content={renderedContent} mentionNames={mentionNames} emojiMap={emojiMap} stickerMap={stickerMap} onImageOpen={(url) => onImageOpen(url)} />
                 )}
                 {isStreaming && (
                   <span className="ml-0.5 inline-block h-4 w-[0.125rem] animate-pulse rounded-full bg-[var(--foreground)]/50" />
