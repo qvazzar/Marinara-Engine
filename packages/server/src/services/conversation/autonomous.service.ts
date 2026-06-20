@@ -19,6 +19,8 @@ export interface AutonomousCheckResult {
   reason: "user_inactivity" | "user_reaction" | "character_exchange" | "none" | "generation_in_progress";
   /** How long the user has been inactive (ms) */
   inactivityMs: number;
+  /** Timestamp when a generation claim started, if one was created */
+  generationStartedAt?: number;
 }
 
 export type AutonomousClientPresenceStatus = "active" | "idle" | "dnd";

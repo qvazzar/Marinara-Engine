@@ -31,6 +31,7 @@ type AutonomousCheckResult = {
   characterIds?: string[];
   reason?: string;
   inactivityMs?: number;
+  generationStartedAt?: number;
 };
 
 function resolveAvailableIntent(
@@ -113,10 +114,11 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
     characterId: string,
     schedule: WeekSchedule | null,
     chatMeta: Record<string, unknown>,
+    claimedAt?: number,
   ): Promise<boolean> => {
     const { intent, onCooldown } = resolveAvailableIntent(chatId, characterId, schedule, chatMeta);
     if (onCooldown) {
-      clearGenerationInProgress(chatId);
+      clearGenerationInProgress(chatId, claimedAt);
       return false;
     }
     const autonomousIntent = intent ? getIntentHint(intent) : "";
@@ -139,11 +141,12 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
     });
 
     if (response.statusCode === 409) {
+      clearGenerationInProgress(chatId, claimedAt);
       return false;
     }
 
     if (response.statusCode !== 200) {
-      clearGenerationInProgress(chatId);
+      clearGenerationInProgress(chatId, claimedAt);
       logger.warn(
         "[autonomous-scheduler] Generate failed for chat %s with status %d: %s",
         chatId,
@@ -216,18 +219,18 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
           await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
           const recentPresenceAfterDelay = getRecentAutonomousClientPresence(chat.id, RECENT_CLIENT_PRESENCE_MS);
           if (recentPresenceAfterDelay) {
-            clearGenerationInProgress(chat.id);
+            clearGenerationInProgress(chat.id, result.generationStartedAt);
             return;
           }
         }
       }
 
-      const generated = await generateAutonomousMessage(chat.id, characterId, schedule, freshMeta);
+      const generated = await generateAutonomousMessage(chat.id, characterId, schedule, freshMeta, result.generationStartedAt);
       if (generated) {
         logger.info("[autonomous-scheduler] Generated autonomous message for chat %s", chat.id);
       }
     } catch (err) {
-      clearGenerationInProgress(chat.id);
+      clearGenerationInProgress(chat.id, undefined);
       logger.warn(err, "[autonomous-scheduler] Failed while evaluating chat %s", chat.id);
     } finally {
       runningChats.delete(chat.id);

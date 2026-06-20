@@ -1045,6 +1045,22 @@ function addMessageReactor(
   return next;
 }
 
+function buildGlobalCustomEmojiUrl(filePath: string): string {
+  return `/api/custom-emojis/file/${encodeURIComponent(filePath)}`;
+}
+
+function getStoredFilename(filePath: string): string {
+  return filePath.split("/").pop() ?? filePath;
+}
+
+function buildCharacterGalleryEmojiUrl(characterId: string, filename: string): string {
+  return `/api/characters/${encodeURIComponent(characterId)}/gallery/file/${encodeURIComponent(filename)}`;
+}
+
+function buildPersonaGalleryEmojiUrl(personaId: string, filename: string): string {
+  return `/api/characters/personas/${encodeURIComponent(personaId)}/gallery/file/${encodeURIComponent(filename)}`;
+}
+
 export async function generateRoutes(app: FastifyInstance) {
   const isDebug = logger.isLevelEnabled("debug");
 
@@ -1085,14 +1101,15 @@ export async function generateRoutes(app: FastifyInstance) {
     if (!chat) {
       return reply.status(404).send({ error: "Chat not found" });
     }
-    const requestChatMode = (chat.mode as ChatMode) ?? "roleplay";
+      const requestChatMode = (chat.mode as ChatMode) ?? "roleplay";
     if (requestChatMode === "conversation" && input.impersonate) {
       return reply.status(400).send({ error: "Impersonate is not available in Conversation mode" });
     }
-    let conversationGenerationStartedAt: number | null = null;
-    let conversationAssistantSaved = false;
-    const shouldAccountAutonomousGeneration =
-      requestChatMode === "conversation" && input.autonomous === true && !input.impersonate && !input.regenerateMessageId;
+      let conversationGenerationStartedAt: number | null = null;
+      let conversationAssistantSaved = false;
+      const conversationCustomEmojiUrlByName = new Map<string, string>();
+      const shouldAccountAutonomousGeneration =
+        requestChatMode === "conversation" && input.autonomous === true && !input.impersonate && !input.regenerateMessageId;
     const activeGenerations = (app as any).activeGenerations as Map<
       string,
       { abortController: AbortController; backendUrl: string | null }
@@ -3543,6 +3560,21 @@ export async function generateRoutes(app: FastifyInstance) {
             customStickersStore.list(),
             personaId ? personaGallery.listByPersonaId(personaId) : Promise.resolve([]),
           ]);
+          for (const emoji of globalEmojiRows) {
+            if (emoji.name && emoji.filePath) {
+              conversationCustomEmojiUrlByName.set(String(emoji.name), buildGlobalCustomEmojiUrl(String(emoji.filePath)));
+            }
+          }
+          if (personaId) {
+            for (const img of personaAssetRows) {
+              if (img.customKind === "emoji" && img.customName && img.filePath) {
+                conversationCustomEmojiUrlByName.set(
+                  img.customName,
+                  buildPersonaGalleryEmojiUrl(personaId, getStoredFilename(String(img.filePath))),
+                );
+              }
+            }
+          }
           const personaEmojiNames = uniqueEmojiNames(
             personaAssetRows
               .filter((img) => img.customKind === "emoji" && img.customName)
@@ -3568,6 +3600,14 @@ export async function generateRoutes(app: FastifyInstance) {
             const emojiNames = uniqueEmojiNames(
               images.filter((img) => img.customKind === "emoji" && img.customName).map((img) => img.customName as string),
             );
+            for (const img of images) {
+              if (img.customKind === "emoji" && img.customName && img.filePath) {
+                conversationCustomEmojiUrlByName.set(
+                  img.customName,
+                  buildCharacterGalleryEmojiUrl(info.charId, getStoredFilename(String(img.filePath))),
+                );
+              }
+            }
             const stickerNames = uniqueEmojiNames(
               images
                 .filter((img) => img.customKind === "sticker" && img.customName)
@@ -9233,8 +9273,11 @@ export async function generateRoutes(app: FastifyInstance) {
                       let imageUrl: string | null = null;
                       const customName = reactCmd.emoji.match(/^:([a-zA-Z0-9_]+):$/)?.[1];
                       if (customName) {
-                        const row = await customEmojisStore.getByName(customName);
-                        if (row?.filePath) imageUrl = `/api/custom-emojis/file/${encodeURIComponent(row.filePath)}`;
+                        imageUrl = conversationCustomEmojiUrlByName.get(customName) ?? null;
+                        if (!imageUrl) {
+                          const row = await customEmojisStore.getByName(customName);
+                          if (row?.filePath) imageUrl = buildGlobalCustomEmojiUrl(String(row.filePath));
+                        }
                       }
                       const targetMsg = await chats.getMessage(targetId);
                       if (targetMsg) {

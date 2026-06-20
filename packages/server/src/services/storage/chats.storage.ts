@@ -78,6 +78,29 @@ function parseMetadata(raw: unknown): MetadataPatch {
   return typeof raw === "object" ? (raw as MetadataPatch) : {};
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeConversationStatusOverrides(current: unknown, incoming: unknown): unknown {
+  if (incoming === null) return null;
+  if (incoming === undefined) return current;
+  if (!isPlainRecord(incoming)) return incoming;
+  const existing = isPlainRecord(current) ? current : {};
+  return { ...existing, ...incoming };
+}
+
+function mergeMetadataPatch(current: MetadataPatch, patch: MetadataPatch): MetadataPatch {
+  const merged = { ...current, ...patch };
+  if (Object.prototype.hasOwnProperty.call(patch, "conversationStatusOverrides")) {
+    merged.conversationStatusOverrides = mergeConversationStatusOverrides(
+      current.conversationStatusOverrides,
+      patch.conversationStatusOverrides,
+    );
+  }
+  return merged;
+}
+
 function readUnreadCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
@@ -336,7 +359,7 @@ export function createChatsStorage(db: DB) {
 
         const current = parseMetadata(existing.metadata);
         const patch = typeof patchOrUpdater === "function" ? await patchOrUpdater({ ...current }) : patchOrUpdater;
-        const merged = { ...current, ...patch };
+        const merged = mergeMetadataPatch(current, patch);
 
         await db
           .update(chats)
@@ -372,7 +395,7 @@ export function createChatsStorage(db: DB) {
 
         const current = parseMetadata(existing.metadata);
         const { metadata: patch, characterIds } = await updater({ ...current });
-        const merged = { ...current, ...patch };
+        const merged = mergeMetadataPatch(current, patch);
 
         await db
           .update(chats)
