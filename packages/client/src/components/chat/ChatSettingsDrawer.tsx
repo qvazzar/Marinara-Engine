@@ -232,6 +232,8 @@ const SPOTIFY_SOURCE_OPTIONS: Array<{ id: SpotifySourceType; label: string; desc
   { id: "any", label: "Any Spotify", description: "Let the DJ use Spotify search when it fits." },
 ];
 
+const AUTONOMOUS_DAILY_CAP_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+
 const DEFAULT_PROSE_GUARDIAN_BANNED_WORDS = "ozone";
 const DEFAULT_PROSE_GUARDIAN_AVOID =
   "no repetition of any phrases or sentence structure from the last messages, if the last output started with dialogue line, this one needs to start with narration, no purple prose";
@@ -738,6 +740,10 @@ export function ChatSettingsDrawer({
   const conversationSchedulesEnabled =
     metadata.conversationSchedulesEnabled === true ||
     (metadata.conversationSchedulesEnabled == null && hasGeneratedConversationSchedules);
+  const autonomousDailyCapOverride =
+    typeof metadata.autonomousDailyCapOverride === "number" && Number.isFinite(metadata.autonomousDailyCapOverride)
+      ? Math.max(1, Math.floor(metadata.autonomousDailyCapOverride))
+      : null;
   const activeLorebookIds = useMemo<string[]>(
     () => (Array.isArray(metadata.activeLorebookIds) ? metadata.activeLorebookIds : []),
     [metadata.activeLorebookIds],
@@ -3943,6 +3949,32 @@ export function ChatSettingsDrawer({
                     />
                   </div>
                 </button>
+
+                <label className="space-y-1.5">
+                  <span className="block text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                    Daily Check-In Cap
+                  </span>
+                  <select
+                    value={autonomousDailyCapOverride ?? ""}
+                    onChange={(e) =>
+                      updateMeta.mutate({
+                        id: chat.id,
+                        autonomousDailyCapOverride: e.target.value ? Number(e.target.value) : null,
+                      })
+                    }
+                    className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
+                  >
+                    <option value="">Default (talkativeness-based)</option>
+                    {AUTONOMOUS_DAILY_CAP_OPTIONS.map((cap) => (
+                      <option key={cap} value={cap}>
+                        {cap} check-in{cap === 1 ? "" : "s"} / day
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[0.55rem] text-[var(--muted-foreground)]">
+                    Overrides the talkativeness-based daily limit for each character.
+                  </p>
+                </label>
 
                 <button
                   onClick={() => {

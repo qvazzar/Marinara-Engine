@@ -85,9 +85,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function mergeConversationStatusOverrides(current: unknown, incoming: unknown): unknown {
   if (incoming === null) return null;
   if (incoming === undefined) return current;
-  if (!isPlainRecord(incoming)) return incoming;
-  const existing = isPlainRecord(current) ? current : {};
-  return { ...existing, ...incoming };
+  return incoming;
 }
 
 function mergeMetadataPatch(current: MetadataPatch, patch: MetadataPatch): MetadataPatch {

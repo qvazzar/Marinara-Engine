@@ -2870,7 +2870,7 @@ export async function generateRoutes(app: FastifyInstance) {
             ...(shouldIncludeUserStatus ? [`${personaName}'s status: ${userStatusLine}.`] : []),
             ...(proactiveTurnLine ? [proactiveTurnLine] : []),
             ...(mentionLine ? [mentionLine] : []),
-            ...(intentHint ? [`Reason for this message: ${intentHint}`] : []),
+            ...(intentHint ? [`What prompted this message: ${intentHint}`] : []),
             ...scheduleLines,
             `The current time and date: ${timeStr}, ${dateStr}.`,
             ...(isGroup && earlyGroupMode !== "individual"

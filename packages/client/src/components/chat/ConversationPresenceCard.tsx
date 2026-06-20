@@ -1,7 +1,7 @@
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, ChevronDown, Eye, EyeOff, RefreshCw, RotateCcw, Settings2 } from "lucide-react";
+import { CalendarClock, ChevronDown, Eye, EyeOff, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { ConversationPresenceStatus, ConversationStatusOverride } from "@marinara-engine/shared";
 import type { Message } from "@marinara-engine/shared";
@@ -11,6 +11,7 @@ import { useGenerate } from "../../hooks/use-generate";
 import { api } from "../../lib/api-client";
 import { cn, getAvatarCropStyle } from "../../lib/utils";
 import { useChatStore } from "../../stores/chat.store";
+import { useUIStore } from "../../stores/ui.store";
 import type { CharacterMap } from "./chat-area.types";
 import { CHAT_TOOLBAR_IDENTITY_PILL_SIZE_CLASS, getChatToolbarButtonClass } from "./ChatToolbarControls";
 import {
@@ -257,6 +258,7 @@ export function ConversationPresenceCard({
   const { generate } = useGenerate();
   const activeAbortController = useChatStore((s) => s.abortControllers.get(chatId) ?? null);
   const delayedInfo = useChatStore((s) => s.perChatDelayed.get(chatId) ?? null);
+  const openCharacterDetail = useUIStore((s) => s.openCharacterDetail);
   const setAbortController = useChatStore((s) => s.setAbortController);
   const setDelayedCharacterInfo = useChatStore((s) => s.setDelayedCharacterInfo);
   const setPerChatDelayed = useChatStore((s) => s.setPerChatDelayed);
@@ -413,7 +415,7 @@ export function ConversationPresenceCard({
     open,
     sizeClassName: CHAT_TOOLBAR_IDENTITY_PILL_SIZE_CLASS,
     className:
-      "min-w-0 max-w-[min(20rem,calc(100vw-8rem))] justify-start gap-2 px-2.5 text-[var(--foreground)]/80 hover:text-[var(--foreground)]/90 max-md:max-w-[calc(100vw-5.75rem)]",
+      "min-w-[8.5rem] max-w-[min(20rem,calc(100vw-8rem))] justify-start gap-2 px-2.5 text-[var(--foreground)]/80 hover:text-[var(--foreground)]/90 max-md:min-w-[7.5rem] max-md:max-w-[calc(100vw-5.75rem)]",
   });
   const avatarShellClass =
     "relative block h-5 w-5 overflow-hidden rounded-full ring-1 ring-[var(--border)]/80 max-md:h-6 max-md:w-6";
@@ -677,7 +679,14 @@ export function ConversationPresenceCard({
 
                         <div className="min-w-0 flex-1">
                           <div className="flex min-w-0 items-center gap-2">
-                            <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--foreground)]">{character.name}</span>
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 truncate text-left text-sm font-medium text-[var(--foreground)] transition-colors hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
+                              title={`Open ${character.name} profile`}
+                              onClick={() => openCharacterDetail(character.id)}
+                            >
+                              {character.name}
+                            </button>
                             {isManual && (
                               <span className="shrink-0 rounded-full bg-[var(--foreground)]/10 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--foreground)]/75 ring-1 ring-[var(--border)]/70">
                                 Override
@@ -698,7 +707,7 @@ export function ConversationPresenceCard({
                         </div>
                       </div>
 
-                      <div className="mt-2 flex w-full min-w-0 items-stretch rounded-md bg-[var(--background)] ring-1 ring-[var(--border)] transition-colors hover:ring-[var(--border)]/80">
+                      <div className="mt-2 flex w-full min-w-0 items-stretch overflow-hidden rounded-md bg-[var(--background)] ring-1 ring-[var(--border)] transition-colors hover:ring-[var(--border)]/80">
                           <div className="flex shrink-0 flex-col border-r border-[var(--border)]">
                             <button
                               ref={(node) => {
@@ -757,7 +766,7 @@ export function ConversationPresenceCard({
                               title="Clear manual override"
                               onClick={() => void restoreSchedule(character.id)}
                             >
-                              <RotateCcw size="0.75rem" />
+                              <Trash2 size="0.75rem" />
                             </button>
                           )}
                       </div>
@@ -797,9 +806,14 @@ export function ConversationPresenceCard({
                                           {block.label}
                                         </div>
                                       ) : null}
-                                      <div className="flex min-w-0 items-start gap-2">
-                                        <span className={cn("mt-[0.4rem] h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(block.status))} />
-                                        <span className="shrink-0 rounded-full bg-[var(--foreground)]/6 px-1.5 py-0.5 text-[0.5625rem] tabular-nums text-[var(--muted-foreground)]/78 ring-1 ring-[var(--border)]/45">
+                                      <div className="grid min-w-0 grid-cols-[auto_9.5rem_minmax(0,1fr)] items-start gap-x-2">
+                                        <span
+                                          className={cn(
+                                            "mt-[0.4rem] h-1.5 w-1.5 shrink-0 rounded-full",
+                                            statusDotClass(block.status),
+                                          )}
+                                        />
+                                        <span className="w-full rounded-full bg-[var(--foreground)]/6 px-1.5 py-0.5 text-center text-[0.5625rem] tabular-nums text-[var(--muted-foreground)]/78 ring-1 ring-[var(--border)]/45">
                                           {formatScheduleTimeRange(block.time)}
                                         </span>
                                         <div className="min-w-0 flex-1 whitespace-pre-wrap break-words pt-[0.05rem] text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">

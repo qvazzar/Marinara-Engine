@@ -52,6 +52,32 @@ export interface SlashCommandContext {
   setSpriteExpression?: (characterId: string, expression: string) => void | Promise<void>;
 }
 
+function quoteCommandArgument(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (!/[\s"]/u.test(trimmed)) return trimmed;
+  return `"${trimmed.replace(/"/g, '\\"')}"`;
+}
+
+function formatAvailableCharacterList(characters: Array<{ id: string; name: string }>): string {
+  return characters.map((character) => character.name).join(", ");
+}
+
+function buildStatusCommandHelp(characters: Array<{ id: string; name: string }>): string {
+  const available = formatAvailableCharacterList(characters);
+  const exampleTarget = characters[0]?.name ?? "Character Name";
+  const exampleArg = quoteCommandArgument(exampleTarget) || '"Character Name"';
+  return [
+    "Usage: /status <online|idle|dnd|offline|clear> [character name]",
+    "Examples:",
+    `/status online ${exampleArg}`,
+    `/status clear ${exampleArg}`,
+    available ? `Available: ${available}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export interface SlashCommandResult {
   /** If true, don't send to the LLM / don't do normal send */
   handled: boolean;
@@ -541,7 +567,10 @@ const COMMANDS: SlashCommand[] = [
         return { handled: true, feedback: "/status is only available in conversation mode." };
       }
 
-      const characters = ctx.characters ?? [];
+      const characters =
+        ctx.characters && ctx.characters.length > 0
+          ? ctx.characters
+          : ctx.characterNames.map((name) => ({ id: name, name }));
       if (characters.length === 0) {
         return { handled: true, feedback: "No characters found in this chat." };
       }
@@ -549,7 +578,7 @@ const COMMANDS: SlashCommand[] = [
       const tokens = parseCommandTokens(args);
       const action = normalizeLookup(tokens[0]?.value ?? "");
       if (!action) {
-        return { handled: true, feedback: "Usage: /status <status|clear> [character name]" };
+        return { handled: true, feedback: buildStatusCommandHelp(characters) };
       }
 
       const requestedName = tokens
@@ -574,8 +603,8 @@ const COMMANDS: SlashCommand[] = [
           return {
             handled: true,
             feedback: requestedName
-              ? `Character "${requestedName}" not found. Available: ${characters.map((character) => character.name).join(", ")}`
-              : `Please provide a character name. Available: ${characters.map((character) => character.name).join(", ")}`,
+              ? `Character "${requestedName}" not found. Available: ${formatAvailableCharacterList(characters)}`
+              : buildStatusCommandHelp(characters),
           };
         }
 
@@ -592,7 +621,10 @@ const COMMANDS: SlashCommand[] = [
       }
 
       if (!isConversationStatusValue(action)) {
-        return { handled: true, feedback: "Status must be one of: online, idle, dnd, offline, clear." };
+        return {
+          handled: true,
+          feedback: `Status must be one of: online, idle, dnd, offline, clear.\n\n${buildStatusCommandHelp(characters)}`,
+        };
       }
 
       const target = resolveTargetCharacter();
@@ -600,8 +632,8 @@ const COMMANDS: SlashCommand[] = [
         return {
           handled: true,
           feedback: requestedName
-            ? `Character "${requestedName}" not found. Available: ${characters.map((character) => character.name).join(", ")}`
-            : `Please provide a character name. Available: ${characters.map((character) => character.name).join(", ")}`,
+            ? `Character "${requestedName}" not found. Available: ${formatAvailableCharacterList(characters)}`
+            : buildStatusCommandHelp(characters),
         };
       }
 
@@ -941,7 +973,8 @@ export function matchSlashCommand(input: string): { command: SlashCommand; args:
 /** Get all commands that match a partial prefix (for autocomplete). */
 export function getSlashCompletions(partial: string): SlashCommand[] {
   if (!partial.startsWith("/")) return [];
-  const prefix = partial.slice(1).toLowerCase();
+  const prefix = partial.slice(1).trim().toLowerCase();
+  if (prefix.includes(" ")) return [];
   if (!prefix) return COMMANDS;
   return COMMANDS.filter((c) => c.name.startsWith(prefix) || c.aliases?.some((a) => a.startsWith(prefix)));
 }

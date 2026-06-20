@@ -89,7 +89,15 @@ export function getAutonomousDailyBudget(
   return budget?.date === today ? budget : { date: today, counts: {} };
 }
 
-export function dailyCapForCharacter(schedule: WeekSchedule | undefined): number {
+function readAutonomousDailyCapOverride(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(1, Math.floor(value));
+}
+
+export function dailyCapForCharacter(schedule: WeekSchedule | undefined, chatMeta?: Record<string, unknown>): number {
+  const override = chatMeta ? readAutonomousDailyCapOverride(chatMeta.autonomousDailyCapOverride) : null;
+  if (override != null) return override;
+
   const talkativeness = schedule?.talkativeness ?? 50;
   if (talkativeness >= 80) return 8;
   if (talkativeness >= 60) return 6;

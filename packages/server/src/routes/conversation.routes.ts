@@ -69,6 +69,7 @@ type AutonomousUserStatus = "active" | "idle" | "dnd";
 
 type AutonomousIntentPayload = {
   autonomousIntent?: string;
+  autonomousIntentPrompt?: string;
   autonomousIntentKey?: MessageIntent;
   onCooldown: boolean;
 };
@@ -132,6 +133,7 @@ function resolveAutonomousIntentPayload(
   const intent = resolveIntent(schedule, msSinceUserLastSpoke, hadUnansweredUserMessage);
   return {
     autonomousIntent: getIntentHint(intent),
+    autonomousIntentPrompt: `What prompted this message: ${getIntentHint(intent)}`,
     autonomousIntentKey: intent,
     onCooldown: isIntentOnCooldown(meta, characterId, intent),
   };
@@ -145,7 +147,7 @@ function evaluateAutonomousCandidate(
 ): AutonomousCandidateEvaluation {
   const budget = getAutonomousDailyBudget(meta);
   const sent = budget.counts[characterId] ?? 0;
-  const cap = dailyCapForCharacter(schedule);
+  const cap = dailyCapForCharacter(schedule, meta);
   if (sent >= cap) return { ok: false, reason: "daily_budget_exhausted" };
 
   const intent = resolveAutonomousIntentPayload(chatId, characterId, schedule, meta);
@@ -184,7 +186,7 @@ function resolveLongAbsenceCandidate(
 
     const budget = getAutonomousDailyBudget(meta);
     const sent = budget.counts[characterId] ?? 0;
-    const cap = dailyCapForCharacter(schedule);
+    const cap = dailyCapForCharacter(schedule, meta);
     if (sent >= cap) {
       blockedReason = blockedReason ?? "daily_budget_exhausted";
       continue;
@@ -907,7 +909,7 @@ export async function conversationRoutes(app: FastifyInstance) {
       if (characterId) {
         const budget = getAutonomousDailyBudget(meta);
         const sent = budget.counts[characterId] ?? 0;
-        const cap = dailyCapForCharacter(schedules[characterId]);
+        const cap = dailyCapForCharacter(schedules[characterId], meta);
         if (sent >= cap) {
           return reply.send({
             shouldTrigger: false,

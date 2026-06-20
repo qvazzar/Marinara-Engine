@@ -335,6 +335,8 @@ export interface ChatMetadata {
   autonomousUnreadAt?: string | null;
   /** Daily autonomous attention-budget counts by character. */
   autonomousDailyBudget?: { date: string; counts: Record<string, number> };
+  /** Per-chat override for the daily autonomous check-in cap. Null/omitted uses talkativeness defaults. */
+  autonomousDailyCapOverride?: number | null;
   /** Last successful autonomous message timestamp by character and intent key. */
   intentCooldowns?: Record<string, Record<string, string>>;
 

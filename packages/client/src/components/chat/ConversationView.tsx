@@ -1134,23 +1134,17 @@ export function ConversationView({
               ? (chatMeta.groupResponseOrder ?? "sequential")
               : undefined
         }
-        chatCharacters={
-          chatCharIds.length > 1
-            ? chatCharIds
-                .filter((id) => characterMap.has(id))
-                .map((id) => {
-                  const info = characterMap.get(id)!;
-                  return {
-                    id,
-                    name: info.name,
-                    avatarUrl: info.avatarUrl ?? null,
-                    avatarCrop: info.avatarCrop ?? null,
-                    conversationStatus: info.conversationStatus,
-                    conversationActivity: info.conversationActivity,
-                  };
-                })
-            : undefined
-        }
+        chatCharacters={chatCharIds.filter((id) => characterMap.has(id)).map((id) => {
+          const info = characterMap.get(id)!;
+          return {
+            id,
+            name: info.name,
+            avatarUrl: info.avatarUrl ?? null,
+            avatarCrop: info.avatarCrop ?? null,
+            conversationStatus: info.conversationStatus,
+            conversationActivity: info.conversationActivity,
+          };
+        })}
         onPeekPrompt={onPeekPrompt}
       />
     </div>
