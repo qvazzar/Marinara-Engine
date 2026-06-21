@@ -1951,7 +1951,6 @@ export async function chatsRoutes(app: FastifyInstance) {
                   appearance: cardPromptText(charData.extensions?.appearance),
                   example: cardPromptText(charData.mes_example),
                   systemPrompt: cardPromptText(charData.system_prompt),
-                  postHistoryInstructions: cardPromptText(charData.post_history_instructions),
                 },
               };
               const resolveCharacterMacros = (value: string) => resolveMacros(value, characterMacroContext);
@@ -2007,15 +2006,6 @@ export async function chatsRoutes(app: FastifyInstance) {
                   wrapContent(
                     resolveCharacterMacros(characterMacroContext.characterFields.example),
                     "example_dialogue",
-                    wrapFormat,
-                    2,
-                  ),
-                );
-              if (characterMacroContext.characterFields.postHistoryInstructions)
-                parts.push(
-                  wrapContent(
-                    resolveCharacterMacros(characterMacroContext.characterFields.postHistoryInstructions),
-                    "post_history_instructions",
                     wrapFormat,
                     2,
                   ),

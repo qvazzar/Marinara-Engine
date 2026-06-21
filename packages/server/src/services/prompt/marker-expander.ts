@@ -146,12 +146,12 @@ async function expandCharacter(config: MarkerConfig, ctx: MarkerContext): Promis
       "backstory",
       "appearance",
       "system_prompt",
-      "post_history_instructions",
     ];
 
     const charParts: string[] = [];
     for (const field of fields) {
       if (field === "name") continue; // Name is used as the parent tag, not a child field
+      if (field === "post_history_instructions") continue; // Injected after chat history by the assembler.
       // Skip per-character scenario when a group scenario override is active
       if (field === "scenario" && ctx.groupScenarioOverrideText) continue;
       const value = cardPromptText(getCharacterField(data, field));

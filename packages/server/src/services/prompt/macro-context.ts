@@ -7,13 +7,16 @@
 
 import {
   resolveMacros,
+  stripMacroComments,
   type CharacterMacroProfile,
   type CharacterData,
   type MacroContext,
   type ResolveMacroOptions,
+  type WrapFormat,
 } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
+import { wrapContent } from "./format-engine.js";
 
 type PersonaFields = NonNullable<MacroContext["personaFields"]>;
 
@@ -263,6 +266,48 @@ export async function collectCharacterDepthPromptEntries(
 
     if (content.trim()) {
       entries.push({ content, role: depthPrompt.role, depth: depthPrompt.depth });
+    }
+  }
+
+  return entries;
+}
+
+export async function collectCharacterPostHistoryEntries(
+  db: DB,
+  characterIds: string[],
+  macroCtx: MacroContext,
+  wrapFormat: WrapFormat,
+): Promise<PromptDepthEntry[]> {
+  if (characterIds.length === 0) return [];
+
+  const chars = createCharactersStorage(db);
+  const entries: PromptDepthEntry[] = [];
+  const multiCharacter = characterIds.length > 1;
+
+  for (const id of characterIds) {
+    const row = await chars.getById(id);
+    const data = parseCharacterData(row?.data);
+    const raw = stripMacroComments(data?.post_history_instructions ?? "").trim();
+    if (!data || !raw) continue;
+
+    const content = resolveMacros(raw, {
+      ...macroCtx,
+      char: data.name ?? macroCtx.char,
+      characterFields: {
+        description: data.description ?? "",
+        personality: data.personality ?? "",
+        backstory: data.extensions?.backstory ?? "",
+        appearance: data.extensions?.appearance ?? "",
+        scenario: data.scenario ?? "",
+        example: data.mes_example ?? "",
+        systemPrompt: data.system_prompt ?? "",
+        postHistoryInstructions: data.post_history_instructions ?? "",
+      },
+    }).trim();
+
+    if (content) {
+      const label = multiCharacter ? `${data.name ?? "Character"} post-history instructions` : "post-history instructions";
+      entries.push({ content: wrapContent(content, label, wrapFormat), role: "user", depth: 0 });
     }
   }
 

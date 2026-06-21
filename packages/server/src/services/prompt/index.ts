@@ -7,6 +7,7 @@ export { expandMarker, type MarkerContext, type ExpandedMarker } from "./marker-
 export {
   buildPromptMacroContext,
   collectCharacterDepthPromptEntries,
+  collectCharacterPostHistoryEntries,
   resolvePromptMessageMacros,
   resolveMacrosWithVariableSnapshot,
   resolveCharacterMacroData,

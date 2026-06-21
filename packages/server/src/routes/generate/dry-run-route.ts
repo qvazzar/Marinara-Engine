@@ -25,6 +25,7 @@ import {
   assemblePrompt,
   buildPromptMacroContext,
   collectCharacterDepthPromptEntries,
+  collectCharacterPostHistoryEntries,
   resolveCharacterMacroData,
   resolveMacrosWithVariableSnapshot,
   resolvePromptMessageMacros,
@@ -1402,6 +1403,15 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       );
       if (characterDepthEntries.length > 0) {
         finalMessages = injectAtDepth(finalMessages as any, characterDepthEntries) as any;
+      }
+      const characterPostHistoryEntries = await collectCharacterPostHistoryEntries(
+        app.db,
+        promptCharacterIds,
+        promptMacroContext,
+        wrapFormat,
+      );
+      if (characterPostHistoryEntries.length > 0) {
+        finalMessages = injectAtDepth(finalMessages as any, characterPostHistoryEntries) as any;
       }
     }
 

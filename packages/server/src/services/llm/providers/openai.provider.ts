@@ -1382,7 +1382,9 @@ export class OpenAIProvider extends BaseLLMProvider {
 
   /**
    * Convert chat-completion-style messages into Responses API `input` items.
-   * System messages are extracted into the top-level `instructions` field.
+   * Leading system messages are extracted into the top-level `instructions`
+   * field. Later system messages keep their position so post-history
+   * instruction sections do not lose recency.
    * Tool messages become `function_call_output` items.
    * Assistant messages with tool_calls become `function_call` items.
    */
@@ -1407,20 +1409,26 @@ export class OpenAIProvider extends BaseLLMProvider {
     let instructions: string | undefined;
     const input: Array<Record<string, unknown>> = [];
 
+    let sawNonSystemInput = false;
     for (const m of messages) {
       if (m.role === "system") {
-        // Merge all system messages into the top-level `instructions` field,
-        // which is the canonical way to pass system/developer messages in
-        // the Responses API.
         if (m.content?.trim()) {
-          if (instructions) {
-            instructions += "\n\n" + m.content;
+          if (!sawNonSystemInput) {
+            // Leading system/developer messages belong in the top-level
+            // instructions field for Responses.
+            if (instructions) {
+              instructions += "\n\n" + m.content;
+            } else {
+              instructions = m.content;
+            }
           } else {
-            instructions = m.content;
+            input.push({ role: "system", content: m.content });
           }
         }
         continue;
       }
+
+      sawNonSystemInput = true;
 
       if (m.role === "tool") {
         // Tool result → function_call_output item

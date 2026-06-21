@@ -120,6 +120,7 @@ export async function importSTPreset(
   // Determine the section order from prompt_order (prefer the custom 100001 ordering)
   const orderDef = preset.prompt_order?.find((o) => o.character_id === 100001) ?? preset.prompt_order?.[0];
   const orderMap = new Map(orderDef?.order?.map((o, i) => [o.identifier, { index: i, enabled: o.enabled }]) ?? []);
+  const chatHistoryIndex = orderMap.get("chatHistory")?.index ?? Number.MAX_SAFE_INTEGER;
 
   // Import each prompt entry as a section
   const prompts = preset.prompts ?? [];
@@ -165,14 +166,20 @@ export async function importSTPreset(
     if (entry.role === "assistant") role = "assistant";
 
     // Determine injection position
-    const injectionPosition = entry.injection_position === 1 ? ("depth" as const) : ("ordered" as const);
+    const entryOrderIndex = orderMap.get(entry.identifier)?.index ?? Number.MAX_SAFE_INTEGER;
+    const isPostHistoryEntry =
+      entryOrderIndex > chatHistoryIndex &&
+      /(?:jailbreak|post[_-]?history|posthistory)/i.test(`${entry.identifier} ${entry.name}`);
+    if (isPostHistoryEntry) role = "user";
+    const injectionPosition =
+      isPostHistoryEntry || entry.injection_position === 1 ? ("depth" as const) : ("ordered" as const);
 
     // Check override from prompt_order
     const orderInfo = orderMap.get(entry.identifier);
     const enabled = orderInfo?.enabled ?? entry.enabled ?? true;
 
     // Assign to group if the entry was between bracket markers
-    const groupId = groupIdMap.get(entry.identifier) ?? null;
+    const groupId = isPostHistoryEntry ? null : (groupIdMap.get(entry.identifier) ?? null);
 
     // Use friendly names for consolidated markers
     const sectionName = mappedMarkerConfig ? (MARKER_DISPLAY_NAMES[mappedMarkerConfig.type] ?? entry.name) : entry.name;
@@ -186,7 +193,7 @@ export async function importSTPreset(
       enabled,
       isMarker: !!mappedMarkerConfig,
       injectionPosition,
-      injectionDepth: entry.injection_depth ?? 0,
+      injectionDepth: isPostHistoryEntry ? 0 : (entry.injection_depth ?? 0),
       injectionOrder: entry.injection_order ?? 100,
       groupId,
       markerConfig: mappedMarkerConfig,

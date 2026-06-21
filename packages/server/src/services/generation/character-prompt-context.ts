@@ -164,7 +164,6 @@ export function injectIdentityFallbackMessages(args: {
         appearance: resolveCharacterMacros(character.appearance),
         system_prompt: resolveCharacterMacros(character.systemPrompt),
         example_dialogue: resolveCharacterMacros(character.mesExample),
-        post_history_instructions: resolveCharacterMacros(character.postHistoryInstructions),
       },
       args.wrapFormat,
     );
