@@ -40,6 +40,7 @@ type SyncOptions = {
   suppressKnownFailure?: boolean;
   forceStart?: boolean;
   allowRuntimeInstall?: boolean;
+  preemptStarting?: boolean;
 };
 type EnsureReadyOptions = {
   forceStart?: boolean;
@@ -59,6 +60,20 @@ class SidecarServerExitError extends Error {
   }
 }
 
+class SidecarStartupTimeoutError extends Error {
+  constructor() {
+    super("Timed out waiting for the local sidecar server to become ready");
+    this.name = "SidecarStartupTimeoutError";
+  }
+}
+
+class SidecarStartupCancelledError extends Error {
+  constructor() {
+    super("Local sidecar startup was cancelled");
+    this.name = "SidecarStartupCancelledError";
+  }
+}
+
 class SidecarProcessService {
   private child: ChildProcess | null = null;
   private logStream: WriteStream | null = null;
@@ -69,10 +84,13 @@ class SidecarProcessService {
   private startupError: string | null = null;
   private failedRuntimeVariant: string | null = null;
   private intentionalStop = false;
+  private stopRequested = false;
+  private stopRequestId = 0;
   private unexpectedCrashCount = 0;
   private lastReadyAt = 0;
   private starting = false;
   private syncLock: Promise<void> = Promise.resolve();
+  private childErrors = new WeakMap<ChildProcess, Error>();
 
   isReady(): boolean {
     return this.ready && this.baseUrl !== null;
@@ -106,13 +124,20 @@ class SidecarProcessService {
 
   async syncForCurrentConfig(options?: boolean | SyncOptions): Promise<void> {
     const normalizedOptions = this.normalizeSyncOptions(options);
+    const preemptStopRequestId =
+      normalizedOptions.preemptStarting && this.starting ? this.requestStopForStartup("sync") : null;
     return this.withLock(async () => {
+      if (preemptStopRequestId !== null) {
+        this.clearStopRequest(preemptStopRequestId);
+      }
       await this.syncUnlocked(normalizedOptions);
     });
   }
 
   async restart(): Promise<void> {
+    const stopRequestId = this.requestStopForStartup("restart");
     return this.withLock(async () => {
+      this.clearStopRequest(stopRequestId);
       this.clearStartupFailure();
       this.currentSignature = null;
       await this.stopUnlocked();
@@ -173,24 +198,68 @@ class SidecarProcessService {
   }
 
   async stop(): Promise<void> {
-    if (this.starting && this.child) {
-      this.intentionalStop = true;
-      try {
-        this.child.kill("SIGTERM");
-      } catch {
-        // Best-effort early stop while startup is still waiting.
-      }
-    }
+    const stopRequestId = this.requestStopForStartup("stop");
 
     return this.withLock(async () => {
-      await this.stopUnlocked();
-      this.clearStartupFailure();
-      if (sidecarModelService.getConfiguredModelRef()) {
-        sidecarModelService.setStatus("downloaded");
-      } else {
-        sidecarModelService.setStatus("not_downloaded");
+      try {
+        await this.stopUnlocked();
+        this.clearStartupFailure();
+        if (sidecarModelService.getConfiguredModelRef()) {
+          sidecarModelService.setStatus("downloaded");
+        } else {
+          sidecarModelService.setStatus("not_downloaded");
+        }
+      } finally {
+        this.clearStopRequest(stopRequestId);
       }
     });
+  }
+
+  killCurrentChildForProcessExit(): void {
+    const child = this.child;
+    if (!child || child.exitCode !== null) {
+      return;
+    }
+
+    this.intentionalStop = true;
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // Best-effort process-exit reaping.
+    }
+
+    if (child.exitCode === null) {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Best-effort forced process-exit reaping.
+      }
+    }
+  }
+
+  private requestStopForStartup(reason: "restart" | "stop" | "sync"): number {
+    this.stopRequested = true;
+    this.stopRequestId += 1;
+    const stopRequestId = this.stopRequestId;
+
+    if (!this.starting || !this.child) {
+      return stopRequestId;
+    }
+
+    this.intentionalStop = true;
+    try {
+      this.child.kill("SIGTERM");
+    } catch {
+      logger.debug("[sidecar] Failed to signal startup child during %s", reason);
+    }
+
+    return stopRequestId;
+  }
+
+  private clearStopRequest(stopRequestId: number): void {
+    if (this.stopRequestId === stopRequestId) {
+      this.stopRequested = false;
+    }
   }
 
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -371,8 +440,8 @@ class SidecarProcessService {
     });
   }
 
-  private shouldRetryStartup(error: unknown): error is SidecarServerExitError {
-    return error instanceof SidecarServerExitError;
+  private shouldRetryStartup(error: unknown): boolean {
+    return error instanceof SidecarServerExitError || error instanceof SidecarStartupTimeoutError;
   }
 
   private formatCommandArgs(args: string[]): string {
@@ -401,7 +470,12 @@ class SidecarProcessService {
     return new Error(`${baseMessage}\nCommand: ${commandLine}\nRecent sidecar log:\n${recentLogs}`);
   }
 
-  private getChildExitError(child: ChildProcess): SidecarServerExitError | null {
+  private getChildExitError(child: ChildProcess): Error | null {
+    const spawnError = this.childErrors.get(child);
+    if (spawnError) {
+      return spawnError;
+    }
+
     if (child.exitCode === null && child.signalCode === null) {
       return null;
     }
@@ -477,6 +551,10 @@ class SidecarProcessService {
         await this.startLlamaForInstalledRuntimeUnlocked(activeRuntime, modelPath, runtimeSignature);
         return;
       } catch (error) {
+        if (error instanceof SidecarStartupCancelledError) {
+          throw error;
+        }
+
         lastError = error instanceof Error ? error : new Error("The local sidecar server failed to start");
 
         const nextRuntime: ManagedRuntimeInstall | null = this.usesGpuRuntime(activeRuntime)
@@ -517,6 +595,10 @@ class SidecarProcessService {
     const startupPlans = this.buildLlamaStartupPlans(runtime);
 
     for (let attempt = 0; attempt < startupPlans.length; attempt += 1) {
+      if (this.stopRequested) {
+        throw new SidecarStartupCancelledError();
+      }
+
       const plan = startupPlans[attempt]!;
       const port = await getFreePort();
       const args = this.buildLlamaArgs(modelPath, plan.gpuLayers, port, runtime);
@@ -544,6 +626,10 @@ class SidecarProcessService {
         const decoratedError = this.decorateStartupError(error, runtime.serverPath, args);
         await this.stopUnlocked();
 
+        if (this.stopRequested) {
+          throw new SidecarStartupCancelledError();
+        }
+
         const nextPlan = startupPlans[attempt + 1];
         if (nextPlan && this.shouldRetryStartup(error)) {
           logger.warn(error, "[sidecar] Startup with %s failed. Retrying with %s.", plan.label, nextPlan.label);
@@ -558,6 +644,10 @@ class SidecarProcessService {
   }
 
   private async startMlxUnlocked(runtime: MlxRuntimeInstall, modelRepo: string): Promise<void> {
+    if (this.stopRequested) {
+      throw new SidecarStartupCancelledError();
+    }
+
     const port = await getFreePort();
     const args = this.buildMlxArgs(modelRepo, port);
     const signature = this.buildRuntimeSignature("mlx", runtime, modelRepo);
@@ -583,6 +673,11 @@ class SidecarProcessService {
       await this.waitForReady(this.baseUrl!, child, "mlx");
       this.markReady();
     } catch (error) {
+      if (error instanceof SidecarStartupCancelledError) {
+        await this.stopUnlocked();
+        throw error;
+      }
+
       const decorated = this.decorateStartupError(error, runtime.pythonPath, args);
       await this.stopUnlocked();
       this.rememberStartupFailure(signature, runtime.variant, decorated);
@@ -604,8 +699,21 @@ class SidecarProcessService {
     child.stderr?.on("data", (chunk) => {
       logStream.write(chunk);
     });
+    child.on("error", (error) => {
+      const spawnError = error instanceof Error ? error : new Error(String(error));
+      this.childErrors.set(child, spawnError);
+      logStream.write(`[sidecar] process error: ${spawnError.message}\n`);
+
+      if (this.child === child) {
+        this.startupError = spawnError.message;
+        sidecarModelService.setStatus("server_error");
+      }
+    });
     child.on("exit", (code, signal) => {
-      void this.handleChildExit(code, signal);
+      if (this.child !== child) {
+        return;
+      }
+      void this.handleChildExit(child, code, signal);
     });
   }
 
@@ -623,6 +731,10 @@ class SidecarProcessService {
     let lastError: unknown = null;
 
     while (Date.now() < timeoutAt) {
+      if (this.stopRequested) {
+        throw new SidecarStartupCancelledError();
+      }
+
       const exitError = this.getChildExitError(child);
       if (exitError) {
         throw exitError;
@@ -647,26 +759,35 @@ class SidecarProcessService {
       await delay(backend === "mlx" ? 1_000 : 500);
     }
 
+    if (this.stopRequested) {
+      throw new SidecarStartupCancelledError();
+    }
+
     const exitError = this.getChildExitError(child);
     if (exitError) {
       throw exitError;
     }
 
-    throw lastError instanceof Error ? lastError : new Error("Timed out waiting for the local sidecar server");
+    if (lastError instanceof Error) {
+      logger.warn(lastError, "[sidecar] Readiness probe timed out after repeated failures");
+    }
+    throw new SidecarStartupTimeoutError();
   }
 
   private async stopUnlocked(): Promise<void> {
     const child = this.child;
     if (!child) {
-      this.ready = false;
-      this.baseUrl = null;
+      this.cleanupChildState();
       return;
     }
 
     this.intentionalStop = true;
-    const exited = new Promise<void>((resolve) => {
-      child.once("exit", () => resolve());
-    });
+    const exited =
+      child.exitCode === null
+        ? new Promise<void>((resolve) => {
+            child.once("exit", () => resolve());
+          })
+        : Promise.resolve();
 
     try {
       child.kill("SIGTERM");
@@ -685,10 +806,16 @@ class SidecarProcessService {
       }
     }
 
-    this.cleanupChildState();
+    this.cleanupChildState(child);
   }
 
-  private cleanupChildState(): void {
+  private cleanupChildState(child?: ChildProcess): void {
+    if (child && this.child !== child) {
+      return;
+    }
+
+    this.child?.removeAllListeners("error");
+    this.child?.removeAllListeners("exit");
     this.child = null;
     this.ready = false;
     this.baseUrl = null;
@@ -699,10 +826,18 @@ class SidecarProcessService {
     }
   }
 
-  private async handleChildExit(code: number | null, signal: NodeJS.Signals | null): Promise<void> {
-    const wasIntentional = this.intentionalStop;
+  private async handleChildExit(
+    child: ChildProcess,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): Promise<void> {
+    if (this.child !== child) {
+      return;
+    }
+
+    const wasIntentional = this.intentionalStop || this.stopRequested;
     this.intentionalStop = false;
-    this.cleanupChildState();
+    this.cleanupChildState(child);
 
     if (wasIntentional) {
       return;

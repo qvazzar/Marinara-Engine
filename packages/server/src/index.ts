@@ -9,6 +9,7 @@ import { getHost, getPort, getServerProtocol, loadTlsOptions, logStorageDiagnost
 import { logCsrfTrustSummary } from "./middleware/csrf-protection.js";
 import { startEnvWatcher } from "./config/env-watcher.js";
 import { migrateTaskbarShortcuts } from "./services/setup/taskbar-shortcut-migration.js";
+import { sidecarProcessService } from "./services/sidecar/sidecar-process.service.js";
 
 function isAddressInUseError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && "code" in err && err.code === "EADDRINUSE";
@@ -24,6 +25,15 @@ function scheduleTaskbarShortcutMigration() {
   timeout.unref?.();
 }
 
+function logFatalProcessError(reason: unknown, message: string): void {
+  if (reason instanceof Error) {
+    logger.error(reason, message);
+    return;
+  }
+
+  logger.error({ reason }, message);
+}
+
 async function main() {
   const tls = loadTlsOptions();
   logStorageDiagnostics();
@@ -33,6 +43,22 @@ async function main() {
   const port = getPort();
   const host = getHost();
   let isShuttingDown = false;
+
+  const reapSidecar = () => {
+    sidecarProcessService.killCurrentChildForProcessExit();
+  };
+
+  process.once("exit", reapSidecar);
+  process.on("uncaughtException", (err) => {
+    logFatalProcessError(err, "[process] Uncaught exception; reaping sidecar before exit");
+    reapSidecar();
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    logFatalProcessError(reason, "[process] Unhandled rejection; reaping sidecar before exit");
+    reapSidecar();
+    process.exit(1);
+  });
 
   const shutdown = async (signal: NodeJS.Signals) => {
     if (isShuttingDown) {

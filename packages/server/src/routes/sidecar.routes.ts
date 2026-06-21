@@ -98,7 +98,7 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
     const body = configSchema.parse(req.body);
     const config = sidecarModelService.updateConfig(body);
     void sidecarProcessService
-      .syncForCurrentConfig({ suppressKnownFailure: true, allowRuntimeInstall: false })
+      .syncForCurrentConfig({ suppressKnownFailure: true, allowRuntimeInstall: false, preemptStarting: true })
       .catch((error) => {
         logger.error(error, "[sidecar] Background sync from /config failed");
       });
