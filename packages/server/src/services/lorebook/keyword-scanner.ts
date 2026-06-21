@@ -102,12 +102,20 @@ export function evaluateConditions(conditions: ActivationCondition[], gameState:
       case "not_contains":
         if (fieldValue.toLowerCase().includes(condition.value.toLowerCase())) return false;
         break;
-      case "gt":
-        if (parseFloat(fieldValue) <= parseFloat(condition.value)) return false;
+      case "gt": {
+        const actual = Number.parseFloat(fieldValue);
+        const expected = Number.parseFloat(condition.value);
+        if (!Number.isFinite(actual) || !Number.isFinite(expected)) return false;
+        if (actual <= expected) return false;
         break;
-      case "lt":
-        if (parseFloat(fieldValue) >= parseFloat(condition.value)) return false;
+      }
+      case "lt": {
+        const actual = Number.parseFloat(fieldValue);
+        const expected = Number.parseFloat(condition.value);
+        if (!Number.isFinite(actual) || !Number.isFinite(expected)) return false;
+        if (actual >= expected) return false;
         break;
+      }
     }
   }
 
@@ -253,8 +261,11 @@ export function updateTimingStatesForScan(
       state.delayRemaining = 0;
     } else {
       if (state.delayRemaining > 0) state.delayRemaining -= 1;
-      if (state.cooldownRemaining > 0) state.cooldownRemaining -= 1;
-      if (state.stickyCount > 0) state.stickyCount -= 1;
+      if (state.stickyCount > 0) {
+        state.stickyCount -= 1;
+      } else if (state.cooldownRemaining > 0) {
+        state.cooldownRemaining -= 1;
+      }
     }
 
     if (shouldPersistTimingState(entry, state)) {
@@ -315,7 +326,27 @@ function getAdditionalMatchingText(entry: LorebookEntry, sourceText: Partial<Rec
 /**
  * Group-based selection: within a group, only activate entries up to weight limits.
  */
-function applyGroupSelection(entries: ActivatedEntry[]): ActivatedEntry[] {
+function getGroupWeight(entry: ActivatedEntry): number {
+  const weight = Number(entry.entry.groupWeight ?? 100);
+  return Number.isFinite(weight) && weight > 0 ? weight : 0;
+}
+
+function pickWeightedGroupEntry(entries: ActivatedEntry[], random: () => number): ActivatedEntry | null {
+  if (entries.length === 0) return null;
+  const totalWeight = entries.reduce((total, entry) => total + getGroupWeight(entry), 0);
+  if (totalWeight <= 0) {
+    return [...entries].sort((a, b) => a.entry.order - b.entry.order)[0] ?? null;
+  }
+
+  let roll = random() * totalWeight;
+  for (const entry of entries) {
+    roll -= getGroupWeight(entry);
+    if (roll <= 0) return entry;
+  }
+  return entries[entries.length - 1] ?? null;
+}
+
+function applyGroupSelection(entries: ActivatedEntry[], random: () => number): ActivatedEntry[] {
   const grouped = new Map<string, ActivatedEntry[]>();
   const ungrouped: ActivatedEntry[] = [];
 
@@ -333,18 +364,8 @@ function applyGroupSelection(entries: ActivatedEntry[]): ActivatedEntry[] {
   const result: ActivatedEntry[] = [...ungrouped];
 
   for (const [, groupEntries] of grouped) {
-    // Sort by weight (higher = more likely), then by order
-    groupEntries.sort((a, b) => {
-      const wA = a.entry.groupWeight ?? 100;
-      const wB = b.entry.groupWeight ?? 100;
-      if (wA !== wB) return wB - wA;
-      return a.entry.order - b.entry.order;
-    });
-    // Pick the highest-weight entry from each group
-    const top = groupEntries[0];
-    if (top) {
-      result.push(top);
-    }
+    const selected = pickWeightedGroupEntry(groupEntries, random);
+    if (selected) result.push(selected);
   }
 
   return result;
@@ -375,6 +396,8 @@ export interface ScanOptions {
   ignoreTiming?: boolean;
   /** True while scanning content surfaced by a prior lorebook activation. */
   recursionPass?: boolean;
+  /** Shared per-generation probability rolls, including recursive scan passes. */
+  probabilityDecisions?: Map<string, boolean>;
   /** Random source for probability gates; injectable for deterministic tests. */
   random?: () => number;
 }
@@ -401,6 +424,7 @@ export function scanForActivatedEntries(
     additionalMatchingSourceText = {},
     ignoreTiming = false,
     recursionPass = false,
+    probabilityDecisions = new Map<string, boolean>(),
     random = Math.random,
   } = options;
   const filterContext: LorebookFilterValueContext = {
@@ -417,7 +441,6 @@ export function scanForActivatedEntries(
 
   const activated: ActivatedEntry[] = [];
   const activatedIds = new Set<string>();
-  const probabilityDecisions = new Map<string, boolean>();
   const passesEntryProbability = (entry: LorebookEntry) => {
     const existing = probabilityDecisions.get(entry.id);
     if (existing !== undefined) return existing;
@@ -547,7 +570,7 @@ export function scanForActivatedEntries(
   }
 
   // Apply group selection
-  const afterGroups = applyGroupSelection(activated);
+  const afterGroups = applyGroupSelection(activated, random);
 
   // Sort by injection order (lower = higher priority)
   afterGroups.sort((a, b) => a.injectionOrder - b.injectionOrder);
@@ -564,7 +587,9 @@ export function recursiveScan(
   options: ScanOptions = {},
   maxDepth: number = 3,
 ): ActivatedEntry[] {
-  const allActivated = scanForActivatedEntries(messages, entries, options);
+  const probabilityDecisions = options.probabilityDecisions ?? new Map<string, boolean>();
+  const scanOptions = { ...options, probabilityDecisions };
+  const allActivated = scanForActivatedEntries(messages, entries, scanOptions);
   const activatedIds = new Set(allActivated.map((a) => a.entry.id));
   let newlyActivated = allActivated;
 
@@ -580,7 +605,7 @@ export function recursiveScan(
     // Scan remaining entries against the content of activated entries
     const remaining = entries.filter((e) => !activatedIds.has(e.id) && !e.excludeRecursion);
     const newMessages: ScanMessage[] = [{ role: "system", content: newContent }];
-    const newActivated = scanForActivatedEntries(newMessages, remaining, { ...options, recursionPass: true });
+    const newActivated = scanForActivatedEntries(newMessages, remaining, { ...scanOptions, recursionPass: true });
 
     if (newActivated.length === 0) break;
 
