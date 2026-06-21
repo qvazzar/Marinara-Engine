@@ -31,16 +31,17 @@ export function formatAgentInjections(injections: AgentInjection[], wrapFormat: 
   if (injections.length === 1) {
     const { agentType, agentName, text } = injections[0]!;
     const label = agentName?.trim() || agentType;
-    const tag = nameToXmlTag(label) || agentType.replace(/[^a-z0-9_-]/gi, "_");
+    const tag = agentInjectionXmlTag(label, agentType);
     if (wrapFormat === "markdown") return `## ${label}\n${text}`;
     if (wrapFormat === "xml") return `<${tag}>\n${text}\n</${tag}>`;
     return text;
   }
 
   const parts: string[] = [];
+  const usedXmlTags = new Set<string>();
   for (const { agentType, agentName, text } of injections) {
     const label = agentName?.trim() || agentType;
-    const tag = nameToXmlTag(label) || agentType.replace(/[^a-z0-9_-]/gi, "_");
+    const tag = uniqueAgentInjectionXmlTag(label, agentType, usedXmlTags);
     if (wrapFormat === "markdown") {
       parts.push(`## ${label}\n${text}`);
     } else if (wrapFormat === "xml") {
@@ -50,6 +51,23 @@ export function formatAgentInjections(injections: AgentInjection[], wrapFormat: 
     }
   }
   return parts.join("\n\n");
+}
+
+function agentInjectionXmlTag(label: string, agentType: string): string {
+  const tag = nameToXmlTag(label) || nameToXmlTag(agentType) || "agent";
+  return /^[a-z_]/i.test(tag) ? tag : `agent_${tag}`;
+}
+
+function uniqueAgentInjectionXmlTag(label: string, agentType: string, usedTags: Set<string>): string {
+  const base = agentInjectionXmlTag(label, agentType);
+  let tag = base;
+  let index = 2;
+  while (usedTags.has(tag)) {
+    tag = `${base}-${index}`;
+    index += 1;
+  }
+  usedTags.add(tag);
+  return tag;
 }
 
 export function toRuntimeAgentSectionType(

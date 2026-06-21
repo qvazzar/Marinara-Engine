@@ -109,10 +109,16 @@ function readAgentSettingPath(settings: Record<string, unknown>, path: string): 
   return { found: true, value: cursor };
 }
 
-function renderAgentSettingsMacros(template: string, settings: Record<string, unknown>): string {
+function renderAgentSettingsMacros(
+  template: string,
+  settings: Record<string, unknown>,
+  options: { escapeValues?: boolean } = {},
+): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (match, key: string) => {
     const { found, value } = readAgentSettingPath(settings, key);
-    return found ? stringifyAgentSettingMacroValue(value) : match;
+    if (!found) return match;
+    const rendered = stringifyAgentSettingMacroValue(value);
+    return options.escapeValues ? escapeXml(rendered) : rendered;
   });
 }
 
@@ -865,9 +871,10 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
     const template = renderAgentSettingsMacros(
       config.promptTemplate || getDefaultPromptForAgent(config),
       config.settings,
+      { escapeValues: true },
     );
     parts.push(``);
-    parts.push(`<agent_task id="${config.type}" name="${config.name}">`);
+    parts.push(`<agent_task id="${escapeXmlAttribute(config.type)}" name="${escapeXmlAttribute(config.name)}">`);
     parts.push(template);
     parts.push(`</agent_task>`);
   }
@@ -889,14 +896,20 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
   for (const config of configs) {
     const isJson = agentResponseIsJson(config);
     parts.push(
-      `<result agent="${config.type}">`,
+      `<result agent="${escapeXmlAttribute(config.type)}">`,
       isJson ? `{ ... valid JSON ... }` : `... your text output ...`,
       `</result>`,
     );
   }
   parts.push(``);
+  const escapedAgentIds = configs.map((config) => escapeXml(config.type)).join(", ");
   parts.push(
-    `CRITICAL: Output ALL ${configs.length} result blocks. Use exact agent IDs: ${configs.map((c) => c.type).join(", ")}. JSON agents must output valid JSON (no markdown fences). No text outside <result> blocks.`,
+    [
+      `CRITICAL: Output ALL ${configs.length} result blocks.`,
+      `Use exact agent IDs: ${escapedAgentIds}.`,
+      "JSON agents must output valid JSON (no markdown fences).",
+      "No text outside <result> blocks.",
+    ].join(" "),
   );
 
   return parts.join("\n");
@@ -916,37 +929,17 @@ function parseBatchResponse(
   const perAgentTokens = Math.round(totalTokens / configs.length);
   const parsed: AgentResult[] = [];
   const failed: AgentExecConfig[] = [];
+  const expectedAgentTypes = new Set(configs.map((config) => config.type));
+  const resultBlocks = extractResultBlocks(responseText);
+  const explicitResults = new Map<string, string>();
+  for (const block of resultBlocks) {
+    if (!expectedAgentTypes.has(block.agent) || explicitResults.has(block.agent)) continue;
+    explicitResults.set(block.agent, block.content.trim());
+  }
+  const residualText = removeSpans(responseText, resultBlocks.map((block) => [block.start, block.end] as const));
 
   for (const config of configs) {
-    const escaped = escapeRegex(config.type);
-    // Try several patterns the model might use:
-    // 1. <result agent="type">...</result>
-    // 2. <result agent='type'>...</result>
-    // 3. <result agent=type>...</result>  (unquoted)
-    // 4. <result_type>...</result_type>   (underscore variant)
-    // 5. <type>...</type>                 (bare agent ID as tag)
-    //
-    // We use GREEDY match ([\s\S]*) with a lookahead for the closing tag
-    // or the next <result to avoid stopping at a </result> inside JSON strings.
-    const patterns = [
-      new RegExp(
-        `<result\\s+agent\\s*=\\s*["']${escaped}["']\\s*>([\\s\\S]*?)</result\\s*>(?=\\s*(?:<result\\b|$))`,
-        "i",
-      ),
-      new RegExp(`<result\\s+agent\\s*=\\s*["']${escaped}["']\\s*>([\\s\\S]*?)</result>`, "i"),
-      new RegExp(`<result\\s+agent\\s*=\\s*${escaped}\\s*>([\\s\\S]*?)</result>`, "i"),
-      new RegExp(`<result_${escaped}>([\\s\\S]*?)</result_${escaped}>`, "i"),
-      new RegExp(`<${escaped}>([\\s\\S]*?)</${escaped}>`, "i"),
-    ];
-
-    let matchedOutput: string | null = null;
-    for (const pattern of patterns) {
-      const match = responseText.match(pattern);
-      if (match) {
-        matchedOutput = match[1]!.trim();
-        break;
-      }
-    }
+    const matchedOutput = explicitResults.get(config.type) ?? matchLegacyResultTag(config.type, residualText);
 
     if (matchedOutput !== null) {
       const parsedResult = parseAgentResponse(config, matchedOutput);
@@ -976,6 +969,82 @@ function parseBatchResponse(
   }
 
   return { parsed, failed };
+}
+
+type ExtractedResultBlock = {
+  agent: string;
+  content: string;
+  start: number;
+  end: number;
+};
+
+function extractResultBlocks(responseText: string): ExtractedResultBlock[] {
+  const openRegex = /<result\b([^>]*)>/gi;
+  const opens = Array.from(responseText.matchAll(openRegex));
+  const blocks: ExtractedResultBlock[] = [];
+
+  for (let i = 0; i < opens.length; i++) {
+    const open = opens[i]!;
+    const agent = readResultAgentAttribute(open[1] ?? "");
+    if (!agent) continue;
+
+    const contentStart = open.index + open[0].length;
+    const nextStart = opens[i + 1]?.index ?? responseText.length;
+    const closeRegex = /<\/result\s*>/gi;
+    closeRegex.lastIndex = contentStart;
+
+    let selectedClose: RegExpExecArray | null = null;
+    let closeMatch: RegExpExecArray | null;
+    while ((closeMatch = closeRegex.exec(responseText))) {
+      if (closeMatch.index >= nextStart) break;
+      selectedClose = closeMatch;
+    }
+    if (!selectedClose) continue;
+
+    blocks.push({
+      agent,
+      content: responseText.slice(contentStart, selectedClose.index),
+      start: open.index,
+      end: selectedClose.index + selectedClose[0].length,
+    });
+  }
+
+  return blocks;
+}
+
+function readResultAgentAttribute(attributes: string): string | null {
+  const match = attributes.match(/\bagent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+  const raw = match?.[1] ?? match?.[2] ?? match?.[3];
+  return raw ? decodeXmlAttribute(raw).trim() : null;
+}
+
+function decodeXmlAttribute(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function removeSpans(value: string, spans: ReadonlyArray<readonly [number, number]>): string {
+  if (spans.length === 0) return value;
+  const sorted = [...spans].sort((a, b) => a[0] - b[0]);
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const [start, end] of sorted) {
+    if (start > cursor) parts.push(value.slice(cursor, start));
+    cursor = Math.max(cursor, end);
+  }
+  if (cursor < value.length) parts.push(value.slice(cursor));
+  return parts.join("");
+}
+
+function matchLegacyResultTag(agentType: string, residualText: string): string | null {
+  if (!/^[A-Za-z_][A-Za-z0-9_.:-]*$/.test(agentType)) return null;
+  const escaped = escapeRegex(agentType);
+  const match = residualText.match(new RegExp(`<result_${escaped}>([\\s\\S]*?)</result_${escaped}>`, "i"));
+  return match?.[1]?.trim() ?? null;
 }
 
 function escapeRegex(str: string): string {
