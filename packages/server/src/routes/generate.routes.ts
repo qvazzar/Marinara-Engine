@@ -235,7 +235,11 @@ import { registerRetryAgentsRoute } from "./generate/retry-agents-route.js";
 import { fingerprintChatSummary } from "../services/prompt/chat-summary-fingerprint.js";
 import { sendSseEvent, startSseReply, trySendSseEvent } from "./generate/sse.js";
 import { runTurnGameBotTurns } from "../services/turn-games/turn-game-bot-runner.service.js";
-import { getTurnGameContextText } from "../services/turn-games/turn-game-runner.service.js";
+import {
+  getActiveTurnGame,
+  getTurnGameContextText,
+  startTurnGame,
+} from "../services/turn-games/turn-game-runner.service.js";
 import { normalizeContextInjections } from "./generate/agent-normalizers.js";
 import {
   buildGenerationPromptPresetCandidates,
@@ -729,6 +733,8 @@ function getConversationCommandKey(command: CharacterCommand): ConversationComma
       return "memory";
     case "scene":
       return "scene";
+    case "uno":
+      return "uno";
     case "spotify":
     case "youtube":
       return "music";
@@ -2072,11 +2078,25 @@ export async function generateRoutes(app: FastifyInstance) {
           const respondingConvoCharInfo = scopedConvoCharInfo.length > 0 ? scopedConvoCharInfo : convoCharInfo;
           const respondingConvoCharNames = respondingConvoCharInfo.map((c) => c.name);
 
+          // Characters seated at an ACTIVE turn-game are present at the table:
+          // treat them as online so their schedule's offline-skip + typing delay
+          // don't make a player at the table go silent or reply minutes late.
+          let seatedGameCharIds = new Set<string>();
+          {
+            const activeGameForSchedule = await getActiveTurnGame(app.db, input.chatId);
+            const seatOrder = activeGameForSchedule?.state?.seatOrder;
+            if (Array.isArray(seatOrder)) {
+              seatedGameCharIds = new Set(seatOrder.filter((x: unknown): x is string => typeof x === "string"));
+            }
+          }
+          const effectiveStatus = (c: { charId: string; status: string }): string =>
+            seatedGameCharIds.has(c.charId) ? "online" : c.status;
+
           // ── Offline skip: if ALL characters are offline, don't generate ──
           // The user message is already saved. When the character comes back online,
           // the autonomous messaging system will trigger a catch-up generation.
           const allOffline =
-            respondingConvoCharInfo.length > 0 && respondingConvoCharInfo.every((c) => c.status === "offline");
+            respondingConvoCharInfo.length > 0 && respondingConvoCharInfo.every((c) => effectiveStatus(c) === "offline");
           if (allOffline && !input.regenerateMessageId && !input.impersonate) {
             reply.raw.write(`data: ${JSON.stringify({ type: "offline", characters: respondingConvoCharNames })}\n\n`);
             reply.raw.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
@@ -2092,7 +2112,8 @@ export async function generateRoutes(app: FastifyInstance) {
             // Use the "worst" (longest-delay) status among all characters
             const worstStatus = respondingConvoCharInfo.reduce((worst, c) => {
               const rank = { online: 0, idle: 1, dnd: 2, offline: 3 } as Record<string, number>;
-              return (rank[c.status] ?? 0) > (rank[worst] ?? 0) ? c.status : worst;
+              const cStatus = effectiveStatus(c);
+              return (rank[cStatus] ?? 0) > (rank[worst] ?? 0) ? cStatus : worst;
             }, "online");
             // If user @mentioned a character, use reduced mention delay instead.
             // Otherwise use the slowest configured delay among the responding characters.
@@ -2102,7 +2123,10 @@ export async function generateRoutes(app: FastifyInstance) {
                   const schedule = schedules[character.charId];
                   return Math.max(
                     maxDelay,
-                    schedSvc.getDirectMessageDelay(character.status as "online" | "idle" | "dnd" | "offline", schedule),
+                    schedSvc.getDirectMessageDelay(
+                      effectiveStatus(character) as "online" | "idle" | "dnd" | "offline",
+                      schedule,
+                    ),
                   );
                 }, 0);
             if (delayMs > 0) {
@@ -2627,6 +2651,22 @@ export async function generateRoutes(app: FastifyInstance) {
                 `   - You invite {{user}} somewhere and they accept → trigger a scene for that activity.`,
                 `   - A plan is made (date, trip, hangout, confrontation) and the moment arrives → trigger a scene.`,
                 `   Do NOT wait for {{user}} to explicitly ask for a scene. If the conversation implies you and {{user}} are about to DO something together, initiate the scene yourself.`,
+                `   EXCEPTION: Do NOT start a scene for playing UNO, cards, or other board/table games — those have their own [uno] command. Use [uno], not [scene], for a game of UNO.`,
+              );
+            }
+
+            // UNO turn-game — conversation mode only, when no game is running yet
+            // and at least one other character is present to play with.
+            if (
+              chatMode === "conversation" &&
+              isConversationCommandEnabled(chatMeta, "uno") &&
+              characterIds.length >= 1 &&
+              !(await getActiveTurnGame(app.db, input.chatId))
+            ) {
+              addCommandLines(
+                `- [uno] - start a game of UNO at the table. Include this ONLY when ${personaName} proposes playing UNO (or cards) and you are willing to play right now. The system deals the cards and runs the game — you do NOT narrate dealing or describe the hands.`,
+                `   If you are busy, tired, or simply don't feel like it, just say so in character and do NOT include [uno]. Agreeing to play IS including [uno].`,
+                `   Example: ${personaName} says "anyone up for a round of uno?" and you're in → "Oh, you're SO on. [uno]"`,
               );
             }
 
@@ -9482,6 +9522,64 @@ export async function generateRoutes(app: FastifyInstance) {
                     }
                   } catch (sceneErr) {
                     logger.error(sceneErr, "[commands] Scene creation failed");
+                  }
+                }
+
+                if (command.type === "uno") {
+                  // ── UNO: a character agreed to play — deal a game at the table ──
+                  try {
+                    const existingGame = await getActiveTurnGame(app.db, input.chatId);
+                    if (existingGame) {
+                      logger.info("[commands] UNO requested but a game is already active in chat %s", input.chatId);
+                    } else {
+                      const unoChat = await chats.getById(input.chatId);
+                      const unoCharIds: string[] = unoChat
+                        ? typeof unoChat.characterIds === "string"
+                          ? JSON.parse(unoChat.characterIds)
+                          : (unoChat.characterIds as string[])
+                        : [];
+                      // Seat the human + every character who isn't offline (asleep) right now.
+                      const unoSchedules = getEnabledConversationSchedules(chatMeta) as Record<
+                        string,
+                        import("../services/conversation/schedule.service.js").WeekSchedule
+                      >;
+                      const unoSchedSvc = await import("../services/conversation/schedule.service.js");
+                      const seatBotIds = unoCharIds.filter((cid) => {
+                        const sched = unoSchedules[cid];
+                        return !sched || unoSchedSvc.getCurrentStatus(sched).status !== "offline";
+                      });
+                      // The agreeing character is always seated, even if their schedule says otherwise.
+                      if (characterId && unoCharIds.includes(characterId) && !seatBotIds.includes(characterId)) {
+                        seatBotIds.push(characterId);
+                      }
+                      const outcome = await startTurnGame(app.db, input.chatId, {
+                        gameType: "uno",
+                        botCharacterIds: seatBotIds,
+                        humanFirst: true,
+                      });
+                      if (outcome.ok) {
+                        reply.raw.write(`data: ${JSON.stringify({ type: "uno_state_patch", data: outcome.view })}\n\n`);
+                        logger.info(
+                          "[commands] UNO started in chat %s with %d player(s)",
+                          input.chatId,
+                          seatBotIds.length + 1,
+                        );
+                        // If the opening card landed the first turn on a bot (skip/reverse/draw2),
+                        // advance the bot seats now so the deal resolves to the human's turn.
+                        await runTurnGameBotTurns({
+                          db: app.db,
+                          chatId: input.chatId,
+                          conn,
+                          baseUrl,
+                          reply,
+                          signal: abortController.signal,
+                        });
+                      } else {
+                        logger.warn("[commands] UNO start failed in chat %s: %s", input.chatId, outcome.error ?? "");
+                      }
+                    }
+                  } catch (unoErr) {
+                    logger.error(unoErr, "[commands] UNO start failed");
                   }
                 }
 

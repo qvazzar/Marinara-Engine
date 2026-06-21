@@ -11,6 +11,7 @@
 // - [selfie], [selfie: context="description of the selfie"], [selfie: "description"], or [selfie: description]
 // - [memory: target="CharName", summary="description of the memory"]
 // - [scene: scenario="...", background="...", plan="..."] (initiate a mini-roleplay scene)
+// - [uno] (start a game of UNO at the table; Conversation mode)
 // - [spotify: title="Song title", artist="Artist"] (play a song on the user's active Spotify player)
 // - [youtube: query="Song title Artist"] (play a song on the user's active YouTube player)
 // - [react: emoji="😂"] or [react: emoji=":custom_name:"] (react to the user's latest message; Conversation mode)
@@ -68,6 +69,11 @@ export interface SceneCommand {
   background?: string;
   /** Optional plot plan / outline for how the scene unfolds */
   plan?: string;
+}
+
+export interface UnoCommand {
+  /** Start a game of UNO at the table. Param-less; the system deals + runs the game. */
+  type: "uno";
 }
 
 export interface InfluenceCommand {
@@ -318,6 +324,7 @@ export type CharacterCommand =
   | SelfieCommand
   | MemoryCommand
   | SceneCommand
+  | UnoCommand
   | InfluenceCommand
   | NoteCommand
   | DirectMessageCommand
@@ -341,6 +348,8 @@ const CROSS_POST_RE = /\[cross_post:\s*target="([^"]+)"\]/gi;
 const SELFIE_RE = /\[selfie(?::\s*(?:context="([^"]*)"|"([^"]*)"|([^\]\r\n"]+)))?\]/gi;
 const MEMORY_RE = /\[memory:\s*target="([^"]+)"\s*,\s*summary="([^"]+)"\]/gi;
 const SCENE_RE = new RegExp(`\\[scene:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
+// Param-less UNO trigger. Tolerates a stray `[uno: ...]` so a chatty model can't dodge the match.
+const UNO_RE = /\[uno(?::[^\]\r\n]*)?\]/gi;
 const HAPTIC_RE = new RegExp(`\\[haptic:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const SPOTIFY_RE = new RegExp(`\\[spotify:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const YOUTUBE_RE = new RegExp(`\\[youtube:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
@@ -852,6 +861,12 @@ export function parseCharacterCommands(content: string): {
     if (cmd.scenario) commands.push(cmd);
   }
 
+  // Parse uno command — start a game of UNO. Param-less; only one per message.
+  for (const _unoMatch of content.matchAll(UNO_RE)) {
+    commands.push({ type: "uno" });
+    break;
+  }
+
   // Parse influence commands (<influence>text</influence>)
   for (const match of content.matchAll(INFLUENCE_RE)) {
     const text = stripConversationPromptTimestamps(match[1]!.trim());
@@ -1040,6 +1055,7 @@ export function parseCharacterCommands(content: string): {
     .replace(SELFIE_RE, "")
     .replace(MEMORY_RE, "")
     .replace(SCENE_RE, "")
+    .replace(UNO_RE, "")
     .replace(HAPTIC_RE, "")
     .replace(SPOTIFY_RE, "")
     .replace(YOUTUBE_RE, "")
