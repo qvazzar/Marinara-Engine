@@ -81,6 +81,7 @@ import { filterGameInternalAgentIds } from "../../services/lorebook/game-loreboo
 import { sendSseEvent, startSseReply } from "./sse.js";
 import { buildGenerationPromptPresetCandidates } from "./prompt-preset-selection.js";
 import {
+  buildAgentConnectionUnavailableWarning,
   buildDefaultAgentConnectionWarning,
   buildLocalSidecarUnavailableWarning,
   isLocalSidecarConnectionId,
@@ -884,32 +885,98 @@ async function resolveRetryAgents(args: {
   const skippedLocalSidecarAgents: string[] = [];
   const defaultAgentConnectionAgents: string[] = [];
   const defaultAgentConn = await conns.getDefaultForAgents();
-  const defaultAgentConnection = defaultAgentConn
-    ? (() => {
-        const baseUrl = resolveBaseUrl(defaultAgentConn);
-        if (!baseUrl) return null;
-        return {
-          connectionId: defaultAgentConn.id as string,
-          provider: createLLMProvider(
-            defaultAgentConn.provider,
-            baseUrl,
-            defaultAgentConn.apiKey,
-            defaultAgentConn.maxContext,
-            defaultAgentConn.openrouterProvider,
-            defaultAgentConn.maxTokensOverride,
-          ),
-          model: defaultAgentConn.model,
-          maxParallelJobs: Number(defaultAgentConn.maxParallelJobs) || 1,
-        };
-      })()
-    : null;
   const localSidecarAvailableForTrackers =
     sidecarModelService.getConfig().useForTrackers && sidecarModelService.getConfiguredModelRef() !== null;
+  const unavailableConnectionWarnings = new Map<
+    string,
+    { reason: string; connectionName?: string; agentNames: string[] }
+  >();
+  const addUnavailableConnectionWarning = (
+    agentName: string,
+    resolution: { unavailableReason?: string; connectionName?: string },
+  ) => {
+    const reason = resolution.unavailableReason ?? "the connection is unavailable";
+    const key = `${resolution.connectionName ?? ""}:${reason}`;
+    const existing = unavailableConnectionWarnings.get(key);
+    if (existing) {
+      existing.agentNames.push(agentName);
+    } else {
+      unavailableConnectionWarnings.set(key, {
+        reason,
+        connectionName: resolution.connectionName,
+        agentNames: [agentName],
+      });
+    }
+  };
+  const resolveRetryAgentConnection = async (
+    connectionId: string | null,
+  ): Promise<{
+    entry: { connectionId: string | null; provider: any; model: string; maxParallelJobs: number } | null;
+    unavailableReason?: string;
+    connectionName?: string;
+  }> => {
+    if (!connectionId) {
+      return {
+        entry: {
+          connectionId: null,
+          provider,
+          model: conn.model,
+          maxParallelJobs: chatConnectionMaxParallelJobs,
+        },
+      };
+    }
+
+    if (isLocalSidecarConnectionId(connectionId) && localSidecarAvailableForTrackers) {
+      return {
+        entry: {
+          connectionId,
+          provider: getLocalSidecarProvider(),
+          model: LOCAL_SIDECAR_MODEL,
+          maxParallelJobs: 1,
+        },
+      };
+    }
+
+    const agentConn = await conns.getWithKey(connectionId);
+    if (!agentConn) {
+      return { entry: null, unavailableReason: "the configured connection was deleted" };
+    }
+
+    const model = typeof agentConn.model === "string" ? agentConn.model.trim() : "";
+    if (!model) {
+      return { entry: null, unavailableReason: "no model is selected", connectionName: agentConn.name };
+    }
+
+    const agentBaseUrl = resolveBaseUrl(agentConn);
+    if (!agentBaseUrl) {
+      return {
+        entry: null,
+        unavailableReason: "the Base URL is empty or cannot be resolved",
+        connectionName: agentConn.name,
+      };
+    }
+
+    return {
+      entry: {
+        connectionId,
+        provider: createLLMProvider(
+          agentConn.provider,
+          agentBaseUrl,
+          agentConn.apiKey,
+          agentConn.maxContext,
+          agentConn.openrouterProvider,
+          agentConn.maxTokensOverride,
+        ),
+        model,
+        maxParallelJobs: Number(agentConn.maxParallelJobs) || 1,
+      },
+    };
+  };
+  const defaultAgentConnection = defaultAgentConn
+    ? await resolveRetryAgentConnection(defaultAgentConn.id as string)
+    : null;
 
   for (const cfg of enabledConfigs) {
-    let agentProvider = provider;
-    let agentModel = conn.model;
-    let agentMaxParallelJobs = chatConnectionMaxParallelJobs;
     const effectiveConnectionId = resolveAgentConnectionId({
       requestedConnectionId: cfg.connectionId as string | null,
       defaultAgentConnectionId: defaultAgentConn?.id ?? null,
@@ -925,34 +992,20 @@ async function resolveRetryAgents(args: {
       continue;
     }
 
-    if (effectiveConnectionId) {
-      if (isLocalSidecarConnectionId(effectiveConnectionId) && localSidecarAvailableForTrackers) {
-        agentProvider = getLocalSidecarProvider();
-        agentModel = LOCAL_SIDECAR_MODEL;
-      } else if (defaultAgentConnection && effectiveConnectionId === defaultAgentConnection.connectionId) {
-        agentProvider = defaultAgentConnection.provider;
-        agentModel = defaultAgentConnection.model;
-        agentMaxParallelJobs = defaultAgentConnection.maxParallelJobs;
-        defaultAgentConnectionAgents.push(cfg.name ?? cfg.type);
-      } else {
-        const agentConn = await conns.getWithKey(effectiveConnectionId);
-        if (agentConn) {
-          const agentBaseUrl = resolveBaseUrl(agentConn);
-          if (agentBaseUrl) {
-            agentProvider = createLLMProvider(
-              agentConn.provider,
-              agentBaseUrl,
-              agentConn.apiKey,
-              agentConn.maxContext,
-              agentConn.openrouterProvider,
-              agentConn.maxTokensOverride,
-            );
-            agentModel = agentConn.model;
-            agentMaxParallelJobs = Number(agentConn.maxParallelJobs) || 1;
-          }
-        }
-      }
+    const agentConnection = await resolveRetryAgentConnection(effectiveConnectionId);
+    if (!agentConnection.entry) {
+      addUnavailableConnectionWarning(cfg.name ?? cfg.type, agentConnection);
+      logger.warn(
+        "[retry-agents] Skipping agent %s because its connection is unavailable: %s",
+        cfg.type,
+        agentConnection.unavailableReason ?? "unknown reason",
+      );
+      continue;
     }
+    if (defaultAgentConn && effectiveConnectionId === defaultAgentConn.id) {
+      defaultAgentConnectionAgents.push(cfg.name ?? cfg.type);
+    }
+
     const rawSettings = typeof cfg.settings === "string" ? JSON.parse(cfg.settings) : (cfg.settings ?? {});
     let settings = applyDefaultBuiltInAgentTools(cfg.type, rawSettings);
     if (cfg.type === "spotify") {
@@ -978,12 +1031,12 @@ async function resolveRetryAgents(args: {
         promptTemplate: selectedPromptTemplate,
         connectionId: effectiveConnectionId,
         settings,
-        provider: agentProvider,
-        model: agentModel,
-        maxParallelJobs: agentMaxParallelJobs,
+        provider: agentConnection.entry.provider,
+        model: agentConnection.entry.model,
+        maxParallelJobs: agentConnection.entry.maxParallelJobs,
       },
-      agentProvider,
-      agentModel,
+      agentProvider: agentConnection.entry.provider,
+      agentModel: agentConnection.entry.model,
     });
   }
 
@@ -991,15 +1044,17 @@ async function resolveRetryAgents(args: {
     skippedLocalSidecarAgents.length > 0 ? [buildLocalSidecarUnavailableWarning(skippedLocalSidecarAgents)] : [];
 
   for (const builtIn of builtInFallbackConfigs) {
-    const builtInProvider = defaultAgentConnection ?? {
-      provider,
-      model: conn.model,
-      connectionId: null,
-      maxParallelJobs: chatConnectionMaxParallelJobs,
-    };
-    if (defaultAgentConnection) {
-      defaultAgentConnectionAgents.push(builtIn.name);
+    const builtInConnection = defaultAgentConn ? defaultAgentConnection : await resolveRetryAgentConnection(null);
+    if (!builtInConnection?.entry) {
+      addUnavailableConnectionWarning(builtIn.name, builtInConnection ?? {});
+      logger.warn(
+        "[retry-agents] Skipping built-in agent %s because its connection is unavailable: %s",
+        builtIn.id,
+        builtInConnection?.unavailableReason ?? "unknown reason",
+      );
+      continue;
     }
+    if (defaultAgentConn) defaultAgentConnectionAgents.push(builtIn.name);
 
     let settings = applyDefaultBuiltInAgentTools(builtIn.id, getDefaultBuiltInAgentSettings(builtIn.id));
     if (builtIn.id === "spotify") {
@@ -1023,15 +1078,19 @@ async function resolveRetryAgents(args: {
         name: builtIn.name,
         phase: resolveRetryAgentRuntimePhase(builtIn.id, builtIn.phase),
         promptTemplate: selectedPromptTemplate,
-        connectionId: builtInProvider.connectionId,
+        connectionId: builtInConnection.entry.connectionId,
         settings,
-        provider: builtInProvider.provider,
-        model: builtInProvider.model,
-        maxParallelJobs: builtInProvider.maxParallelJobs,
+        provider: builtInConnection.entry.provider,
+        model: builtInConnection.entry.model,
+        maxParallelJobs: builtInConnection.entry.maxParallelJobs,
       },
-      agentProvider: builtInProvider.provider,
-      agentModel: builtInProvider.model,
+      agentProvider: builtInConnection.entry.provider,
+      agentModel: builtInConnection.entry.model,
     });
+  }
+
+  for (const warning of unavailableConnectionWarnings.values()) {
+    warnings.push(buildAgentConnectionUnavailableWarning(warning));
   }
 
   if (defaultAgentConn && defaultAgentConnectionAgents.length > 0) {
@@ -1039,7 +1098,7 @@ async function resolveRetryAgents(args: {
       buildDefaultAgentConnectionWarning({
         agentNames: defaultAgentConnectionAgents,
         connectionName: defaultAgentConn.name,
-        model: defaultAgentConn.model,
+        model: String(defaultAgentConn.model ?? "").trim(),
       }),
     );
   }

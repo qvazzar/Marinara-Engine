@@ -1,7 +1,7 @@
 import { LOCAL_SIDECAR_CONNECTION_ID } from "@marinara-engine/shared";
 
 export type AgentConnectionWarning = {
-  code: "local_sidecar_unavailable" | "default_agent_connection_active";
+  code: "local_sidecar_unavailable" | "default_agent_connection_active" | "agent_connection_unavailable";
   severity: "warning";
   message: string;
   agentNames: string[];
@@ -62,5 +62,25 @@ export function buildDefaultAgentConnectionWarning(args: {
     connectionName: args.connectionName,
     model: args.model,
     message: `${agentList} ${noun} using the default agent connection "${args.connectionName}" (${args.model}). If this is a paid API model, agent calls may bill that provider.`,
+  };
+}
+
+export function buildAgentConnectionUnavailableWarning(args: {
+  agentNames: string[];
+  reason: string;
+  connectionName?: string;
+}): AgentConnectionWarning {
+  const normalizedNames = args.agentNames.length > 0 ? args.agentNames : ["Agent"];
+  const agentList = formatAgentNameList(normalizedNames);
+  const noun = normalizedNames.length === 1 ? "this agent" : "these agents";
+  const connectionText = args.connectionName ? ` "${args.connectionName}"` : "";
+
+  return {
+    code: "agent_connection_unavailable",
+    severity: "warning",
+    agentNames: normalizedNames,
+    fallbackPrevented: true,
+    connectionName: args.connectionName,
+    message: `${agentList} could not use agent connection${connectionText}: ${args.reason}. Marinara skipped ${noun} instead of falling back to the main chat model.`,
   };
 }
