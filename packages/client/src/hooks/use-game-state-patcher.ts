@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from "react";
 import type { GameState, PlayerStats } from "@marinara-engine/shared";
-import { api } from "../lib/api-client";
+import { ApiError, api } from "../lib/api-client";
 import { useGameStateStore } from "../stores/game-state.store";
 
 export type GameStatePatchField =
@@ -288,8 +288,18 @@ export async function flushGameStatePatch(chatId?: string) {
       .patch(`/chats/${queuedSnapshot.chatId}/game-state`, { ...payload, manual: true }, { signal: controller.signal })
       .then(() => undefined)
       .catch((error) => {
-        if (!inFlightEntry.canceled) {
+        const staleExplicitTarget =
+          error instanceof ApiError &&
+          error.status === 404 &&
+          queuedSnapshot.target.messageId &&
+          queuedSnapshot.target.swipeIndex !== undefined;
+        if (!inFlightEntry.canceled && !staleExplicitTarget) {
           requeuePatch(key, queuedSnapshot);
+        }
+        if (staleExplicitTarget) {
+          durablePatches.delete(key);
+          pendingPatches.delete(key);
+          persistPendingPatches();
         }
         throw error;
       })

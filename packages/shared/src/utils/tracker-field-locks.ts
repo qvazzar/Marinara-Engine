@@ -16,6 +16,8 @@ type InventoryField = "name" | "quantity" | "description" | "location";
 type QuestField = "name" | "completed" | "currentStage";
 type QuestObjectiveField = "text" | "completed";
 type CustomTrackerFieldKey = "name" | "value";
+type NamedLockRow = { name?: string | null };
+type ObjectiveLockRow = { text?: string | null };
 
 const PLAYER_STATS_FALLBACK: PlayerStats = {
   stats: [],
@@ -37,6 +39,36 @@ function encodeSegment(value: string | number | null | undefined) {
 
 function normalizeComparableText(value: unknown) {
   return typeof value === "string" ? value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ") : "";
+}
+
+function stableIndexRef(index: number | null | undefined) {
+  return Number.isSafeInteger(index) && index >= 0 ? index : 0;
+}
+
+function namedRowLockRef(rowOrIndex: NamedLockRow | number | null | undefined, index?: number) {
+  if (typeof rowOrIndex !== "number") {
+    const name = typeof rowOrIndex?.name === "string" ? rowOrIndex.name.trim() : "";
+    if (name) return `name:${encodeSegment(name)}`;
+  }
+  return `index:${stableIndexRef(typeof rowOrIndex === "number" ? rowOrIndex : index)}`;
+}
+
+function objectiveLockRef(rowOrIndex: ObjectiveLockRow | number | null | undefined, index?: number) {
+  if (typeof rowOrIndex !== "number") {
+    const text = typeof rowOrIndex?.text === "string" ? rowOrIndex.text.trim() : "";
+    if (text) return `text:${encodeSegment(text)}`;
+  }
+  return `index:${stableIndexRef(typeof rowOrIndex === "number" ? rowOrIndex : index)}`;
+}
+
+function replaceLockKey(
+  locks: TrackerFieldLocks,
+  legacyKey: string,
+  stableKey: string,
+) {
+  if (locks[legacyKey] !== true || legacyKey === stableKey) return;
+  locks[stableKey] = true;
+  delete locks[legacyKey];
 }
 
 export function normalizeTrackerFieldLocks(value: unknown): TrackerFieldLocks {
@@ -154,6 +186,31 @@ export function removeTrackerFieldLockPrefix(locks: TrackerFieldLocks | null | u
   return next;
 }
 
+export function renameTrackerFieldLockPrefix(
+  locks: TrackerFieldLocks | null | undefined,
+  fromPrefix: string,
+  toPrefix: string,
+) {
+  const normalized = normalizeTrackerFieldLocks(locks);
+  const source = fromPrefix.trim();
+  const target = toPrefix.trim();
+  if (!source || !target || source === target) return normalized;
+
+  const next: TrackerFieldLocks = {};
+  const sourceChildPrefix = `${source}.`;
+  for (const [key, enabled] of Object.entries(normalized)) {
+    if (enabled !== true) continue;
+    if (key === source) {
+      next[target] = true;
+    } else if (key.startsWith(sourceChildPrefix)) {
+      next[`${target}${key.slice(source.length)}`] = true;
+    } else {
+      next[key] = true;
+    }
+  }
+  return next;
+}
+
 function shiftIndexedReferenceLocks(
   locks: TrackerFieldLocks | null | undefined,
   collectionPrefix: string,
@@ -174,16 +231,38 @@ export function personaStatusTrackerLockKey() {
   return "persona.status";
 }
 
-export function personaStatTrackerLockKey(index: number, field: StatField) {
-  return `persona.stats.${index}.${field}`;
+export function personaStatTrackerLockKey(
+  statOrIndex: Pick<CharacterStat, "name"> | number | null | undefined,
+  field: StatField,
+  index?: number,
+) {
+  return `${personaStatTrackerLockPrefix(statOrIndex, index)}.${field}`;
+}
+
+export function personaStatTrackerLockPrefix(
+  statOrIndex: Pick<CharacterStat, "name"> | number | null | undefined,
+  index?: number,
+) {
+  return `persona.stats.${namedRowLockRef(statOrIndex, index)}`;
 }
 
 export function personaStatsTrackerLockPrefix() {
   return "persona.stats";
 }
 
-export function inventoryTrackerLockKey(index: number, field: InventoryField) {
-  return `player.inventory.${index}.${field}`;
+export function inventoryTrackerLockKey(
+  itemOrIndex: Pick<InventoryItem, "name"> | number | null | undefined,
+  field: InventoryField,
+  index?: number,
+) {
+  return `${inventoryItemTrackerLockPrefix(itemOrIndex, index)}.${field}`;
+}
+
+export function inventoryItemTrackerLockPrefix(
+  itemOrIndex: Pick<InventoryItem, "name"> | number | null | undefined,
+  index?: number,
+) {
+  return `player.inventory.${namedRowLockRef(itemOrIndex, index)}`;
 }
 
 export function inventoryTrackerLockPrefix() {
@@ -217,10 +296,11 @@ export function characterTrackerLockKey(
 export function characterStatTrackerLockKey(
   character: Pick<PresentCharacter, "characterId" | "name"> | null | undefined,
   characterIndex: number,
-  statIndex: number,
+  statOrIndex: Pick<CharacterStat, "name"> | number | null | undefined,
   field: StatField,
+  statIndex?: number,
 ) {
-  return `${characterStatsTrackerLockPrefix(character, characterIndex)}.${statIndex}.${field}`;
+  return `${characterStatTrackerLockPrefix(character, characterIndex, statOrIndex, statIndex)}.${field}`;
 }
 
 export function characterStatsTrackerLockPrefix(
@@ -228,6 +308,15 @@ export function characterStatsTrackerLockPrefix(
   index: number,
 ) {
   return `${characterTrackerLockPrefix(character, index)}.stats`;
+}
+
+export function characterStatTrackerLockPrefix(
+  character: Pick<PresentCharacter, "characterId" | "name"> | null | undefined,
+  characterIndex: number,
+  statOrIndex: Pick<CharacterStat, "name"> | number | null | undefined,
+  statIndex?: number,
+) {
+  return `${characterStatsTrackerLockPrefix(character, characterIndex)}.${namedRowLockRef(statOrIndex, statIndex)}`;
 }
 
 export function removeTrackerCharacterLocks(
@@ -278,10 +367,11 @@ export function questTrackerLockKey(
 export function questObjectiveTrackerLockKey(
   quest: Pick<QuestProgress, "questEntryId" | "name"> | null | undefined,
   questIndex: number,
-  objectiveIndex: number,
+  objectiveOrIndex: ObjectiveLockRow | number | null | undefined,
   field: QuestObjectiveField,
+  objectiveIndex?: number,
 ) {
-  return `${questObjectivesTrackerLockPrefix(quest, questIndex)}.${objectiveIndex}.${field}`;
+  return `${questObjectiveTrackerLockPrefix(quest, questIndex, objectiveOrIndex, objectiveIndex)}.${field}`;
 }
 
 export function questObjectivesTrackerLockPrefix(
@@ -289,6 +379,15 @@ export function questObjectivesTrackerLockPrefix(
   index: number,
 ) {
   return `${questTrackerLockPrefix(quest, index)}.objectives`;
+}
+
+export function questObjectiveTrackerLockPrefix(
+  quest: Pick<QuestProgress, "questEntryId" | "name"> | null | undefined,
+  questIndex: number,
+  objectiveOrIndex: ObjectiveLockRow | number | null | undefined,
+  objectiveIndex?: number,
+) {
+  return `${questObjectivesTrackerLockPrefix(quest, questIndex)}.${objectiveLockRef(objectiveOrIndex, objectiveIndex)}`;
 }
 
 export function removeTrackerQuestLocks(
@@ -303,23 +402,115 @@ export function removeTrackerQuestLocks(
   );
 }
 
-export function customTrackerLockKey(index: number, field: CustomTrackerFieldKey) {
-  return `player.custom.${index}.${field}`;
+export function customTrackerLockKey(
+  fieldOrIndex: Pick<CustomTrackerField, "name"> | number | null | undefined,
+  field: CustomTrackerFieldKey,
+  index?: number,
+) {
+  return `${customTrackerFieldLockPrefix(fieldOrIndex, index)}.${field}`;
 }
 
 export function customTrackerLockPrefix() {
   return "player.custom";
 }
 
+export function customTrackerFieldLockPrefix(
+  fieldOrIndex: Pick<CustomTrackerField, "name"> | number | null | undefined,
+  index?: number,
+) {
+  return `player.custom.${namedRowLockRef(fieldOrIndex, index)}`;
+}
+
+function legacyPersonaStatTrackerLockKey(index: number, field: StatField) {
+  return `persona.stats.${index}.${field}`;
+}
+
+function legacyInventoryTrackerLockKey(index: number, field: InventoryField) {
+  return `player.inventory.${index}.${field}`;
+}
+
+function legacyCharacterStatTrackerLockKey(
+  character: Pick<PresentCharacter, "characterId" | "name"> | null | undefined,
+  characterIndex: number,
+  statIndex: number,
+  field: StatField,
+) {
+  return `${characterStatsTrackerLockPrefix(character, characterIndex)}.${statIndex}.${field}`;
+}
+
+function legacyQuestObjectiveTrackerLockKey(
+  quest: Pick<QuestProgress, "questEntryId" | "name"> | null | undefined,
+  questIndex: number,
+  objectiveIndex: number,
+  field: QuestObjectiveField,
+) {
+  return `${questObjectivesTrackerLockPrefix(quest, questIndex)}.${objectiveIndex}.${field}`;
+}
+
+function legacyCustomTrackerLockKey(index: number, field: CustomTrackerFieldKey) {
+  return `player.custom.${index}.${field}`;
+}
+
+export function normalizeTrackerFieldLocksForState(
+  locks: TrackerFieldLocks | null | undefined,
+  state: GameState | null | undefined,
+) {
+  const next = normalizeTrackerFieldLocks(locks);
+  if (!state) return next;
+
+  state.personaStats?.forEach((stat, index) => {
+    for (const field of ["name", "value", "max"] as const) {
+      replaceLockKey(next, legacyPersonaStatTrackerLockKey(index, field), personaStatTrackerLockKey(stat, field, index));
+    }
+  });
+
+  state.presentCharacters?.forEach((character, characterIndex) => {
+    character.stats?.forEach((stat, statIndex) => {
+      for (const field of ["name", "value", "max"] as const) {
+        replaceLockKey(
+          next,
+          legacyCharacterStatTrackerLockKey(character, characterIndex, statIndex, field),
+          characterStatTrackerLockKey(character, characterIndex, stat, field, statIndex),
+        );
+      }
+    });
+  });
+
+  const playerStats = getPlayerStats(state);
+  playerStats.inventory?.forEach((item, index) => {
+    for (const field of ["name", "quantity", "description", "location"] as const) {
+      replaceLockKey(next, legacyInventoryTrackerLockKey(index, field), inventoryTrackerLockKey(item, field, index));
+    }
+  });
+  playerStats.customTrackerFields?.forEach((field, index) => {
+    for (const key of ["name", "value"] as const) {
+      replaceLockKey(next, legacyCustomTrackerLockKey(index, key), customTrackerLockKey(field, key, index));
+    }
+  });
+  playerStats.activeQuests?.forEach((quest, questIndex) => {
+    quest.objectives?.forEach((objective, objectiveIndex) => {
+      for (const field of ["text", "completed"] as const) {
+        replaceLockKey(
+          next,
+          legacyQuestObjectiveTrackerLockKey(quest, questIndex, objectiveIndex, field),
+          questObjectiveTrackerLockKey(quest, questIndex, objective, field, objectiveIndex),
+        );
+      }
+    });
+  });
+
+  return next;
+}
+
 function normalizeEffectiveTrackerFieldLocks(
   value: TrackerFieldLocks | null | undefined,
   currentState: GameState | null | undefined,
 ) {
-  const locks = normalizeTrackerFieldLocks(value);
+  const locks = normalizeTrackerFieldLocksForState(value, currentState);
   const legacyFields = currentState?.playerStats?.customTrackerFields;
   if (!Array.isArray(legacyFields)) return locks;
   legacyFields.forEach((field, index) => {
-    if (field?.locked === true) locks[customTrackerLockKey(index, "value")] = true;
+    if (field?.locked === true) locks[customTrackerLockKey(field, "value", index)] = true;
   });
   return locks;
 }
@@ -332,7 +523,7 @@ function getPlayerStats(state: GameState | null | undefined): PlayerStats {
   return state?.playerStats ?? PLAYER_STATS_FALLBACK;
 }
 
-function findCurrentCharacterIndex(
+function findCurrentCharacterMatch(
   next: Partial<PresentCharacter>,
   currentCharacters: PresentCharacter[],
   fallbackIndex: number,
@@ -340,31 +531,37 @@ function findCurrentCharacterIndex(
   const id = typeof next.characterId === "string" ? next.characterId.trim() : "";
   if (id) {
     const byId = currentCharacters.findIndex((character) => character.characterId === id);
-    if (byId >= 0) return byId;
+    if (byId >= 0) return { index: byId, matchedByIdentity: true };
   }
   const name = normalizeComparableText(next.name);
   if (name) {
     const byName = currentCharacters.findIndex((character) => normalizeComparableText(character.name) === name);
-    if (byName >= 0) return byName;
+    if (byName >= 0) return { index: byName, matchedByIdentity: true };
   }
-  return fallbackIndex < currentCharacters.length ? fallbackIndex : -1;
+  return {
+    index: fallbackIndex < currentCharacters.length ? fallbackIndex : -1,
+    matchedByIdentity: false,
+  };
 }
 
-function findCurrentQuestIndex(next: Partial<QuestProgress>, currentQuests: QuestProgress[], fallbackIndex: number) {
+function findCurrentQuestMatch(next: Partial<QuestProgress>, currentQuests: QuestProgress[], fallbackIndex: number) {
   const id = typeof next.questEntryId === "string" ? next.questEntryId.trim() : "";
   if (id) {
     const byId = currentQuests.findIndex((quest) => quest.questEntryId === id);
-    if (byId >= 0) return byId;
+    if (byId >= 0) return { index: byId, matchedByIdentity: true };
   }
   const name = normalizeComparableText(next.name);
   if (name) {
     const byName = currentQuests.findIndex((quest) => normalizeComparableText(quest.name) === name);
-    if (byName >= 0) return byName;
+    if (byName >= 0) return { index: byName, matchedByIdentity: true };
   }
-  return fallbackIndex < currentQuests.length ? fallbackIndex : -1;
+  return {
+    index: fallbackIndex < currentQuests.length ? fallbackIndex : -1,
+    matchedByIdentity: false,
+  };
 }
 
-function findCurrentNamedIndex<T extends { name?: string }>(
+function findCurrentNamedMatch<T extends { name?: string }>(
   next: Partial<T>,
   current: T[],
   fallbackIndex: number,
@@ -373,9 +570,12 @@ function findCurrentNamedIndex<T extends { name?: string }>(
   const name = normalizeComparableText(next.name);
   if (name) {
     const byName = current.findIndex((item, index) => !usedCurrent.has(index) && normalizeComparableText(item.name) === name);
-    if (byName >= 0) return byName;
+    if (byName >= 0) return { index: byName, matchedByIdentity: true };
   }
-  return fallbackIndex < current.length && !usedCurrent.has(fallbackIndex) ? fallbackIndex : -1;
+  return {
+    index: fallbackIndex < current.length && !usedCurrent.has(fallbackIndex) ? fallbackIndex : -1,
+    matchedByIdentity: false,
+  };
 }
 
 function mergeNamedRowsWithLocks<T extends { name?: string }>(
@@ -387,21 +587,26 @@ function mergeNamedRowsWithLocks<T extends { name?: string }>(
     prefixFor,
   }: {
     mergeRow: (nextRow: T, currentRow: T, currentIndex: number) => T;
-    prefixFor: (currentIndex: number) => string;
+    prefixFor: (currentRow: T, currentIndex: number) => string;
   },
 ) {
   const current = currentRows ?? [];
   const usedCurrent = new Set<number>();
   const merged = nextRows.map((row, index) => {
-    const currentIndex = findCurrentNamedIndex(row, current, index, usedCurrent);
+    const match = findCurrentNamedMatch(row, current, index, usedCurrent);
+    const currentIndex = match.index;
     const currentRow = currentIndex >= 0 ? current[currentIndex] : null;
     if (!currentRow) return row;
+    if (!match.matchedByIdentity && hasLockWithPrefix(locks, prefixFor(currentRow, currentIndex))) {
+      return row;
+    }
     usedCurrent.add(currentIndex);
     return mergeRow(row, currentRow, currentIndex);
   });
   for (let index = 0; index < current.length; index += 1) {
     if (usedCurrent.has(index)) continue;
-    if (hasLockWithPrefix(locks, prefixFor(index))) merged.push(current[index]!);
+    const currentRow = current[index]!;
+    if (hasLockWithPrefix(locks, prefixFor(currentRow, index))) merged.push(currentRow);
   }
   return merged;
 }
@@ -410,17 +615,17 @@ function mergeStatsWithLocks(
   nextStats: CharacterStat[],
   currentStats: CharacterStat[] | null | undefined,
   locks: TrackerFieldLocks,
-  keyFor: (index: number, field: StatField) => string,
+  keyFor: (stat: CharacterStat, index: number, field: StatField) => string,
 ) {
   return mergeNamedRowsWithLocks(nextStats, currentStats, locks, {
     mergeRow: (stat, currentStat, currentIndex) => {
       const next = { ...stat };
-      if (isTrackerFieldLocked(locks, keyFor(currentIndex, "name"))) next.name = currentStat.name;
-      if (isTrackerFieldLocked(locks, keyFor(currentIndex, "value"))) next.value = currentStat.value;
-      if (isTrackerFieldLocked(locks, keyFor(currentIndex, "max"))) next.max = currentStat.max;
+      if (isTrackerFieldLocked(locks, keyFor(currentStat, currentIndex, "name"))) next.name = currentStat.name;
+      if (isTrackerFieldLocked(locks, keyFor(currentStat, currentIndex, "value"))) next.value = currentStat.value;
+      if (isTrackerFieldLocked(locks, keyFor(currentStat, currentIndex, "max"))) next.max = currentStat.max;
       return next;
     },
-    prefixFor: (index) => keyFor(index, "name").replace(/\.name$/, "."),
+    prefixFor: (stat, index) => keyFor(stat, index, "name").replace(/\.name$/, "."),
   });
 }
 
@@ -433,13 +638,13 @@ function mergeInventoryWithLocks(
     mergeRow: (item, currentItem, currentIndex) => {
       const next = { ...item };
       for (const field of ["name", "quantity", "description", "location"] as const) {
-        if (isTrackerFieldLocked(locks, inventoryTrackerLockKey(currentIndex, field))) {
+        if (isTrackerFieldLocked(locks, inventoryTrackerLockKey(currentItem, field, currentIndex))) {
           next[field] = currentItem[field] as never;
         }
       }
       return next;
     },
-    prefixFor: (index) => `player.inventory.${index}.`,
+    prefixFor: (item, index) => `${inventoryItemTrackerLockPrefix(item, index)}.`,
   });
 }
 
@@ -451,11 +656,13 @@ function mergeCustomTrackerFieldsWithGenericLocks(
   return mergeNamedRowsWithLocks(nextFields, currentFields, locks, {
     mergeRow: (field, currentField, currentIndex) => {
       const next = { ...field };
-      if (isTrackerFieldLocked(locks, customTrackerLockKey(currentIndex, "name"))) next.name = currentField.name;
-      if (isTrackerFieldLocked(locks, customTrackerLockKey(currentIndex, "value"))) next.value = currentField.value;
+      if (isTrackerFieldLocked(locks, customTrackerLockKey(currentField, "name", currentIndex))) next.name = currentField.name;
+      if (isTrackerFieldLocked(locks, customTrackerLockKey(currentField, "value", currentIndex))) {
+        next.value = currentField.value;
+      }
       return next;
     },
-    prefixFor: (index) => `player.custom.${index}.`,
+    prefixFor: (field, index) => `${customTrackerFieldLockPrefix(field, index)}.`,
   });
 }
 
@@ -467,20 +674,40 @@ function mergeQuestObjectivesWithLocks(
   questIndex: number,
 ) {
   const current = currentObjectives ?? [];
+  const usedCurrent = new Set<number>();
   const merged = nextObjectives.map((objective, index) => {
-    const currentObjective = current[index];
+    const text = normalizeComparableText(objective.text);
+    const byText = text
+      ? current.findIndex((candidate, candidateIndex) => {
+          return !usedCurrent.has(candidateIndex) && normalizeComparableText(candidate.text) === text;
+        })
+      : -1;
+    const fallbackIndex = index < current.length && !usedCurrent.has(index) ? index : -1;
+    const currentIndex = byText >= 0 ? byText : fallbackIndex;
+    const currentObjective = currentIndex >= 0 ? current[currentIndex] : null;
     if (!currentObjective) return objective;
+    const currentPrefix = questObjectiveTrackerLockPrefix(quest, questIndex, currentObjective, currentIndex);
+    if (byText < 0 && hasLockWithPrefix(locks, `${currentPrefix}.`)) {
+      return objective;
+    }
+    usedCurrent.add(currentIndex);
     const next = { ...objective };
-    if (isTrackerFieldLocked(locks, questObjectiveTrackerLockKey(quest, questIndex, index, "text"))) {
+    if (isTrackerFieldLocked(locks, questObjectiveTrackerLockKey(quest, questIndex, currentObjective, "text", currentIndex))) {
       next.text = currentObjective.text;
     }
-    if (isTrackerFieldLocked(locks, questObjectiveTrackerLockKey(quest, questIndex, index, "completed"))) {
+    if (
+      isTrackerFieldLocked(
+        locks,
+        questObjectiveTrackerLockKey(quest, questIndex, currentObjective, "completed", currentIndex),
+      )
+    ) {
       next.completed = currentObjective.completed;
     }
     return next;
   });
-  for (let index = nextObjectives.length; index < current.length; index += 1) {
-    const prefix = questObjectiveTrackerLockKey(quest, questIndex, index, "text").replace(/\.text$/, ".");
+  for (let index = 0; index < current.length; index += 1) {
+    if (usedCurrent.has(index)) continue;
+    const prefix = `${questObjectiveTrackerLockPrefix(quest, questIndex, current[index]!, index)}.`;
     if (hasLockWithPrefix(locks, prefix)) merged.push(current[index]!);
   }
   return merged;
@@ -494,9 +721,13 @@ function mergeQuestsWithLocks(
   const current = currentQuests ?? [];
   const usedCurrent = new Set<number>();
   const merged = nextQuests.map((quest, index) => {
-    const currentIndex = findCurrentQuestIndex(quest, current, index);
+    const match = findCurrentQuestMatch(quest, current, index);
+    const currentIndex = match.index;
     const currentQuest = currentIndex >= 0 ? current[currentIndex] : null;
     if (!currentQuest) return quest;
+    if (!match.matchedByIdentity && hasLockWithPrefix(locks, `${questTrackerLockPrefix(currentQuest, currentIndex)}.`)) {
+      return quest;
+    }
     usedCurrent.add(currentIndex);
     const next = { ...quest };
     if (isTrackerFieldLocked(locks, questTrackerLockKey(currentQuest, currentIndex, "name"))) {
@@ -529,8 +760,9 @@ function mergeCharacterCustomFieldsWithLocks(
 ): Record<string, string> | undefined {
   let next = nextFields ? { ...nextFields } : null;
   const current = currentFields ?? {};
+  const nextEntries = Object.entries(next ?? {});
   let hasLockedField = false;
-  for (const [name, value] of Object.entries(current)) {
+  for (const [index, [name, value]] of Object.entries(current).entries()) {
     const nameLocked = isTrackerFieldLocked(
       locks,
       characterCustomFieldTrackerLockKey(character, characterIndex, name, "name"),
@@ -541,7 +773,15 @@ function mergeCharacterCustomFieldsWithLocks(
     );
     if (nameLocked || valueLocked) {
       hasLockedField = true;
-      const nextValue = (next ?? {})[name];
+      const renamedCandidate = nameLocked ? nextEntries[index]?.[0] : undefined;
+      const renamedValue =
+        renamedCandidate && renamedCandidate !== name && !Object.prototype.hasOwnProperty.call(current, renamedCandidate)
+          ? (next ?? {})[renamedCandidate]
+          : undefined;
+      if (renamedCandidate && renamedCandidate !== name && renamedValue !== undefined) {
+        delete (next ??= {})[renamedCandidate];
+      }
+      const nextValue = (next ?? {})[name] ?? renamedValue;
       (next ??= {})[name] = valueLocked ? value : typeof nextValue === "string" ? nextValue : value;
     }
   }
@@ -556,9 +796,16 @@ function mergeCharactersWithLocks(
   const current = currentCharacters ?? [];
   const usedCurrent = new Set<number>();
   const merged = nextCharacters.map((character, index) => {
-    const currentIndex = findCurrentCharacterIndex(character, current, index);
+    const match = findCurrentCharacterMatch(character, current, index);
+    const currentIndex = match.index;
     const currentCharacter = currentIndex >= 0 ? current[currentIndex] : null;
     if (!currentCharacter) return character;
+    if (
+      !match.matchedByIdentity &&
+      hasLockWithPrefix(locks, `${characterTrackerLockPrefix(currentCharacter, currentIndex)}.`)
+    ) {
+      return character;
+    }
     usedCurrent.add(currentIndex);
     const next = { ...character };
     for (const field of ["emoji", "name", "mood", "appearance", "outfit", "thoughts"] as const) {
@@ -567,8 +814,8 @@ function mergeCharactersWithLocks(
       }
     }
     if (Array.isArray(next.stats)) {
-      next.stats = mergeStatsWithLocks(next.stats, currentCharacter.stats, locks, (statIndex, field) =>
-        characterStatTrackerLockKey(currentCharacter, currentIndex, statIndex, field),
+      next.stats = mergeStatsWithLocks(next.stats, currentCharacter.stats, locks, (stat, statIndex, field) =>
+        characterStatTrackerLockKey(currentCharacter, currentIndex, stat, field, statIndex),
       );
     }
     const customFields = mergeCharacterCustomFieldsWithLocks(
@@ -608,8 +855,8 @@ export function applyTrackerFieldLocksToGameStatePatch<T extends Record<string, 
   }
 
   if (Array.isArray(next.personaStats)) {
-    next.personaStats = mergeStatsWithLocks(next.personaStats as CharacterStat[], currentState.personaStats, locks, (index, field) =>
-      personaStatTrackerLockKey(index, field),
+    next.personaStats = mergeStatsWithLocks(next.personaStats as CharacterStat[], currentState.personaStats, locks, (stat, index, field) =>
+      personaStatTrackerLockKey(stat, field, index),
     );
   }
 

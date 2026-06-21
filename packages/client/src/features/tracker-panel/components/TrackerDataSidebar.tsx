@@ -1,5 +1,5 @@
 import { useCallback, useState, type CSSProperties } from "react";
-import { toggleTrackerFieldLock } from "@marinara-engine/shared";
+import { normalizeTrackerFieldLocksForState, toggleTrackerFieldLock } from "@marinara-engine/shared";
 import { TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR, useUIStore } from "../../../stores/ui.store";
 import { useChatStore } from "../../../stores/chat.store";
 import { useGameStatePatcher } from "../../../hooks/use-game-state-patcher";
@@ -55,7 +55,9 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
   const [deleteMode, setDeleteMode] = useState(false);
   const [addMode, setAddMode] = useState(false);
   const [lockMode, setLockMode] = useState(false);
-  const fieldLocks = currentGameState?.fieldLocks ?? null;
+  const fieldLocks = currentGameState
+    ? normalizeTrackerFieldLocksForState(currentGameState.fieldLocks, currentGameState)
+    : null;
   const updateFieldLocks = useTrackerFieldLockUpdater({ chatId: activeChatId, fieldLocks, patchField });
   const toggleFieldLock = useCallback((key: string) => {
     updateFieldLocks((locks) => toggleTrackerFieldLock(locks, key));

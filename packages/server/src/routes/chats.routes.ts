@@ -1504,7 +1504,8 @@ export async function chatsRoutes(app: FastifyInstance) {
     let updated: Awaited<ReturnType<typeof gameStateStore.updateLatest>> = null;
     if (hasExplicitTarget) {
       const targetMessage = await storage.getMessage(targetMessageId);
-      if (targetMessage?.chatId === req.params.id) {
+      const targetSnapshot = await gameStateStore.getByMessage(targetMessageId, targetSwipeIndex);
+      if (targetMessage?.chatId === req.params.id || targetSnapshot?.chatId === req.params.id) {
         updated = await gameStateStore.updateByMessage(
           targetMessageId,
           targetSwipeIndex,

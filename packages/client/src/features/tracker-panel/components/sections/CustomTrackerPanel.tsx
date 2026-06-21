@@ -2,9 +2,10 @@ import type { ReactNode } from "react";
 import { SlidersHorizontal, X } from "lucide-react";
 import {
   customTrackerLockKey,
-  customTrackerLockPrefix,
+  customTrackerFieldLockPrefix,
   isTrackerFieldLocked,
-  removeTrackerArrayItemLocks,
+  removeTrackerFieldLockPrefix,
+  renameTrackerFieldLockPrefix,
   type CustomTrackerField,
 } from "@marinara-engine/shared";
 import type { TrackerPanelSizeProfile } from "../../../../stores/ui.store";
@@ -48,13 +49,25 @@ function CustomFieldList({
   const useFieldColumns = shouldUseCustomFieldColumns(fields, trackerPanelSizeProfile);
   const updateField = (index: number, updated: CustomTrackerField) => {
     if (!onUpdate) return;
+    const previous = fields[index];
+    if (previous && previous.name !== updated.name) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          customTrackerFieldLockPrefix(previous, index),
+          customTrackerFieldLockPrefix(updated, index),
+        ),
+      );
+    }
     const next = [...fields];
     next[index] = updated;
     onUpdate(next);
   };
   const removeField = (index: number) => {
     if (!onUpdate) return;
-    onUpdateFieldLocks?.((locks) => removeTrackerArrayItemLocks(locks, customTrackerLockPrefix(), index));
+    onUpdateFieldLocks?.((locks) =>
+      removeTrackerFieldLockPrefix(locks, customTrackerFieldLockPrefix(fields[index]!, index)),
+    );
     onUpdate(fields.filter((_, fieldIndex) => fieldIndex !== index));
   };
   return (
@@ -75,7 +88,7 @@ function CustomFieldList({
             const valueText = visibleText(field.value, "");
             const valueIsLong = valueText.length > 18 || valueText.includes(" ");
             const valueAlignment = allowWrap && valueIsLong ? "text-left" : "text-right tabular-nums";
-            const valueLockKey = customTrackerLockKey(index, "value");
+            const valueLockKey = customTrackerLockKey(field, "value", index);
             const valueLocked = isTrackerFieldLocked(fieldLocks, valueLockKey);
             const toggleValueLock = () => {
               // Migrate the deprecated per-field flag into the shared lock map on first toggle.
@@ -110,9 +123,9 @@ function CustomFieldList({
                     previewLineCount={allowWrap ? 2 : undefined}
                     scrollOnHover={!allowWrap}
                     showEditHint={false}
-                    locked={isTrackerFieldLocked(fieldLocks, customTrackerLockKey(index, "name"))}
+                    locked={isTrackerFieldLocked(fieldLocks, customTrackerLockKey(field, "name", index))}
                     lockMode={lockMode}
-                    onToggleLock={() => onToggleFieldLock?.(customTrackerLockKey(index, "name"))}
+                    onToggleLock={() => onToggleFieldLock?.(customTrackerLockKey(field, "name", index))}
                   />
                 ) : (
                   <span

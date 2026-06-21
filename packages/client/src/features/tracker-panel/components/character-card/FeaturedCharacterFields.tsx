@@ -204,7 +204,7 @@ export function FeaturedStatGrid({
   scrollable: boolean;
   wideColumns?: boolean;
   className?: string;
-  getLockKey?: (index: number, field: "name" | "value" | "max") => string;
+  getLockKey?: (index: number, field: "name" | "value" | "max", stat: CharacterStat) => string;
 }) {
   return (
     <div className={cn(FEATURED_STAT_SHELF_CLASS, scrollable ? "overflow-y-auto" : "overflow-y-hidden", className)}>

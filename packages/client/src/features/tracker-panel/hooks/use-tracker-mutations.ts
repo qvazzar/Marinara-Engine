@@ -8,10 +8,12 @@ import type {
   QuestProgress,
 } from "@marinara-engine/shared";
 import {
-  inventoryTrackerLockPrefix,
-  removeTrackerArrayItemLocks,
+  characterTrackerLockPrefix,
+  inventoryItemTrackerLockPrefix,
   removeTrackerCharacterLocks,
+  removeTrackerFieldLockPrefix,
   removeTrackerQuestLocks,
+  renameTrackerFieldLockPrefix,
 } from "@marinara-engine/shared";
 import { api } from "../../../lib/api-client";
 import { useGameStateStore } from "../../../stores/game-state.store";
@@ -127,11 +129,21 @@ export function useTrackerMutations({
 
   const updateCharacter = useCallback(
     (index: number, character: PresentCharacter) => {
+      const previous = presentCharacters[index];
+      if (previous && previous.name !== character.name) {
+        updateFieldLocks((locks) =>
+          renameTrackerFieldLockPrefix(
+            locks,
+            characterTrackerLockPrefix(previous, index),
+            characterTrackerLockPrefix(character, index),
+          ),
+        );
+      }
       const next = [...presentCharacters];
       next[index] = character;
       patchField("presentCharacters", next);
     },
-    [patchField, presentCharacters],
+    [patchField, presentCharacters, updateFieldLocks],
   );
 
   const removeCharacter = useCallback(
@@ -183,7 +195,7 @@ export function useTrackerMutations({
   const removeInventoryItem = useCallback(
     (index: number) => {
       updateInventory(inventory.filter((_, itemIndex) => itemIndex !== index));
-      updateFieldLocks((locks) => removeTrackerArrayItemLocks(locks, inventoryTrackerLockPrefix(), index));
+      updateFieldLocks((locks) => removeTrackerFieldLockPrefix(locks, inventoryItemTrackerLockPrefix(inventory[index]!, index)));
     },
     [inventory, updateFieldLocks, updateInventory],
   );

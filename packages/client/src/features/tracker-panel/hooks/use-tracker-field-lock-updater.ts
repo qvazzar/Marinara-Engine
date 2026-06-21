@@ -1,5 +1,9 @@
 import { useCallback } from "react";
-import { trackerFieldLocksAreEqual, type TrackerFieldLocks } from "@marinara-engine/shared";
+import {
+  normalizeTrackerFieldLocksForState,
+  trackerFieldLocksAreEqual,
+  type TrackerFieldLocks,
+} from "@marinara-engine/shared";
 import type { GameStatePatchField } from "../../../hooks/use-game-state-patcher";
 import { useGameStateStore } from "../../../stores/game-state.store";
 
@@ -18,7 +22,8 @@ export function useTrackerFieldLockUpdater({
     (updater: TrackerFieldLocksUpdater) => {
       if (!chatId) return;
       const latestState = useGameStateStore.getState().current;
-      const currentLocks = latestState?.chatId === chatId ? latestState.fieldLocks : fieldLocks;
+      const currentLocks =
+        latestState?.chatId === chatId ? normalizeTrackerFieldLocksForState(latestState.fieldLocks, latestState) : fieldLocks;
       const nextLocks = updater(currentLocks);
       if (trackerFieldLocksAreEqual(currentLocks, nextLocks)) return;
       patchField("fieldLocks", nextLocks);

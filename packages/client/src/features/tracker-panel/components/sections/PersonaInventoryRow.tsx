@@ -1,5 +1,11 @@
 import { X } from "lucide-react";
-import { inventoryTrackerLockKey, isTrackerFieldLocked, type InventoryItem } from "@marinara-engine/shared";
+import {
+  inventoryItemTrackerLockPrefix,
+  inventoryTrackerLockKey,
+  isTrackerFieldLocked,
+  renameTrackerFieldLockPrefix,
+  type InventoryItem,
+} from "@marinara-engine/shared";
 import { cn } from "../../../../lib/utils";
 import { visibleText } from "../../lib/tracker-display";
 import { InlineEdit, InlineNumber } from "../controls/InlineControls";
@@ -20,9 +26,22 @@ export function PersonaInventoryRow({
   deleteMode: boolean;
   fullWidth?: boolean;
 }) {
-  const { fieldLocks, lockMode, onToggleFieldLock } = useTrackerLockContext();
-  const nameLockKey = inventoryTrackerLockKey(itemIndex, "name");
-  const quantityLockKey = inventoryTrackerLockKey(itemIndex, "quantity");
+  const { fieldLocks, lockMode, onToggleFieldLock, onUpdateFieldLocks } = useTrackerLockContext();
+  const nameLockKey = inventoryTrackerLockKey(item, "name", itemIndex);
+  const quantityLockKey = inventoryTrackerLockKey(item, "quantity", itemIndex);
+  const updateName = (name: string) => {
+    const nextItem = { ...item, name: name || "Item" };
+    if (nextItem.name !== item.name) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          inventoryItemTrackerLockPrefix(item, itemIndex),
+          inventoryItemTrackerLockPrefix(nextItem, itemIndex),
+        ),
+      );
+    }
+    onUpdate(nextItem);
+  };
   return (
     <div
       className={cn(
@@ -34,7 +53,7 @@ export function PersonaInventoryRow({
       <div className="grid min-h-4 grid-cols-[minmax(0,1fr)_max-content] items-center gap-0.5">
         <InlineEdit
           value={item.name}
-          onSave={(name) => onUpdate({ ...item, name: name || "Item" })}
+          onSave={updateName}
           className="h-4 w-full min-w-0 px-0.5 py-0 text-[0.625rem] font-medium leading-4 text-[color:var(--tracker-profile-text)] hover:bg-[var(--accent)]/25"
           placeholder="Item"
           title={visibleText(item.name, "Item")}

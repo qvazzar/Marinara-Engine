@@ -384,7 +384,7 @@ export function PersonaInventoryPanel({
                         wideColumns={useExpandedPersonaStatColumns}
                         fillWideColumns={useExpandedPersonaStatColumns}
                         visualTone="instrument"
-                        getLockKey={(index, field) => personaStatTrackerLockKey(index, field)}
+                        getLockKey={(index, field, stat) => personaStatTrackerLockKey(stat, field, index)}
                       />
                     )}
                   </div>

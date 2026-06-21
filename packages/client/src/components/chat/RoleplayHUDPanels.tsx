@@ -47,20 +47,22 @@ import type {
 import {
   characterStatTrackerLockKey,
   characterTrackerLockKey,
-  customTrackerLockPrefix,
+  characterTrackerLockPrefix,
+  customTrackerFieldLockPrefix,
   customTrackerLockKey,
-  inventoryTrackerLockPrefix,
+  inventoryItemTrackerLockPrefix,
   inventoryTrackerLockKey,
   isTrackerFieldLocked,
-  personaStatsTrackerLockPrefix,
+  personaStatTrackerLockPrefix,
   personaStatTrackerLockKey,
   personaStatusTrackerLockKey,
-  questObjectivesTrackerLockPrefix,
   questObjectiveTrackerLockKey,
+  questObjectiveTrackerLockPrefix,
   questTrackerLockKey,
-  removeTrackerArrayItemLocks,
   removeTrackerCharacterLocks,
+  removeTrackerFieldLockPrefix,
   removeTrackerQuestLocks,
+  renameTrackerFieldLockPrefix,
   worldTrackerLockKey,
 } from "@marinara-engine/shared";
 import { useTrackerLockContext } from "../../features/tracker-panel/components/TrackerLockContext";
@@ -220,8 +222,18 @@ export function CombinedPlayerPanel({
 }: CombinedPlayerPanelProps) {
   const { onUpdateFieldLocks } = useTrackerLockContext();
   const updateBar = (idx: number, field: "value" | "max" | "name", val: number | string) => {
+    const previous = personaStats[idx];
     const next = [...personaStats];
     next[idx] = { ...next[idx]!, [field]: val };
+    if (field === "name" && previous && previous.name !== next[idx]!.name) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          personaStatTrackerLockPrefix(previous, idx),
+          personaStatTrackerLockPrefix(next[idx]!, idx),
+        ),
+      );
+    }
     onUpdatePersonaStats(next);
   };
 
@@ -247,6 +259,16 @@ export function CombinedPlayerPanel({
     onUpdateCharacters(characters.filter((_, i) => i !== idx));
   };
   const updateCharacter = (idx: number, updated: PresentCharacter) => {
+    const previous = characters[idx];
+    if (previous && previous.name !== updated.name) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          characterTrackerLockPrefix(previous, idx),
+          characterTrackerLockPrefix(updated, idx),
+        ),
+      );
+    }
     const next = [...characters];
     next[idx] = updated;
     onUpdateCharacters(next);
@@ -260,10 +282,22 @@ export function CombinedPlayerPanel({
       onRemoveInventoryItem(idx);
       return;
     }
-    onUpdateFieldLocks?.((locks) => removeTrackerArrayItemLocks(locks, inventoryTrackerLockPrefix(), idx));
+    onUpdateFieldLocks?.((locks) =>
+      removeTrackerFieldLockPrefix(locks, inventoryItemTrackerLockPrefix(inventory[idx]!, idx)),
+    );
     onUpdateInventory(inventory.filter((_, i) => i !== idx));
   };
   const updateItem = (idx: number, updated: InventoryItem) => {
+    const previous = inventory[idx];
+    if (previous && previous.name !== updated.name) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          inventoryItemTrackerLockPrefix(previous, idx),
+          inventoryItemTrackerLockPrefix(updated, idx),
+        ),
+      );
+    }
     const next = [...inventory];
     next[idx] = updated;
     onUpdateInventory(next);
@@ -296,10 +330,22 @@ export function CombinedPlayerPanel({
     onUpdateCustomTracker([...customTrackerFields, { name: "New Field", value: "" }]);
   };
   const removeCustomField = (idx: number) => {
-    onUpdateFieldLocks?.((locks) => removeTrackerArrayItemLocks(locks, customTrackerLockPrefix(), idx));
+    onUpdateFieldLocks?.((locks) =>
+      removeTrackerFieldLockPrefix(locks, customTrackerFieldLockPrefix(customTrackerFields[idx]!, idx)),
+    );
     onUpdateCustomTracker(customTrackerFields.filter((_, i) => i !== idx));
   };
   const updateCustomField = (idx: number, updated: CustomTrackerField) => {
+    const previous = customTrackerFields[idx];
+    if (previous && previous.name !== updated.name) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          customTrackerFieldLockPrefix(previous, idx),
+          customTrackerFieldLockPrefix(updated, idx),
+        ),
+      );
+    }
     const next = [...customTrackerFields];
     next[idx] = updated;
     onUpdateCustomTracker(next);
@@ -346,9 +392,9 @@ export function CombinedPlayerPanel({
             <div className="space-y-2">
               {personaStats.length === 0 && <div className={EMPTY_STATE}>No stats tracked</div>}
               {personaStats.map((bar, idx) => {
-                const nameLock = lockFor(personaStatTrackerLockKey(idx, "name"));
-                const valueLock = lockFor(personaStatTrackerLockKey(idx, "value"));
-                const maxLock = lockFor(personaStatTrackerLockKey(idx, "max"));
+                const nameLock = lockFor(personaStatTrackerLockKey(bar, "name", idx));
+                const valueLock = lockFor(personaStatTrackerLockKey(bar, "value", idx));
+                const maxLock = lockFor(personaStatTrackerLockKey(bar, "max", idx));
                 return (
                   <StatBarEditable
                     key={bar.name}
@@ -458,8 +504,8 @@ export function CombinedPlayerPanel({
                   {char.stats?.length > 0 && (
                     <div className="space-y-1 pt-1 border-t border-[var(--border)]">
                       {char.stats.map((stat, statIndex) => {
-                        const valueLock = lockFor(characterStatTrackerLockKey(char, idx, statIndex, "value"));
-                        const maxLock = lockFor(characterStatTrackerLockKey(char, idx, statIndex, "max"));
+                        const valueLock = lockFor(characterStatTrackerLockKey(char, idx, stat, "value", statIndex));
+                        const maxLock = lockFor(characterStatTrackerLockKey(char, idx, stat, "max", statIndex));
                         return (
                           <StatBarEditable
                             key={stat.name}
@@ -503,8 +549,8 @@ export function CombinedPlayerPanel({
             <div className="space-y-1">
               {inventory.length === 0 && <div className={EMPTY_STATE}>Inventory empty</div>}
               {inventory.map((item, idx) => {
-                const nameLock = lockFor(inventoryTrackerLockKey(idx, "name"));
-                const quantityLock = lockFor(inventoryTrackerLockKey(idx, "quantity"));
+                const nameLock = lockFor(inventoryTrackerLockKey(item, "name", idx));
+                const quantityLock = lockFor(inventoryTrackerLockKey(item, "quantity", idx));
                 return (
                   <div
                     key={idx}
@@ -599,8 +645,8 @@ export function CombinedPlayerPanel({
             <div className="space-y-1">
               {customTrackerFields.length === 0 && <div className={EMPTY_STATE}>No fields tracked</div>}
               {customTrackerFields.map((field, idx) => {
-                const nameLock = lockFor(customTrackerLockKey(idx, "name"));
-                const valueLock = lockFor(customTrackerLockKey(idx, "value"));
+                const nameLock = lockFor(customTrackerLockKey(field, "name", idx));
+                const valueLock = lockFor(customTrackerLockKey(field, "value", idx));
                 const toggleValueLock = () => {
                   if (field.locked) updateCustomField(idx, { ...field, locked: false });
                   if (valueLock.locked || !field.locked) valueLock.onToggle();
@@ -669,12 +715,24 @@ export function PersonaStatsPanel({
 }: PersonaStatsPanelProps) {
   const { onUpdateFieldLocks } = useTrackerLockContext();
   const updateBar = (idx: number, field: "value" | "max" | "name", val: number | string) => {
+    const previous = bars[idx];
     const next = [...bars];
     next[idx] = { ...next[idx]!, [field]: val };
+    if (field === "name" && previous && previous.name !== next[idx]!.name) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          personaStatTrackerLockPrefix(previous, idx),
+          personaStatTrackerLockPrefix(next[idx]!, idx),
+        ),
+      );
+    }
     onUpdate(next);
   };
   const removeBar = (idx: number) => {
-    onUpdateFieldLocks?.((locks) => removeTrackerArrayItemLocks(locks, personaStatsTrackerLockPrefix(), idx));
+    onUpdateFieldLocks?.((locks) =>
+      removeTrackerFieldLockPrefix(locks, personaStatTrackerLockPrefix(bars[idx]!, idx)),
+    );
     onUpdate(bars.filter((_, index) => index !== idx));
   };
   const lockFor = useHudFieldLockResolver();
@@ -704,9 +762,9 @@ export function PersonaStatsPanel({
       </div>
       <div className="p-2 space-y-2">
         {bars.map((bar, idx) => {
-          const nameLock = lockFor(personaStatTrackerLockKey(idx, "name"));
-          const valueLock = lockFor(personaStatTrackerLockKey(idx, "value"));
-          const maxLock = lockFor(personaStatTrackerLockKey(idx, "max"));
+          const nameLock = lockFor(personaStatTrackerLockKey(bar, "name", idx));
+          const valueLock = lockFor(personaStatTrackerLockKey(bar, "value", idx));
+          const maxLock = lockFor(personaStatTrackerLockKey(bar, "max", idx));
           return (
             <StatBarEditable
               key={bar.name}
@@ -820,6 +878,16 @@ export function CharactersPanel({
   };
 
   const updateCharacter = (idx: number, updated: PresentCharacter) => {
+    const previous = characters[idx];
+    if (previous && previous.name !== updated.name) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          characterTrackerLockPrefix(previous, idx),
+          characterTrackerLockPrefix(updated, idx),
+        ),
+      );
+    }
     const next = [...characters];
     next[idx] = updated;
     onUpdate(next);
@@ -956,8 +1024,8 @@ export function CharactersPanel({
             {char.stats?.length > 0 && (
               <div className="space-y-1 pt-1 border-t border-[var(--border)]">
                 {char.stats.map((stat, statIndex) => {
-                  const valueLock = lockFor(characterStatTrackerLockKey(char, idx, statIndex, "value"));
-                  const maxLock = lockFor(characterStatTrackerLockKey(char, idx, statIndex, "max"));
+                  const valueLock = lockFor(characterStatTrackerLockKey(char, idx, stat, "value", statIndex));
+                  const maxLock = lockFor(characterStatTrackerLockKey(char, idx, stat, "max", statIndex));
                   return (
                     <StatBarEditable
                       key={stat.name}
@@ -1022,11 +1090,23 @@ export function InventoryPanel({
       onRemoveItem(idx);
       return;
     }
-    onUpdateFieldLocks?.((locks) => removeTrackerArrayItemLocks(locks, inventoryTrackerLockPrefix(), idx));
+    onUpdateFieldLocks?.((locks) =>
+      removeTrackerFieldLockPrefix(locks, inventoryItemTrackerLockPrefix(items[idx]!, idx)),
+    );
     onUpdate(items.filter((_, i) => i !== idx));
   };
 
   const updateItem = (idx: number, updated: InventoryItem) => {
+    const previous = items[idx];
+    if (previous && previous.name !== updated.name) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          inventoryItemTrackerLockPrefix(previous, idx),
+          inventoryItemTrackerLockPrefix(updated, idx),
+        ),
+      );
+    }
     const next = [...items];
     next[idx] = updated;
     onUpdate(next);
@@ -1049,8 +1129,8 @@ export function InventoryPanel({
       <div className="p-2 space-y-1">
         {items.length === 0 && <div className={cn(EMPTY_STATE, "py-2")}>Inventory empty</div>}
         {items.map((item, idx) => {
-          const nameLock = lockFor(inventoryTrackerLockKey(idx, "name"));
-          const quantityLock = lockFor(inventoryTrackerLockKey(idx, "quantity"));
+          const nameLock = lockFor(inventoryTrackerLockKey(item, "name", idx));
+          const quantityLock = lockFor(inventoryTrackerLockKey(item, "quantity", idx));
           return (
             <div key={idx} className="group/field flex items-center gap-1.5 rounded-lg bg-[var(--muted)]/20 px-2 py-1.5">
               <Package size="0.625rem" className="shrink-0 text-amber-400/60" />
@@ -1181,7 +1261,9 @@ export function CustomTrackerPanel({
   };
 
   const removeField = (idx: number) => {
-    onUpdateFieldLocks?.((locks) => removeTrackerArrayItemLocks(locks, customTrackerLockPrefix(), idx));
+    onUpdateFieldLocks?.((locks) =>
+      removeTrackerFieldLockPrefix(locks, customTrackerFieldLockPrefix(fields[idx]!, idx)),
+    );
     onUpdate(fields.filter((_, i) => i !== idx));
   };
 
@@ -1215,8 +1297,8 @@ export function CustomTrackerPanel({
       <div className="p-2 space-y-1">
         {fields.length === 0 && <div className={cn(EMPTY_STATE, "py-2")}>No fields tracked — add one above</div>}
         {fields.map((field, idx) => {
-          const nameLock = lockFor(customTrackerLockKey(idx, "name"));
-          const valueLock = lockFor(customTrackerLockKey(idx, "value"));
+          const nameLock = lockFor(customTrackerLockKey(field, "name", idx));
+          const valueLock = lockFor(customTrackerLockKey(field, "value", idx));
           const toggleValueLock = () => {
             if (field.locked) updateField(idx, { ...field, locked: false });
             if (valueLock.locked || !field.locked) valueLock.onToggle();
@@ -1823,14 +1905,24 @@ function QuestCardEditable({
 
   const removeObjective = (idx: number) => {
     onUpdateFieldLocks?.((locks) =>
-      removeTrackerArrayItemLocks(locks, questObjectivesTrackerLockPrefix(quest, questIndex), idx),
+      removeTrackerFieldLockPrefix(locks, questObjectiveTrackerLockPrefix(quest, questIndex, quest.objectives[idx]!, idx)),
     );
     onUpdate({ ...quest, objectives: quest.objectives.filter((_, objectiveIndex) => objectiveIndex !== idx) });
   };
 
   const updateObjectiveText = (idx: number, text: string) => {
+    const previous = quest.objectives[idx];
     const next = [...quest.objectives];
     next[idx] = { ...next[idx]!, text };
+    if (previous && previous.text !== text) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          questObjectiveTrackerLockPrefix(quest, questIndex, previous, idx),
+          questObjectiveTrackerLockPrefix(quest, questIndex, next[idx]!, idx),
+        ),
+      );
+    }
     onUpdate({ ...quest, objectives: next });
   };
 
@@ -1882,8 +1974,8 @@ function QuestCardEditable({
       {!quest.completed && (
         <div className="mt-1 space-y-0.5 pl-4">
           {quest.objectives.map((objective, idx) => {
-            const completedLock = lockFor(questObjectiveTrackerLockKey(quest, questIndex, idx, "completed"));
-            const textLock = lockFor(questObjectiveTrackerLockKey(quest, questIndex, idx, "text"));
+            const completedLock = lockFor(questObjectiveTrackerLockKey(quest, questIndex, objective, "completed", idx));
+            const textLock = lockFor(questObjectiveTrackerLockKey(quest, questIndex, objective, "text", idx));
             return (
               <div key={idx} className="group group/field flex items-center gap-1 text-[0.5625rem]">
                 <button

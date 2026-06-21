@@ -55,8 +55,9 @@ import type {
   Message,
 } from "@marinara-engine/shared";
 import {
-  inventoryTrackerLockPrefix,
-  removeTrackerArrayItemLocks,
+  inventoryItemTrackerLockPrefix,
+  normalizeTrackerFieldLocksForState,
+  removeTrackerFieldLockPrefix,
   toggleTrackerFieldLock,
 } from "@marinara-engine/shared";
 import type { HudPosition, TrackerTemperatureUnit } from "../../stores/ui.store";
@@ -224,7 +225,7 @@ export function RoleplayHUD({
   const inventory = playerStats?.inventory ?? EMPTY_INVENTORY;
   const activeQuests = playerStats?.activeQuests ?? [];
   const customTrackerFields = playerStats?.customTrackerFields ?? [];
-  const fieldLocks = gameState?.fieldLocks ?? null;
+  const fieldLocks = gameState ? normalizeTrackerFieldLocksForState(gameState.fieldLocks, gameState) : null;
   const updateFieldLocks = useTrackerFieldLockUpdater({ chatId, fieldLocks, patchField });
   const updateInventoryItems = useCallback(
     (items: InventoryItem[]) => patchPlayerStats("inventory", items),
@@ -233,7 +234,7 @@ export function RoleplayHUD({
   const removeInventoryItem = useCallback(
     (index: number) => {
       updateInventoryItems(inventory.filter((_, itemIndex) => itemIndex !== index));
-      updateFieldLocks((locks) => removeTrackerArrayItemLocks(locks, inventoryTrackerLockPrefix(), index));
+      updateFieldLocks((locks) => removeTrackerFieldLockPrefix(locks, inventoryItemTrackerLockPrefix(inventory[index]!, index)));
     },
     [inventory, updateFieldLocks, updateInventoryItems],
   );

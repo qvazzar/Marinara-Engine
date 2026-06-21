@@ -1,10 +1,11 @@
 import { CheckCircle2, Lock, Plus, Target, Unlock, X } from "lucide-react";
 import {
   isTrackerFieldLocked,
-  questObjectivesTrackerLockPrefix,
+  removeTrackerFieldLockPrefix,
   questObjectiveTrackerLockKey,
+  questObjectiveTrackerLockPrefix,
   questTrackerLockKey,
-  removeTrackerArrayItemLocks,
+  renameTrackerFieldLockPrefix,
   type QuestProgress,
 } from "@marinara-engine/shared";
 import { cn } from "../../../../../lib/utils";
@@ -73,8 +74,18 @@ export function QuestRow({
   const wrapClass = getQuestTextWrapClass(textLineCount);
   const updateObjective = (index: number, nextText: string) => {
     if (!onUpdate) return;
+    const previousObjective = quest.objectives[index];
     const nextObjectives = [...quest.objectives];
     nextObjectives[index] = { ...nextObjectives[index]!, text: nextText };
+    if (previousObjective && previousObjective.text !== nextText) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          questObjectiveTrackerLockPrefix(quest, questIndex, previousObjective, index),
+          questObjectiveTrackerLockPrefix(quest, questIndex, nextObjectives[index]!, index),
+        ),
+      );
+    }
     onUpdate({ ...quest, objectives: nextObjectives });
   };
   const toggleObjective = (index: number) => {
@@ -86,7 +97,10 @@ export function QuestRow({
   const removeObjective = (index: number) => {
     if (!onUpdate) return;
     onUpdateFieldLocks?.((locks) =>
-      removeTrackerArrayItemLocks(locks, questObjectivesTrackerLockPrefix(quest, questIndex), index),
+      removeTrackerFieldLockPrefix(
+        locks,
+        questObjectiveTrackerLockPrefix(quest, questIndex, quest.objectives[index]!, index),
+      ),
     );
     onUpdate({ ...quest, objectives: quest.objectives.filter((_, objectiveIndex) => objectiveIndex !== index) });
   };
@@ -220,8 +234,8 @@ export function QuestRow({
               onToggle={onUpdate ? () => toggleObjective(index) : undefined}
               onUpdateText={onUpdate ? (text) => updateObjective(index, text) : undefined}
               onRemove={onUpdate && deleteMode ? () => removeObjective(index) : undefined}
-              textLockKey={questObjectiveTrackerLockKey(quest, questIndex, index, "text")}
-              completedLockKey={questObjectiveTrackerLockKey(quest, questIndex, index, "completed")}
+              textLockKey={questObjectiveTrackerLockKey(quest, questIndex, objective, "text", index)}
+              completedLockKey={questObjectiveTrackerLockKey(quest, questIndex, objective, "completed", index)}
             />
           ))}
           {onUpdate && addMode && (

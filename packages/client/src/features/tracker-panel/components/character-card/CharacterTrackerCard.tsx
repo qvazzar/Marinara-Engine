@@ -5,6 +5,7 @@ import {
   characterStatTrackerLockKey,
   characterTrackerLockKey,
   isTrackerFieldLocked,
+  renameTrackerFieldLockPrefix,
   type PresentCharacter,
 } from "@marinara-engine/shared";
 import type {
@@ -162,7 +163,7 @@ export function CharacterTrackerCard({
   onToggleFeatured?: () => void;
   onUploadAvatar?: () => void;
 }) {
-  const { fieldLocks, lockMode, onToggleFieldLock } = useTrackerLockContext();
+  const { fieldLocks, lockMode, onToggleFieldLock, onUpdateFieldLocks } = useTrackerLockContext();
   if (featured) {
     return (
       <FeaturedCharacterTrackerCard
@@ -212,6 +213,15 @@ export function CharacterTrackerCard({
     const trimmedName = nextName.trim();
     if (trimmedName && trimmedName !== oldName && Object.prototype.hasOwnProperty.call(nextFields, trimmedName)) {
       return;
+    }
+    if (trimmedName && trimmedName !== oldName) {
+      onUpdateFieldLocks?.((locks) =>
+        renameTrackerFieldLockPrefix(
+          locks,
+          characterCustomFieldTrackerLockKey(character, characterIndex, oldName, "name").replace(/\.name$/, ""),
+          characterCustomFieldTrackerLockKey(character, characterIndex, trimmedName, "name").replace(/\.name$/, ""),
+        ),
+      );
     }
     delete nextFields[oldName];
     if (trimmedName) nextFields[trimmedName] = nextValue;
@@ -364,7 +374,9 @@ export function CharacterTrackerCard({
             nameMode="truncate"
             deleteMode={deleteMode}
             addMode={addMode}
-            getLockKey={(statIndex, field) => characterStatTrackerLockKey(character, characterIndex, statIndex, field)}
+            getLockKey={(statIndex, field, stat) =>
+              characterStatTrackerLockKey(character, characterIndex, stat, field, statIndex)
+            }
           />
         </div>
       )}

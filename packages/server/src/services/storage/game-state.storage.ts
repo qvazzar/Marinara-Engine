@@ -8,6 +8,7 @@ import { newId, now } from "../../utils/id-generator.js";
 import {
   coerceGameStateTextValue,
   normalizeTrackerFieldLocks,
+  normalizeTrackerFieldLocksForState,
   parseTrackerFieldLocks,
   trackerFieldLocksAreEmpty,
   type GameState,
@@ -65,6 +66,39 @@ function serializeManualOverrides(manualOverrides: Record<string, string> | null
 function serializeFieldLocks(fieldLocks: TrackerFieldLocks | null | undefined) {
   const normalized = normalizeTrackerFieldLocks(fieldLocks);
   return trackerFieldLocksAreEmpty(normalized) ? null : JSON.stringify(normalized);
+}
+
+function parseSnapshotJson<T>(value: unknown, fallback: T): T {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return value == null ? fallback : (value as T);
+}
+
+function buildLockMigrationState(
+  row: Partial<typeof gameStateSnapshots.$inferSelect> & { chatId?: string; messageId?: string; swipeIndex?: number },
+): GameState {
+  return {
+    id: typeof row.id === "string" ? row.id : "",
+    chatId: typeof row.chatId === "string" ? row.chatId : "",
+    messageId: typeof row.messageId === "string" ? row.messageId : "",
+    swipeIndex: typeof row.swipeIndex === "number" ? row.swipeIndex : 0,
+    date: coerceGameStateTextValue(row.date),
+    time: coerceGameStateTextValue(row.time),
+    location: coerceGameStateTextValue(row.location),
+    weather: coerceGameStateTextValue(row.weather),
+    temperature: coerceGameStateTextValue(row.temperature),
+    presentCharacters: parseSnapshotJson(row.presentCharacters, []),
+    recentEvents: parseSnapshotJson(row.recentEvents, []),
+    playerStats: parseSnapshotJson(row.playerStats, null),
+    personaStats: parseSnapshotJson(row.personaStats, null),
+    fieldLocks: parseTrackerFieldLocks(row.fieldLocks),
+    createdAt: typeof row.createdAt === "string" ? row.createdAt : now(),
+  };
 }
 
 export function createGameStateStorage(db: DB) {
@@ -341,6 +375,10 @@ export function createGameStateStorage(db: DB) {
           : null,
         fieldLocks: parseTrackerFieldLocks(latest?.fieldLocks),
       };
+      baseState.fieldLocks = normalizeTrackerFieldLocksForState(
+        baseState.fieldLocks,
+        buildLockMigrationState(baseState),
+      );
 
       // Apply the incoming fields on top of the cloned base
       if (fields.date !== undefined) baseState.date = coerceGameStateTextValue(fields.date);
@@ -351,7 +389,9 @@ export function createGameStateStorage(db: DB) {
       if (fields.presentCharacters !== undefined) baseState.presentCharacters = fields.presentCharacters as any;
       if (fields.playerStats !== undefined) baseState.playerStats = fields.playerStats as any;
       if (fields.personaStats !== undefined) baseState.personaStats = fields.personaStats as any;
-      if (fields.fieldLocks !== undefined) baseState.fieldLocks = normalizeTrackerFieldLocks(fields.fieldLocks);
+      if (fields.fieldLocks !== undefined) {
+        baseState.fieldLocks = normalizeTrackerFieldLocksForState(fields.fieldLocks, buildLockMigrationState(baseState));
+      }
 
       const manualOverrides = manual
         ? MANUAL_OVERRIDE_FIELDS.reduce<Record<string, string>>((acc, key) => {
@@ -373,6 +413,7 @@ export function createGameStateStorage(db: DB) {
       manual?: boolean,
     ) {
       const updates: Record<string, unknown> = {};
+      const lockMigrationState = buildLockMigrationState(row);
       if (fields.date !== undefined) updates.date = coerceGameStateTextValue(fields.date);
       if (fields.time !== undefined) updates.time = coerceGameStateTextValue(fields.time);
       if (fields.location !== undefined) updates.location = coerceGameStateTextValue(fields.location);
@@ -403,7 +444,9 @@ export function createGameStateStorage(db: DB) {
       }
 
       if (fields.fieldLocks !== undefined) {
-        updates.fieldLocks = serializeFieldLocks(fields.fieldLocks);
+        updates.fieldLocks = serializeFieldLocks(normalizeTrackerFieldLocksForState(fields.fieldLocks, lockMigrationState));
+      } else if (row.fieldLocks) {
+        updates.fieldLocks = serializeFieldLocks(normalizeTrackerFieldLocksForState(row.fieldLocks, lockMigrationState));
       }
 
       if (Object.keys(updates).length === 0) return row;

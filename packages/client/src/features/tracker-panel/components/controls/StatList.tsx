@@ -1,5 +1,10 @@
 import { X } from "lucide-react";
-import { isTrackerFieldLocked, removeTrackerArrayItemLocks, type CharacterStat } from "@marinara-engine/shared";
+import {
+  isTrackerFieldLocked,
+  removeTrackerFieldLockPrefix,
+  renameTrackerFieldLockPrefix,
+  type CharacterStat,
+} from "@marinara-engine/shared";
 import { cn } from "../../../../lib/utils";
 import { TRACKER_BAR, TRACKER_TEXT_ROW } from "../../lib/tracker-panel.constants";
 import type { TrackerStatDensity, TrackerStatDisplayScale } from "../../tracker-panel.types";
@@ -324,7 +329,7 @@ export function StatList({
   fillWideColumns?: boolean;
   showWideColumnGhost?: boolean;
   visualTone?: StatListVisualTone;
-  getLockKey?: (index: number, field: "name" | "value" | "max") => string;
+  getLockKey?: (index: number, field: "name" | "value" | "max", stat: CharacterStat) => string;
 }) {
   const { fieldLocks, lockMode, onToggleFieldLock, onUpdateFieldLocks } = useTrackerLockContext();
   if (stats.length === 0) {
@@ -336,22 +341,28 @@ export function StatList({
   }
   const updateStat = (index: number, updated: CharacterStat) => {
     if (!onUpdate) return;
+    const previous = stats[index];
+    if (previous && previous.name !== updated.name) {
+      const fromKey = getLockKey?.(index, "name", previous);
+      const toKey = getLockKey?.(index, "name", updated);
+      if (fromKey && toKey) {
+        onUpdateFieldLocks?.((locks) =>
+          renameTrackerFieldLockPrefix(locks, fromKey.replace(/\.name$/, ""), toKey.replace(/\.name$/, "")),
+        );
+      }
+    }
     const next = [...stats];
     next[index] = updated;
     onUpdate(next);
   };
   const removeStat = (index: number) => {
     if (!onUpdate) return;
-    const nameLockKey = getLockKey?.(index, "name");
-    const nameSuffix = `.${index}.name`;
-    if (nameLockKey?.endsWith(nameSuffix)) {
-      const prefix = nameLockKey.slice(0, -nameSuffix.length);
-      onUpdateFieldLocks?.((locks) => removeTrackerArrayItemLocks(locks, prefix, index));
-    }
+    const nameLockKey = getLockKey?.(index, "name", stats[index]!);
+    if (nameLockKey) onUpdateFieldLocks?.((locks) => removeTrackerFieldLockPrefix(locks, nameLockKey.replace(/\.name$/, "")));
     onUpdate(stats.filter((_, statIndex) => statIndex !== index));
   };
   const buildLockToggle = (index: number, field: "name" | "value" | "max") =>
-    getLockKey && onToggleFieldLock ? () => onToggleFieldLock(getLockKey(index, field)) : undefined;
+    getLockKey && onToggleFieldLock ? () => onToggleFieldLock(getLockKey(index, field, stats[index]!)) : undefined;
   const displayScale = getTrackerStatDisplayScale(
     stats.length,
     density,
@@ -403,9 +414,9 @@ export function StatList({
             compactNameRhythm={compactNameRhythm}
             wideColumnCell={wideColumnCell}
             visualTone={visualTone}
-            nameLocked={getLockKey ? isTrackerFieldLocked(fieldLocks, getLockKey(index, "name")) : false}
-            valueLocked={getLockKey ? isTrackerFieldLocked(fieldLocks, getLockKey(index, "value")) : false}
-            maxLocked={getLockKey ? isTrackerFieldLocked(fieldLocks, getLockKey(index, "max")) : false}
+            nameLocked={getLockKey ? isTrackerFieldLocked(fieldLocks, getLockKey(index, "name", stat)) : false}
+            valueLocked={getLockKey ? isTrackerFieldLocked(fieldLocks, getLockKey(index, "value", stat)) : false}
+            maxLocked={getLockKey ? isTrackerFieldLocked(fieldLocks, getLockKey(index, "max", stat)) : false}
             lockMode={lockMode}
             onToggleNameLock={buildLockToggle(index, "name")}
             onToggleValueLock={buildLockToggle(index, "value")}
