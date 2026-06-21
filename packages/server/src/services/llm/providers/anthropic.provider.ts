@@ -220,6 +220,31 @@ function formatAnthropicPayloadMessages(messages: ChatMessage[]): AnthropicMessa
   return mergeAnthropicPayloadMessages(payload);
 }
 
+/**
+ * Anthropic rejects a final assistant turn whose content ends in whitespace
+ * (HTTP 400: "final assistant content must not end with trailing whitespace"),
+ * which surfaces to users as a refusal/block. The prefill-only fix (#2673 /
+ * #2674) trims at the prefill helper, so it misses the no-prefill case where
+ * the trailing assistant message is a depth-injected `role:assistant` section
+ * or — under markdown/none wrap — the last chat-history assistant message.
+ *
+ * Trimming the trailing edge of the last assistant message here, at the point
+ * of serialization, covers EVERY trailing-assistant surface (prefill,
+ * depth-injected, merged, history) in one place. Only the trailing edge Claude
+ * rejects is stripped; leading whitespace and non-trailing turns are untouched.
+ * See issue #2679.
+ */
+function trimTrailingAssistantWhitespace(messages: ChatMessage[]): ChatMessage[] {
+  const lastIndex = messages.length - 1;
+  const last = messages[lastIndex];
+  if (!last || last.role !== "assistant" || typeof last.content !== "string") return messages;
+  const trimmed = last.content.trimEnd();
+  if (trimmed === last.content) return messages;
+  const result = messages.slice();
+  result[lastIndex] = { ...last, content: trimmed };
+  return result;
+}
+
 function anthropicToolCallFromBlock(block: AnthropicContentBlock): LLMToolCall | null {
   if (block.type !== "tool_use" || typeof block.name !== "string") return null;
   const id =
@@ -260,7 +285,7 @@ export class AnthropicProvider extends BaseLLMProvider {
       model: options.model,
       max_tokens: maxTokens,
       ...(systemField !== undefined ? { system: systemField } : {}),
-      messages: formatAnthropicPayloadMessages(messages),
+      messages: formatAnthropicPayloadMessages(trimTrailingAssistantWhitespace(messages)),
       tools: formatAnthropicTools(options.tools),
       stream: false,
       ...(options.temperature !== undefined ? { temperature: clampAnthropicTemperature(options.temperature) } : {}),
@@ -357,8 +382,10 @@ export class AnthropicProvider extends BaseLLMProvider {
       (m) => m.role !== "system" && (m.content?.trim() || m.images?.length || m.files?.length),
     );
 
-    // Ensure alternating user/assistant pattern (Claude requirement)
-    const mergedMessages = this.mergeConsecutiveMessages(chatMessages);
+    // Ensure alternating user/assistant pattern (Claude requirement), then
+    // strip any trailing whitespace from the final assistant turn (Claude 400s
+    // on it — see trimTrailingAssistantWhitespace / issue #2679).
+    const mergedMessages = trimTrailingAssistantWhitespace(this.mergeConsecutiveMessages(chatMessages));
 
     const enableCaching = options.enableCaching ?? false;
     const cachingAtDepth = normalizeCachingAtDepth(options.cachingAtDepth);
