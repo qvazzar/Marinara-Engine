@@ -17,16 +17,25 @@ interface STChatHeader {
   chat_metadata?: Record<string, unknown>;
 }
 
+interface STChatMessageExtra extends Record<string, unknown> {
+  display_text?: string;
+  type?: string;
+  marinara_role?: string;
+  marinara_character_id?: string | null;
+  marinara_swipes?: unknown[];
+}
+
 interface STChatMessage {
-  name: string;
-  is_user: boolean;
+  name?: string;
+  is_user?: boolean;
   is_system?: boolean;
+  role?: unknown;
+  character_id?: unknown;
   send_date?: string;
-  mes: string;
-  extra?: {
-    display_text?: string;
-    type?: string;
-  };
+  mes?: unknown;
+  swipes?: unknown;
+  swipe_id?: unknown;
+  extra?: STChatMessageExtra;
 }
 
 interface ParsedSTChatMessageInput {
@@ -34,6 +43,14 @@ interface ParsedSTChatMessageInput {
   characterId: string | null;
   content: string;
   parsedCreatedAt: string | null;
+  extra?: Record<string, unknown>;
+  activeSwipeIndex?: number;
+  swipes?: Array<{
+    index: number;
+    content: string;
+    extra?: Record<string, unknown>;
+    createdAt?: string | null;
+  }>;
 }
 
 export interface ImportSTChatOptions {
@@ -106,6 +123,84 @@ function normalizeTranscriptTimestamps(
   });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeImportedRole(value: unknown): ParsedSTChatMessageInput["role"] | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case "system":
+    case "user":
+    case "assistant":
+    case "narrator":
+      return normalized;
+    default:
+      return null;
+  }
+}
+
+function normalizeImportedExtra(raw: unknown): Record<string, unknown> {
+  if (!isRecord(raw)) return {};
+
+  const extra = { ...raw };
+  const displayText = typeof extra.display_text === "string" ? extra.display_text : null;
+  delete extra.display_text;
+  delete extra.marinara_role;
+  delete extra.marinara_character_id;
+  delete extra.marinara_swipes;
+
+  if (typeof extra.displayText !== "string" && displayText) {
+    extra.displayText = displayText;
+  }
+
+  return extra;
+}
+
+function normalizeSwipeContents(raw: unknown, fallbackContent: string): string[] {
+  if (!Array.isArray(raw)) return [fallbackContent];
+
+  const swipes = raw.filter((swipe): swipe is string => typeof swipe === "string");
+  return swipes.length > 0 ? swipes : [fallbackContent];
+}
+
+function normalizeSwipeIndex(raw: unknown, swipeCount: number): number {
+  const numeric = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+  if (!Number.isInteger(numeric) || numeric < 0 || numeric >= swipeCount) return 0;
+  return numeric;
+}
+
+function normalizeMarinaraSwipeMetadata(extra: STChatMessageExtra | undefined) {
+  const rawSwipes = Array.isArray(extra?.marinara_swipes) ? extra.marinara_swipes : [];
+  const byIndex = new Map<
+    number,
+    {
+      extra: Record<string, unknown>;
+      createdAt: string | null;
+    }
+  >();
+
+  for (const rawSwipe of rawSwipes) {
+    if (!isRecord(rawSwipe)) continue;
+    const index = typeof rawSwipe.index === "number" && Number.isInteger(rawSwipe.index) ? rawSwipe.index : null;
+    if (index === null || index < 0) continue;
+    const createdAt = parseTrustedTimestamp(
+      typeof rawSwipe.created_at === "string"
+        ? rawSwipe.created_at
+        : typeof rawSwipe.createdAt === "string"
+          ? rawSwipe.createdAt
+          : undefined,
+    );
+    byIndex.set(index, {
+      extra: normalizeImportedExtra(rawSwipe.extra),
+      createdAt,
+    });
+  }
+
+  return byIndex;
+}
+
 /**
  * Import a SillyTavern JSONL chat file.
  *
@@ -123,6 +218,15 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
   const header = JSON.parse(lines[0]!) as STChatHeader;
   const characterName = header.character_name ?? "Unknown";
   const userName = header.user_name ?? "User";
+  const headerMetadata = isRecord(header.chat_metadata) ? header.chat_metadata : {};
+  const marinaraMetadata = isRecord(headerMetadata.marinara_metadata) ? headerMetadata.marinara_metadata : {};
+  const importedBranchName =
+    opts?.branchName ??
+    (typeof headerMetadata.branchName === "string"
+      ? headerMetadata.branchName
+      : typeof marinaraMetadata.branchName === "string"
+        ? marinaraMetadata.branchName
+        : null);
 
   // Build characterIds array. Caller-supplied list wins so an import-into-group
   // can fully inherit the existing chat's roster instead of being limited to a
@@ -149,20 +253,46 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
     try {
       const stMsg = JSON.parse(lines[i]!) as STChatMessage;
 
-      // Skip pure system messages (but keep user messages flagged as system — ST does this for RP intros)
-      if (stMsg.is_system && !stMsg.is_user) continue;
-
-      const role = stMsg.is_user ? "user" : "assistant";
-      const content = stMsg.extra?.display_text ?? stMsg.mes;
+      const role =
+        normalizeImportedRole(stMsg.role) ??
+        normalizeImportedRole(stMsg.extra?.marinara_role) ??
+        normalizeImportedRole(stMsg.extra?.type) ??
+        (stMsg.is_user ? "user" : stMsg.is_system ? "system" : "assistant");
+      const rawContent = typeof stMsg.mes === "string" ? stMsg.mes : "";
+      const messageExtra = normalizeImportedExtra(stMsg.extra);
+      const storedMessageExtra = Object.keys(messageExtra).length > 0 ? messageExtra : undefined;
+      const swipeContents = normalizeSwipeContents(stMsg.swipes, rawContent);
+      const activeSwipeIndex = normalizeSwipeIndex(stMsg.swipe_id, swipeContents.length);
+      const content = swipeContents[activeSwipeIndex] ?? rawContent;
+      const swipeMetadata = normalizeMarinaraSwipeMetadata(stMsg.extra);
+      const swipes = swipeContents.map((swipeContent, index) => {
+        const storedSwipe = swipeMetadata.get(index);
+        const swipeExtra =
+          index === activeSwipeIndex
+            ? { ...(storedSwipe?.extra ?? {}), ...(storedMessageExtra ?? {}) }
+            : (storedSwipe?.extra ?? {});
+        return {
+          index,
+          content: swipeContent,
+          extra: swipeExtra,
+          createdAt: storedSwipe?.createdAt ?? null,
+        };
+      });
 
       // Resolve character ID for this message
       let messageCharacterId: string | null = null;
-      if (!stMsg.is_user) {
+      if (role === "assistant") {
+        const exportedCharacterId =
+          typeof stMsg.character_id === "string"
+            ? stMsg.character_id
+            : typeof stMsg.extra?.marinara_character_id === "string"
+              ? stMsg.extra.marinara_character_id
+              : null;
         if (opts?.speakerMap && stMsg.name) {
           // Group chat: look up speaker
-          messageCharacterId = opts.speakerMap[stMsg.name] ?? opts?.characterId ?? null;
+          messageCharacterId = exportedCharacterId ?? opts.speakerMap[stMsg.name] ?? opts?.characterId ?? null;
         } else {
-          messageCharacterId = opts?.characterId ?? null;
+          messageCharacterId = exportedCharacterId ?? opts?.characterId ?? null;
         }
       }
 
@@ -173,6 +303,9 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
         characterId: messageCharacterId,
         content,
         parsedCreatedAt: createdAt,
+        extra: storedMessageExtra,
+        activeSwipeIndex,
+        swipes,
       });
     } catch {
       // Skip malformed lines
@@ -209,11 +342,12 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
   if (!chat) return { error: "Failed to create chat" };
 
   // Preserve an imported branch/file label separately from the main thread/chat name.
-  if (opts?.branchName) {
+  if (Object.keys(marinaraMetadata).length > 0 || importedBranchName) {
     const existingMetadata = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
     await storage.updateMetadata(chat.id, {
       ...existingMetadata,
-      branchName: opts.branchName,
+      ...marinaraMetadata,
+      ...(importedBranchName ? { branchName: importedBranchName } : {}),
     });
   }
 

@@ -2267,18 +2267,54 @@ export async function chatsRoutes(app: FastifyInstance) {
         user_name: "User",
         character_name: primaryCharName,
         create_date: chat.createdAt,
-        chat_metadata: {},
+        chat_metadata: {
+          ...metadata,
+          branchName,
+          marinara_metadata: metadata,
+        },
       }),
     ];
 
     for (const msg of msgs) {
+      const messageExtra = parseExportMetadata(msg.extra);
+      const swipes = await storage.getSwipes(msg.id);
+      const exportSwipes =
+        swipes.length > 0
+          ? swipes.map((swipe: { index: number; content: string; extra?: unknown; createdAt?: string }) => ({
+              index: swipe.index,
+              content: swipe.index === msg.activeSwipeIndex ? msg.content : swipe.content,
+              extra: swipe.index === msg.activeSwipeIndex ? messageExtra : parseExportMetadata(swipe.extra),
+              createdAt: swipe.createdAt,
+            }))
+          : [
+              {
+                index: 0,
+                content: msg.content,
+                extra: messageExtra,
+                createdAt: msg.createdAt,
+              },
+            ];
       lines.push(
         JSON.stringify({
           name: getDisplayName(msg),
           is_user: msg.role === "user",
-          is_system: msg.role === "system" || msg.role === "narrator",
+          is_system: msg.role === "system",
+          role: msg.role,
+          character_id: msg.characterId,
           mes: msg.content,
+          swipes: exportSwipes.map((swipe) => swipe.content),
+          swipe_id: msg.activeSwipeIndex,
           send_date: msg.createdAt,
+          extra: {
+            ...messageExtra,
+            marinara_role: msg.role,
+            marinara_character_id: msg.characterId,
+            marinara_swipes: exportSwipes.map((swipe) => ({
+              index: swipe.index,
+              extra: swipe.extra,
+              created_at: swipe.createdAt,
+            })),
+          },
         }),
       );
     }
