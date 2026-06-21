@@ -93,6 +93,33 @@ function parseNumber(value: unknown, fallback: number, min?: number) {
   return typeof min === "number" ? Math.max(min, numeric) : numeric;
 }
 
+function buildInventoryGridContentsFromText(
+  value: string,
+  previousContents: NonNullable<HudWidgetConfig["contents"]>,
+): NonNullable<HudWidgetConfig["contents"]> {
+  const previousByName = new Map<string, NonNullable<HudWidgetConfig["contents"]>>();
+  for (const item of previousContents) {
+    const key = item.name.trim().toLowerCase();
+    if (!key) continue;
+    const bucket = previousByName.get(key) ?? [];
+    bucket.push(item);
+    previousByName.set(key, bucket);
+  }
+
+  return value
+    .split(/\r?\n/)
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .map((name) => {
+      const previous = previousByName.get(name.toLowerCase())?.shift();
+      return {
+        ...previous,
+        name,
+        quantity: previous?.quantity ?? 1,
+      };
+    });
+}
+
 function defaultWidgetConfig(type: HudWidgetType): HudWidgetConfig {
   switch (type) {
     case "progress_bar":
@@ -537,11 +564,7 @@ function WidgetConfigFields({
             rows={3}
             onChange={(event) =>
               onConfigChange({
-                contents: event.target.value
-                  .split(/\r?\n/)
-                  .map((name) => name.trim())
-                  .filter(Boolean)
-                  .map((name) => ({ name, quantity: 1 })),
+                contents: buildInventoryGridContentsFromText(event.target.value, contents),
               })
             }
             className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-2 text-xs text-[var(--foreground)]"

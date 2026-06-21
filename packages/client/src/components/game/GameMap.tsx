@@ -501,7 +501,7 @@ export function GameMapPanel({
   const [collapsed, setCollapsed] = useState(false);
   const [stateHovered, setStateHovered] = useState(false);
   const [mapZoom, setMapZoom] = useState(1);
-  const { locked, toggleLocked, x, y, handleDragEnd } = useDraggablePanel(chatId, "map");
+  const { locked, toggleLocked, resetPosition, x, y, handleDragEnd } = useDraggablePanel(chatId, "map");
   const mapOptions = buildMapOptions(map, maps);
   const selectedMapId = viewedMapId ?? getMapId(map);
   const activeMap = activeMapId == null || selectedMapId === activeMapId;
@@ -600,7 +600,7 @@ export function GameMapPanel({
             <span className="block truncate">{mapName}</span>
           )}
         </span>
-        <PanelLockButton locked={locked} onToggle={toggleLocked} size={11} />
+        <PanelLockButton locked={locked} onToggle={toggleLocked} onReset={resetPosition} size={11} />
         <span className="shrink-0 text-[var(--marinara-chat-chrome-button-text)]">
           {collapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
         </span>

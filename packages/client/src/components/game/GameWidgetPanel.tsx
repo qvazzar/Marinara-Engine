@@ -82,7 +82,7 @@ function getNumericWidgetValue(widget: HudWidget) {
 }
 
 function getVisibleWidgets(widgets: HudWidget[], position: "hud_left" | "hud_right") {
-  return widgets.filter((w) => w.position === position && w.type !== "inventory_grid").slice(0, MAX_WIDGETS);
+  return widgets.filter((w) => w.position === position).slice(0, MAX_WIDGETS);
 }
 
 function formatWidgetTypeLabel(type: HudWidget["type"]) {
@@ -397,7 +397,7 @@ function WidgetCard({
   onEdit: (widget: HudWidget) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const { locked, toggleLocked, x, y, handleDragEnd } = useDraggablePanel(chatId, `widget:${widget.id}`);
+  const { locked, toggleLocked, resetPosition, x, y, handleDragEnd } = useDraggablePanel(chatId, `widget:${widget.id}`);
 
   return (
     <motion.div
@@ -440,7 +440,7 @@ function WidgetCard({
         >
           <Pencil size={10} />
         </button>
-        <PanelLockButton locked={locked} onToggle={toggleLocked} size={10} />
+        <PanelLockButton locked={locked} onToggle={toggleLocked} onReset={resetPosition} size={10} />
         <span className={cn("text-[0.5rem]", GAME_WIDGET_MUTED_CLASS)}>{collapsed ? "+" : "-"}</span>
       </div>
 
@@ -1184,6 +1184,8 @@ function TimerWidget({ widget }: { widget: HudWidget }) {
   const accent = widget.accent ?? "#ef4444";
   const [displaySeconds, setDisplaySeconds] = useState(seconds);
   const prevSecondsRef = useRef(seconds);
+  const completionPersistedRef = useRef(false);
+  const updateGameWidgets = useUpdateGameWidgets();
 
   // Reset display when the server-provided seconds value changes
   useEffect(() => {
@@ -1191,7 +1193,25 @@ function TimerWidget({ widget }: { widget: HudWidget }) {
       setDisplaySeconds(seconds);
       prevSecondsRef.current = seconds;
     }
-  }, [seconds]);
+    if (running && seconds > 0) {
+      completionPersistedRef.current = false;
+    }
+  }, [running, seconds]);
+
+  useEffect(() => {
+    if (!running || displaySeconds > 0 || completionPersistedRef.current) return;
+    completionPersistedRef.current = true;
+    const store = useGameModeStore.getState();
+    const chatId = store.activeSessionChatId;
+    if (!chatId) return;
+    const nextWidgets = store.hudWidgets.map((currentWidget) =>
+      currentWidget.id === widget.id
+        ? { ...currentWidget, config: { ...currentWidget.config, running: false, seconds: 0 } }
+        : currentWidget,
+    );
+    store.setHudWidgets(nextWidgets);
+    updateGameWidgets.mutate({ chatId, widgets: nextWidgets });
+  }, [displaySeconds, running, updateGameWidgets, widget.id]);
 
   // Count down when running
   useEffect(() => {

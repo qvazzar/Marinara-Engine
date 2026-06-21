@@ -6,12 +6,13 @@
 // by chatId so positions don't bleed across games.
 // `PanelLockButton` renders the lock toggle in headers.
 // ──────────────────────────────────────────────
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMotionValue } from "framer-motion";
 import { Lock, Unlock } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 const STORAGE_PREFIX = "marinara-game-panel:";
+const MIN_VISIBLE_PANEL_PX = 96;
 
 interface PanelState {
   locked: boolean;
@@ -48,6 +49,21 @@ function writePanelState(key: string, state: PanelState) {
   }
 }
 
+function clampOffsetToViewport(value: number, axis: "x" | "y") {
+  if (typeof window === "undefined") return value;
+  const viewportSize = axis === "x" ? window.innerWidth : window.innerHeight;
+  const limit = Math.max(0, viewportSize - MIN_VISIBLE_PANEL_PX);
+  return Math.max(-limit, Math.min(limit, value));
+}
+
+function clampPanelState(state: PanelState): PanelState {
+  return {
+    ...state,
+    x: clampOffsetToViewport(state.x, "x"),
+    y: clampOffsetToViewport(state.y, "y"),
+  };
+}
+
 /**
  * Returns motion values + lock state for a draggable HUD panel, persisted per
  * chat so positions don't bleed across games. Reads from localStorage
@@ -62,37 +78,66 @@ export function useDraggablePanel(scopeId: string, panelId: string) {
   if (seedRef.current === null) {
     seedRef.current = readPanelState(key);
   }
-  const seed = seedRef.current;
+  const seed = clampPanelState(seedRef.current);
 
   const [locked, setLocked] = useState(seed.locked);
   const x = useMotionValue(seed.x);
   const y = useMotionValue(seed.y);
 
+  const clampAndPersist = useCallback(() => {
+    const next = clampPanelState({ locked, x: x.get(), y: y.get() });
+    if (next.x !== x.get()) x.set(next.x);
+    if (next.y !== y.get()) y.set(next.y);
+    writePanelState(key, next);
+  }, [key, locked, x, y]);
+
+  useEffect(() => {
+    clampAndPersist();
+    if (typeof window === "undefined") return;
+    window.addEventListener("resize", clampAndPersist);
+    return () => window.removeEventListener("resize", clampAndPersist);
+  }, [clampAndPersist]);
+
   const toggleLocked = useCallback(() => {
     setLocked((prev) => {
       const next = !prev;
-      writePanelState(key, { locked: next, x: x.get(), y: y.get() });
+      writePanelState(key, clampPanelState({ locked: next, x: x.get(), y: y.get() }));
       return next;
     });
   }, [key, x, y]);
 
   const handleDragEnd = useCallback(() => {
-    writePanelState(key, { locked, x: x.get(), y: y.get() });
+    clampAndPersist();
+  }, [clampAndPersist]);
+
+  const resetPosition = useCallback(() => {
+    x.set(0);
+    y.set(0);
+    writePanelState(key, { locked, x: 0, y: 0 });
   }, [key, locked, x, y]);
 
-  return { locked, toggleLocked, x, y, handleDragEnd };
+  return { locked, toggleLocked, resetPosition, x, y, handleDragEnd };
 }
 
 interface PanelLockButtonProps {
   locked: boolean;
   onToggle: () => void;
+  onReset?: () => void;
   /** Icon size in px. Matches the adjacent collapse indicator. */
   size?: number;
   className?: string;
 }
 
 /** Small lock toggle styled to match collapse/chevron buttons in HUD panels. */
-export function PanelLockButton({ locked, onToggle, size = 10, className }: PanelLockButtonProps) {
+export function PanelLockButton({ locked, onToggle, onReset, size = 10, className }: PanelLockButtonProps) {
+  const title = onReset
+    ? locked
+      ? "Unlock to move. Double-click to reset position"
+      : "Lock in place. Double-click to reset position"
+    : locked
+      ? "Unlock to move"
+      : "Lock in place";
+
   return (
     <button
       type="button"
@@ -100,12 +145,18 @@ export function PanelLockButton({ locked, onToggle, size = 10, className }: Pane
         event.stopPropagation();
         onToggle();
       }}
+      onDoubleClick={(event) => {
+        if (!onReset) return;
+        event.stopPropagation();
+        onReset();
+      }}
       onPointerDown={(event) => event.stopPropagation()}
-      title={locked ? "Unlock to move" : "Lock in place"}
+      title={title}
       aria-label={locked ? "Unlock panel" : "Lock panel"}
       aria-pressed={!locked}
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-md text-[var(--marinara-chat-chrome-panel-muted)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-highlight-text)]",
+        "flex shrink-0 items-center justify-center rounded-md text-[var(--marinara-chat-chrome-panel-muted)]",
+        "transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-highlight-text)]",
         className,
       )}
     >

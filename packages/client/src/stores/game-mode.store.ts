@@ -84,11 +84,28 @@ export function getPendingHudWidgetPersistenceSignature(chatId: string): string 
   return pendingWidgetPersistence?.chatId === chatId ? pendingWidgetPersistence.signature : null;
 }
 
+export function registerPendingHudWidgetPersistence(chatId: string, widgets: readonly HudWidget[]) {
+  pendingWidgetPersistence = { chatId, signature: getHudWidgetStateSignature(widgets) };
+}
+
+export function clearPendingHudWidgetPersist(chatId?: string, signature?: string) {
+  const matchesChat = !chatId || pendingWidgetPersistence?.chatId === chatId;
+  const matchesSignature = !signature || pendingWidgetPersistence?.signature === signature;
+  if (matchesChat && widgetPersistTimer) {
+    clearTimeout(widgetPersistTimer);
+    widgetPersistTimer = null;
+  }
+  if (matchesChat && matchesSignature) {
+    pendingWidgetPersistence = null;
+  }
+}
+
 function debouncedPersistWidgets(chatId: string, widgets: HudWidget[]) {
   const signature = getHudWidgetStateSignature(widgets);
   pendingWidgetPersistence = { chatId, signature };
   if (widgetPersistTimer) clearTimeout(widgetPersistTimer);
   widgetPersistTimer = setTimeout(() => {
+    widgetPersistTimer = null;
     api
       .put(`/game/${chatId}/widgets`, { widgets })
       .catch(() => {
@@ -333,13 +350,27 @@ export const useGameModeStore = create<GameModeStore>((set) => ({
         const changes = update.changes;
         const newConfig = { ...w.config };
 
-        // Handle stat_block: update a specific stat by name
-        if (changes.statName && w.type === "stat_block" && newConfig.stats) {
-          const targetName = changes.statName;
-          const newValue = changes.value;
-          newConfig.stats = newConfig.stats.map((stat) =>
-            stat.name === targetName && newValue !== undefined ? { ...stat, value: newValue } : stat,
-          );
+        // Handle stat_block: update a specific stat by name, creating it when needed.
+        if (changes.statName && w.type === "stat_block") {
+          const targetName = changes.statName.trim();
+          const rawValue = changes.value;
+          const newValue =
+            typeof rawValue === "number"
+              ? rawValue
+              : typeof rawValue === "string" && rawValue.trim()
+                ? rawValue.trim()
+                : undefined;
+          if (targetName && newValue !== undefined) {
+            const stats = Array.isArray(newConfig.stats) ? [...newConfig.stats] : [];
+            const targetKey = targetName.toLowerCase();
+            const statIndex = stats.findIndex((stat) => stat.name.trim().toLowerCase() === targetKey);
+            if (statIndex >= 0) {
+              stats[statIndex] = { ...stats[statIndex]!, value: newValue };
+            } else {
+              stats.push({ name: targetName, value: newValue });
+            }
+            newConfig.stats = stats;
+          }
         } else {
           // Merge simple numeric/config fields
           if (changes.value !== undefined)

@@ -8,8 +8,10 @@ import { api, isJsonRepairApiError } from "../lib/api-client";
 import { chatKeys } from "./use-chats";
 import { lorebookKeys } from "./use-lorebooks";
 import {
+  clearPendingHudWidgetPersist,
   getHudWidgetStateSignature,
   getPendingHudWidgetPersistenceSignature,
+  registerPendingHudWidgetPersistence,
   useGameModeStore,
 } from "../stores/game-mode.store";
 import { useGameAssetStore } from "../stores/game-asset.store";
@@ -590,6 +592,10 @@ export function useUpdateGameWidgets() {
   return useMutation({
     mutationFn: ({ chatId, widgets }: { chatId: string; widgets: HudWidget[] }) =>
       api.put<UpdateGameWidgetsResponse>(`/game/${chatId}/widgets`, { widgets }),
+    onMutate: (variables) => {
+      clearPendingHudWidgetPersist(variables.chatId);
+      registerPendingHudWidgetPersistence(variables.chatId, variables.widgets);
+    },
     onSuccess: (_, variables) => {
       useGameModeStore.getState().setHudWidgets(variables.widgets);
       const queryKey = chatKeys.detail(variables.chatId);
@@ -604,6 +610,9 @@ export function useUpdateGameWidgets() {
     },
     onError: (err) => {
       console.error("[updateGameWidgets] Error:", err);
+    },
+    onSettled: (_, __, variables) => {
+      clearPendingHudWidgetPersist(variables.chatId, getHudWidgetStateSignature(variables.widgets));
     },
   });
 }
