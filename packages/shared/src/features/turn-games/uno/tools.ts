@@ -11,6 +11,9 @@ import type { ToolDefinition } from "../../function-calls/tool-definitions.js";
 const COLOR_ENUM = ["red", "yellow", "green", "blue", "wild"];
 const VALUE_ENUM = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "skip", "reverse", "draw2", "wild", "wild4"];
 const DECLARED_COLOR_ENUM = ["red", "yellow", "green", "blue"];
+// Jump-in is always a colored card identical to the top — the engine rejects
+// wild jump-ins — so omit wild/wild4 to keep the model from proposing them.
+const JUMP_IN_VALUE_ENUM = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "skip", "reverse", "draw2"];
 
 export const playCardToolManifest = {
   name: "play_card",
@@ -68,7 +71,7 @@ export const jumpInToolManifest = {
     type: "object",
     properties: {
       color: { type: "string", description: "The card's color.", enum: DECLARED_COLOR_ENUM },
-      value: { type: "string", description: "The card's value, identical to the top card.", enum: VALUE_ENUM },
+      value: { type: "string", description: "The card's value, identical to the top card.", enum: JUMP_IN_VALUE_ENUM },
     },
     required: ["color", "value"],
   },

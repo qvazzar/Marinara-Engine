@@ -8,6 +8,7 @@ import {
   messages,
   messageSwipes,
   gameStateSnapshots,
+  gameEngineState,
   chatImages,
   oocInfluences,
   conversationNotes,
@@ -924,6 +925,22 @@ export function createChatsStorage(db: DB) {
           .update(gameStateSnapshots)
           .set({ swipeIndex: snapshot.swipeIndex - 1 })
           .where(eq(gameStateSnapshots.id, snapshot.id));
+      }
+
+      // Mirror the prune for turn-game (UNO) snapshots so anchors stay aligned
+      // with the message's swipes after one is removed.
+      await db
+        .delete(gameEngineState)
+        .where(and(eq(gameEngineState.messageId, messageId), eq(gameEngineState.swipeIndex, index)));
+      const engineSnapshotsToShift = await db
+        .select()
+        .from(gameEngineState)
+        .where(and(eq(gameEngineState.messageId, messageId), gt(gameEngineState.swipeIndex, index)));
+      for (const snapshot of engineSnapshotsToShift) {
+        await db
+          .update(gameEngineState)
+          .set({ swipeIndex: snapshot.swipeIndex - 1 })
+          .where(eq(gameEngineState.id, snapshot.id));
       }
 
       await db

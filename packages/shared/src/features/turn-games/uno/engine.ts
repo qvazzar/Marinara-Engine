@@ -485,6 +485,11 @@ function handleJumpIn(
   if (card.color === "wild" || card.color !== top.color || card.value !== top.value) {
     return fail("Jump-in requires a card identical to the top card (same color and value).");
   }
+  // 7-0: a jump-in can't carry a swap target, so a non-winning 7 jump-in is
+  // rejected server-side (it would otherwise skip the mandatory hand swap).
+  if (state.config.sevenZero && card.value === "7" && hand.length !== 1) {
+    return fail("You can't jump in with a 7 while the 7-0 rule is on.");
+  }
   state.turnIndex = state.seatOrder.indexOf(seatId);
   events.push({ type: "jump_in", seatId, message: `${nameOf(state, seatId)} jumps in with ${cardLabel(card)}!` });
   return resolvePlay(state, seatId, card, move, events);
@@ -582,6 +587,9 @@ function enumerateLegalMoves(state: UnoState, seatId: string): UnoMove[] {
       if (top && top.color !== "wild") {
         for (const c of hand) {
           if (c.color !== "wild" && c.color === top.color && c.value === top.value) {
+            // A 7 under the 7-0 rule needs a swap target, which a jump-in can't
+            // carry — so it's only applicable when it's the winning (last) card.
+            if (state.config.sevenZero && c.value === "7" && hand.length !== 1) continue;
             moves.push({ type: "jump_in", cardId: c.id });
           }
         }

@@ -199,7 +199,17 @@ export const unoMoveSchema: z.ZodType<UnoMove> = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("call_out"), targetSeatId: z.string() }),
   z.object({ type: z.literal("declare_uno") }),
-]);
+]).superRefine((move, ctx) => {
+  // `play` / `jump_in` must target a card by exact `cardId` OR by `card` face —
+  // never neither (the move contract requires one or the other).
+  if ((move.type === "play" || move.type === "jump_in") && move.cardId === undefined && move.card === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Specify the card to play by `cardId` or by `card` (color + value).",
+      path: ["cardId"],
+    });
+  }
+});
 
 export const DEFAULT_UNO_CONFIG: UnoConfig = {
   startingHandSize: 7,
