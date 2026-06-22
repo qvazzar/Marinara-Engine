@@ -1493,6 +1493,7 @@ export function HomeProfessorMariChat({
   const skillFileInputRef = useRef<HTMLInputElement>(null);
   const workspaceAbortRef = useRef<AbortController | null>(null);
   const handledWorkspaceRefreshIdsRef = useRef<Set<string>>(new Set());
+  const workspaceStatusErrorToastShownRef = useRef(false);
 
   const hasActiveGeneration = useChatStore((state) => (chatId ? state.abortControllers.has(chatId) : false));
   const mariPhase = useChatStore((state) => (chatId ? (state.mariPhaseByChatId.get(chatId) ?? null) : null));
@@ -1567,6 +1568,7 @@ export function HomeProfessorMariChat({
     const query = params.toString();
     const status = await api.get<MariWorkspaceStatus>(`/professor-mari/workspace/status${query ? `?${query}` : ""}`);
     setWorkspaceStatus(status);
+    workspaceStatusErrorToastShownRef.current = false;
     return status;
   }, [effectiveConnectionId]);
 
@@ -1589,6 +1591,10 @@ export function HomeProfessorMariChat({
     }
     void invalidateWorkspaceData().catch((error) => {
       console.error("[Professor Mari] Failed to refresh app data after workspace change", error);
+      toast.error("Professor Mari applied a workspace change, but app data could not refresh.", {
+        description: describeProfessorMariError(error),
+        duration: 12_000,
+      });
     });
   }, [invalidateWorkspaceData, workspaceStatus?.history]);
 
@@ -1614,6 +1620,10 @@ export function HomeProfessorMariChat({
       .then((chat) => loadMessages(chat.id))
       .catch((error) => {
         console.error("[Professor Mari] Failed to load home assistant", error);
+        toast.error("Professor Mari could not load.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
       })
       .finally(() => setLoadingHistory(false));
   }, [connectionsLoading, effectiveConnectionId, ensureProfessorMariChat, loadMessages]);
@@ -1621,6 +1631,13 @@ export function HomeProfessorMariChat({
   useEffect(() => {
     void refreshWorkspaceStatus().catch(() => {
       setWorkspaceStatus((current) => current && { ...current, error: "Workspace status unavailable" });
+      if (!workspaceStatusErrorToastShownRef.current) {
+        workspaceStatusErrorToastShownRef.current = true;
+        toast.error("Professor Mari workspace status is unavailable.", {
+          description: "Workspace imports and changes may not show live progress until this recovers.",
+          duration: 12_000,
+        });
+      }
     });
     const timer = window.setInterval(() => {
       void refreshWorkspaceStatus().catch(() => undefined);
@@ -1632,6 +1649,10 @@ export function HomeProfessorMariChat({
     void loadSkills().catch((error) => {
       console.error("[Professor Mari] Failed to load skills", error);
       setSkillsDiagnostics(["Professor Mari skills unavailable"]);
+      toast.error("Professor Mari skills are unavailable.", {
+        description: describeProfessorMariError(error),
+        duration: 12_000,
+      });
     });
   }, [loadSkills]);
 
@@ -1736,7 +1757,7 @@ export function HomeProfessorMariChat({
         messageIds: currentMessages.map((message) => message.id),
       });
     }
-    await api.post("/professor-mari/workspace/reset");
+    await api.post("/professor-mari/workspace/reset", { clearHistory: true });
     setMessages([]);
     setDraft("");
     setWorkspaceActive(false);
@@ -1765,15 +1786,23 @@ export function HomeProfessorMariChat({
 
   const approveWorkspaceChange = useCallback(
     async (id: string) => {
-      const result = await api.post<WorkspaceApprovalResponse>(`/professor-mari/workspace/approvals/${id}/approve`);
-      await refreshWorkspaceStatus().catch(() => undefined);
-      if (result.history?.status === "approved") {
-        await invalidateWorkspaceData();
-        toast.success("Workspace change applied. App data refreshed.");
-      } else if (result.completed === false) {
-        window.setTimeout(() => {
-          void invalidateWorkspaceData();
-        }, 1500);
+      try {
+        const result = await api.post<WorkspaceApprovalResponse>(`/professor-mari/workspace/approvals/${id}/approve`);
+        await refreshWorkspaceStatus().catch(() => undefined);
+        if (result.history?.status === "approved") {
+          await invalidateWorkspaceData();
+          toast.success("Workspace change applied. App data refreshed.");
+        } else if (result.completed === false) {
+          window.setTimeout(() => {
+            void invalidateWorkspaceData();
+          }, 1500);
+        }
+      } catch (error) {
+        console.error("[Professor Mari] Failed to approve workspace change", error);
+        toast.error("Professor Mari could not apply that workspace change.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
       }
     },
     [invalidateWorkspaceData, refreshWorkspaceStatus],
@@ -1781,15 +1810,31 @@ export function HomeProfessorMariChat({
 
   const rejectWorkspaceChange = useCallback(
     async (id: string) => {
-      await api.post(`/professor-mari/workspace/approvals/${id}/reject`);
-      await refreshWorkspaceStatus().catch(() => undefined);
+      try {
+        await api.post(`/professor-mari/workspace/approvals/${id}/reject`);
+        await refreshWorkspaceStatus().catch(() => undefined);
+      } catch (error) {
+        console.error("[Professor Mari] Failed to reject workspace change", error);
+        toast.error("Professor Mari could not reject that workspace change.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
+      }
     },
     [refreshWorkspaceStatus],
   );
 
   const stopWorkspace = useCallback(async () => {
     workspaceAbortRef.current?.abort();
-    await api.post("/professor-mari/workspace/abort").catch(() => undefined);
+    try {
+      await api.post("/professor-mari/workspace/abort");
+    } catch (error) {
+      console.error("[Professor Mari] Failed to stop workspace task", error);
+      toast.error("Professor Mari could not stop the workspace task.", {
+        description: describeProfessorMariError(error),
+        duration: 12_000,
+      });
+    }
   }, []);
 
   const createSkillFromContent = useCallback(
@@ -2052,7 +2097,7 @@ export function HomeProfessorMariChat({
           "home-professor-mari-chat mt-10 w-full max-w-3xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 sm:mt-0",
           attachedFooter ? "rounded-t-xl rounded-b-none" : "rounded-xl",
           mobileFocusMode &&
-            "fixed inset-0 z-[80] mt-0 h-screen max-h-screen max-w-none overflow-hidden rounded-none border-0 bg-[var(--background)] pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-[max(env(safe-area-inset-top),0.5rem)] sm:relative sm:inset-auto sm:z-auto sm:mt-0 sm:h-auto sm:max-h-none sm:max-w-3xl sm:overflow-visible sm:rounded-xl sm:border sm:bg-[var(--card)]/85 sm:pb-0 sm:pt-0 supports-[height:100dvh]:h-[100dvh] supports-[height:100dvh]:max-h-[100dvh]",
+            "fixed inset-x-0 top-[calc(3rem_+_env(safe-area-inset-top))] z-[80] mt-0 h-[calc(100vh_-_3rem_-_env(safe-area-inset-top))] max-h-[calc(100vh_-_3rem_-_env(safe-area-inset-top))] max-w-none overflow-hidden rounded-none border-0 bg-[var(--background)] pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:relative sm:inset-auto sm:z-auto sm:mt-0 sm:h-auto sm:max-h-none sm:max-w-3xl sm:overflow-visible sm:rounded-xl sm:border sm:bg-[var(--card)]/85 sm:pb-0 sm:pt-0 supports-[height:100dvh]:h-[calc(100dvh_-_3rem_-_env(safe-area-inset-top))] supports-[height:100dvh]:max-h-[calc(100dvh_-_3rem_-_env(safe-area-inset-top))]",
         )}
         data-paused={pageActive ? "false" : "true"}
       >
@@ -2079,14 +2124,26 @@ export function HomeProfessorMariChat({
                   {isBusy ? "Working on it..." : "Ready to help"}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={openMobileChat}
-                className="mari-chrome-control mari-chrome-control--primary mt-3 w-full gap-2 text-xs"
-              >
-                <MessageCircle size="0.9rem" />
-                Start Chatting
-              </button>
+              <div className="mt-3 flex w-full items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openMobileChat}
+                  className="mari-chrome-control mari-chrome-control--primary min-w-0 flex-1 gap-2 text-xs"
+                >
+                  <MessageCircle size="0.9rem" />
+                  Ask Professor Mari
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runRestart()}
+                  disabled={isBusy}
+                  className="mari-chrome-control mari-chrome-control--small h-8 w-8 p-0"
+                  aria-label="Restart Professor Mari chat"
+                  title="Restart Professor Mari chat"
+                >
+                  <RefreshCw size="0.9rem" />
+                </button>
+              </div>
             </div>
             <div className="hidden sm:block w-full">
               <HomeFaq
@@ -2196,6 +2253,7 @@ export function HomeProfessorMariChat({
                         onClick={() => void runRestart()}
                         disabled={isBusy}
                         className="mari-chrome-accent-text-muted mari-accent-animated inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Restart Professor Mari chat"
                         title="Restart Professor Mari chat"
                       >
                         <RefreshCw size="0.75rem" />

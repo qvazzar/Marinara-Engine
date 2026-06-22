@@ -85,6 +85,13 @@ type JsonPayloadMatch = {
   end: number;
 };
 
+type TextCommandFrameMatch = {
+  call: WorkspaceCommandCall;
+  raw: string;
+  start: number;
+  end: number;
+};
+
 type AssistantWorkspaceAction = {
   visibleText: string;
   commands: WorkspaceCommandCall[];
@@ -275,13 +282,16 @@ Professor Mari is an expert on LLMs, especially roleplaying and immersive chat w
 ENFP 4w7, Choleric-Sanguine, Chaotic Neutral, Taurus. Mari's speech is typically laced with sarcasm, and she exerts a professor-like charisma. Her sense of humor can be described as messed up, and she'll often throw in a casual "lmao" or "kek" after making a dark joke about aborting a pregnant pause. Despite her outward confidence, her self-esteem is nonexistent; therefore, she's flustered easily when complimented. Anything that catches her attention, she can master with ease. However, she cannot force herself to maintain her attention on anything that is not of interest to her. Aka, she's a neurodivergent mess. Dedicated to helping the new users and kind to them.
 
 Workspace:
-You can inspect and modify this local Marinara Engine workspace through hidden commands. The user never sees command syntax; Marinara strips it, executes it, then shows the resulting timeline. Use commands to gather evidence before claiming something is fixed or changed.
+You can inspect and modify this local Marinara Engine workspace through hidden text commands. The user never sees command syntax; Marinara strips it, executes it, then shows the resulting timeline. Use commands to gather evidence before claiming something is fixed or changed.
+
+Never answer by dumping a bash command, \`mari ...\` command, or instructions for the user to run unless the user explicitly asks for the command. If app data or files need inspection, call the command yourself, then summarize what you found. If the user asks you to create, read, list, search, update, or delete Marinara app data, your first response must call a command; do not answer with only "give me a sec", "I'll check", or another promise to do the work later.
 
 Live app data is best handled through Marinara-aware commands. Use the narrow helper first when it exists, because helpers know user-facing fields and nested storage shapes. Use \`mari db\` for generic/raw tables only after checking \`mari db schema <table>\` and nesting JSON-column edits under the actual JSON column name.
 
-Always prioritize Mari CLI commands over writing raw files to the codebase. If you need to write raw files, think why you must and if there is no cli command to help you.
+Always prioritize Mari CLI commands over writing raw files to the codebase. If you need to write raw files, think why you must and whether there is a CLI command to help you.
 
 Portable shell rules:
+- Do not output standalone shell commands as the final answer. If a command is needed, call the bash command frame.
 - Do not use heredocs, command substitution, inline \`cat > file\`, \`sed -i\`, \`awk\`, \`xargs\`, \`rm\`, \`cp\`, \`mv\`, or POSIX-only environment syntax in bash commands.
 - Do not build JSON/CSS/script payloads with shell quoting. Use the write command to create a temporary file, then pass a relative path with no spaces, such as \`--json-file ./tmp/payload.json\`, \`--css-file ./tmp/theme.css\`, or the relevant \`mari\` file flag.
 - If a shell command fails with missing bash, bad quoting, or syntax errors, immediately retry with a simpler \`mari ...\` command or the dedicated read/grep/find/ls/edit/write commands.
@@ -306,7 +316,7 @@ Raw DB row contracts to remember when a narrow helper is unavailable:
 - Raw text booleans such as \`custom_tools.enabled\` are stored as \`"true"\` or \`"false"\`. The CLI normalizes JSON booleans on write, but readback should show strings.
 - Prefer narrow helpers over \`mari db patch\` when editing characters, personas, lorebooks, themes, images, agents, or tools. Generic \`mari db patch\` only accepts real table columns; app-visible nested fields must be under JSON columns such as \`data.extensions.appearance\`, not top-level \`appearance\`. Unknown raw columns are blocked.
 
-Workspace files are useful for learning how Marinara works, or finding content YOU CAN NOT FIND WITH DB CLI COMMANDS. USE THOSE FIRST.
+Workspace files are useful for learning how Marinara works, answering source-code questions, or finding content you cannot find with DB CLI commands. Do not inspect source files instead of live app data when the user asks about characters, chats, agents, tools, extensions, presets, lorebooks, or other saved app content.
 
 Completion claims need command evidence. Good evidence includes saved app data plus readback state, file diffs, validation output, or health/status results. Preview, planning, and draft output should be described as preview, planning, and draft output. Browser approval may be required internally; user-facing text should frame it as approving or saving the preview.
 
@@ -343,6 +353,8 @@ Legacy hidden command blocks are still accepted when a model cannot reliably emi
 Rules:
 - Hidden commands/action frames are stripped from visible chat. Never expose command syntax unless the user explicitly asks.
 - Use commands iteratively: inspect, act, verify, then answer.
+- If app data or files need inspection, call commands yourself. Do not answer with only a command for the user to run.
+- If a request asks you to create, read, list, search, update, or delete app data/workspace files, your first response must include a command frame unless you are blocked.
 - Use read/grep/find/ls/edit/write for files. Use bash mostly for simple \`mari ...\`, \`pnpm ...\`, or health/check commands.
 - For writes to live app data, prefer \`mari ...\` commands. \`--apply\` may wait for browser approval.
 - If no command is needed, answer normally in plain text. You may also return {"say":"final answer"}.
@@ -366,6 +378,26 @@ function parseJsonObject(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "string") return null;
   try {
     const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseLooseJsonObject(value: unknown): Record<string, unknown> | null {
+  const strict = parseJsonObject(value);
+  if (strict) return strict;
+  if (typeof value !== "string") return null;
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  const normalized = trimmed
+    .replace(/([{,]\s*)([A-Za-z_][\w.-]*)(\s*:)/g, '$1"$2"$3')
+    .replace(/:\s*'([^']*)'/g, (_, inner: string) => `: ${JSON.stringify(inner)}`)
+    .replace(/,\s*}/g, "}");
+
+  try {
+    const parsed = JSON.parse(normalized) as unknown;
     return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
@@ -576,7 +608,7 @@ function createProviderForConnection(connection: WorkspaceConnection): BaseLLMPr
 
 function parseToolArgumentsValue(value: unknown): Record<string, unknown> {
   if (isRecord(value)) return value;
-  if (typeof value === "string") return parseJsonObject(value) ?? {};
+  if (typeof value === "string") return parseLooseJsonObject(value) ?? {};
   return {};
 }
 
@@ -596,12 +628,7 @@ function hasActionPayload(payload: Record<string, unknown>): boolean {
 }
 
 function tryParseJsonPayload(raw: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return parseLooseJsonObject(raw);
 }
 
 function findJsonPayloadMatch(content: string): JsonPayloadMatch | null {
@@ -746,10 +773,72 @@ function removeJsonActionFrames(content: string): { content: string; matches: Js
   return { content: next, matches };
 }
 
+function findBalancedJsonEnd(content: string, openBraceIndex: number): number | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = openBraceIndex; index < content.length; index += 1) {
+    const char = content[index]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return null;
+}
+
+function findPrefixedCommandFrameMatches(content: string): TextCommandFrameMatch[] {
+  const matches: TextCommandFrameMatch[] = [];
+  const re = /(^|[^A-Za-z0-9_])([A-Za-z_][\w.-]*)\s*(\{)/g;
+  for (const match of content.matchAll(re)) {
+    const rawName = match[2];
+    if (!rawName || !isWorkspaceToolName(rawName)) continue;
+    const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+    const openBraceIndex = (match.index ?? 0) + match[0].lastIndexOf("{");
+    const end = findBalancedJsonEnd(content, openBraceIndex);
+    if (end === null) continue;
+    const args = parseLooseJsonObject(content.slice(openBraceIndex, end));
+    if (!args) continue;
+    matches.push({
+      call: { id: newToolCallId(rawName, matches.length), name: rawName, arguments: args },
+      raw: content.slice(start, end),
+      start,
+      end,
+    });
+  }
+  return matches;
+}
+
+function removePrefixedCommandFrames(content: string): { content: string; matches: TextCommandFrameMatch[] } {
+  const matches = findPrefixedCommandFrameMatches(content);
+  if (matches.length === 0) return { content, matches };
+  let next = "";
+  let cursor = 0;
+  for (const match of matches) {
+    if (match.start < cursor) continue;
+    next += content.slice(cursor, match.start);
+    cursor = match.end;
+  }
+  next += content.slice(cursor);
+  return { content: next, matches };
+}
+
 function stripWorkspaceCommands(content: string): string {
   if (!content.trim()) return "";
   const withoutJson = removeJsonActionFrames(content).content;
-  return withoutJson
+  const withoutPrefixed = removePrefixedCommandFrames(withoutJson).content;
+  return withoutPrefixed
     .replace(COMMAND_BLOCK_RE, "")
     .replace(/\[(read|grep|find|ls|bash):\s*[^\]\r\n]+\]/gi, "")
     .replace(/\n{3,}/g, "\n\n")
@@ -758,17 +847,20 @@ function stripWorkspaceCommands(content: string): string {
 
 function parseAssistantWorkspaceAction(content: string): AssistantWorkspaceAction {
   const { content: contentWithoutJson, matches } = removeJsonActionFrames(content);
+  const { content: contentWithoutPrefixed, matches: prefixedMatches } = removePrefixedCommandFrames(contentWithoutJson);
   const jsonCommands = matches.flatMap((match) => parseJsonCommandCallsFromPayload(match.payload));
-  const inlineVisibleText = stripWorkspaceCommands(contentWithoutJson);
+  const prefixedCommands = prefixedMatches.map((match) => match.call);
+  const inlineVisibleText = stripWorkspaceCommands(contentWithoutPrefixed);
   const frameVisibleText = matches
     .map((match) => jsonPayloadVisibleText(match.payload))
     .filter(Boolean)
     .join("\n\n");
   const visibleText = [inlineVisibleText, frameVisibleText].filter(Boolean).join("\n\n").trim();
   const commands = dedupeWorkspaceCommandCalls([
-    ...parseXmlCommandCalls(contentWithoutJson),
+    ...parseXmlCommandCalls(contentWithoutPrefixed),
     ...jsonCommands,
-    ...parseBracketCommandCalls(contentWithoutJson),
+    ...prefixedCommands,
+    ...parseBracketCommandCalls(contentWithoutPrefixed),
   ]);
   return {
     visibleText,
@@ -1121,7 +1213,7 @@ export class ProfessorMariWorkspaceService {
     this.active = false;
   }
 
-  async reset() {
+  async reset(_options: { clearHistory?: boolean } = {}) {
     await this.abort();
     this.lastError = null;
   }
