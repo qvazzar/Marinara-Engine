@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Chats
 // ──────────────────────────────────────────────
-import { eq, desc, and, gt, inArray, isNull, isNotNull, sql } from "drizzle-orm";
+import { eq, desc, and, gt, inArray, isNull, isNotNull } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import {
   chats,
@@ -538,17 +538,27 @@ export function createChatsStorage(db: DB) {
     // ── Messages ──
 
     async lastContactByCharacter(chatId: string): Promise<Record<string, string>> {
+      // Aggregate in JS rather than via SQL GROUP BY / MAX(): the default
+      // file-storage backend's query builder implements where()/orderBy() but
+      // not groupBy() (and doesn't evaluate sql`MAX()` aggregates), so the SQL
+      // form throws "groupBy is not a function" there. Selecting the plain
+      // columns and reducing here works on both the file store and libsql.
+      // created_at is a TEXT (ISO) column, so lexicographic `>` is chronological.
       const rows = await db
         .select({
           characterId: messages.characterId,
-          lastAt: sql<string>`MAX(${messages.createdAt})`.as("last_at"),
+          createdAt: messages.createdAt,
         })
         .from(messages)
-        .where(and(eq(messages.chatId, chatId), isNotNull(messages.characterId)))
-        .groupBy(messages.characterId);
+        .where(and(eq(messages.chatId, chatId), isNotNull(messages.characterId)));
       const result: Record<string, string> = {};
       for (const row of rows) {
-        if (row.characterId && row.lastAt) result[row.characterId] = row.lastAt;
+        const characterId = row.characterId;
+        const createdAt = row.createdAt;
+        if (!characterId || !createdAt) continue;
+        if (!result[characterId] || createdAt > result[characterId]) {
+          result[characterId] = createdAt;
+        }
       }
       return result;
     },
