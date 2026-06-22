@@ -77,6 +77,7 @@ import {
 import { lorebookEntryPassesContextFilters, type GameStateForScanning } from "../services/lorebook/keyword-scanner.js";
 import { injectAtDepth } from "../services/lorebook/prompt-injector.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { resolveChatSummaryConnection } from "../services/chat-summary/connection-resolution.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { textRewriteDropsProtectedMarkup } from "../services/generation/text-rewrite-safety.js";
@@ -7259,34 +7260,32 @@ export async function generateRoutes(app: FastifyInstance) {
             .slice(-contextSize);
           if (selectedMessages.length === 0) return;
 
-          let summaryProvider = provider;
-          let summaryModel = conn.model;
-          const summaryConnectionId =
-            typeof chatMeta.summaryConnectionId === "string" && chatMeta.summaryConnectionId.trim()
-              ? chatMeta.summaryConnectionId.trim()
-              : null;
-          const summaryConn = summaryConnectionId
-            ? await connections.getWithKey(summaryConnectionId)
-            : await connections.getDefaultForAgents();
-          if (summaryConn && summaryConn.provider !== "image_generation") {
-            const summaryBaseUrl = resolveBaseUrl(summaryConn);
-            if (summaryBaseUrl) {
-              summaryProvider = createLLMProvider(
-                summaryConn.provider,
-                summaryBaseUrl,
-                summaryConn.apiKey,
-                summaryConn.maxContext,
-                summaryConn.openrouterProvider,
-                summaryConn.maxTokensOverride,
-              );
-              summaryModel = summaryConn.model;
-            }
-          } else if (summaryConnectionId) {
+          const resolvedSummaryConnection = await resolveChatSummaryConnection({
+            chatConnectionId: chat.connectionId,
+            chatMetadata: chatMeta,
+            connections,
+            resolveBaseUrl,
+          });
+          if (!resolvedSummaryConnection.ok) {
             logger.warn(
-              { chatId: input.chatId, connectionId: summaryConnectionId },
-              "[chat-summary] Configured summary connection is unavailable or not a text connection; using chat connection",
+              { chatId: input.chatId, warnings: resolvedSummaryConnection.warnings },
+              "[chat-summary] Skipping automatic summary because no summary connection is usable",
+            );
+            return;
+          }
+          if (resolvedSummaryConnection.warnings.length > 0) {
+            logger.warn(
+              {
+                chatId: input.chatId,
+                connectionId: resolvedSummaryConnection.connectionId,
+                source: resolvedSummaryConnection.source,
+                warnings: resolvedSummaryConnection.warnings,
+              },
+              "[chat-summary] Resolved automatic summary connection after fallback",
             );
           }
+          const summaryProvider = resolvedSummaryConnection.provider;
+          const summaryModel = resolvedSummaryConnection.model;
 
           const chatLog = selectedMessages
             .map((message: any) => `[${message.role}]: ${(message.content as string).slice(0, 2000)}`)

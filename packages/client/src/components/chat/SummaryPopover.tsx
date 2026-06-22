@@ -143,6 +143,7 @@ function isSummaryConnectionOption(value: unknown): value is SummaryConnectionOp
   return (
     typeof record.id === "string" &&
     typeof record.name === "string" &&
+    typeof record.model === "string" &&
     typeof record.provider === "string" &&
     record.provider !== "image_generation"
   );

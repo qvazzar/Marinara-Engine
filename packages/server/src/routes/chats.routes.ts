@@ -5,7 +5,6 @@ import type { FastifyInstance } from "fastify";
 import AdmZip from "adm-zip";
 import { logger } from "../lib/logger.js";
 import {
-  LOCAL_SIDECAR_CONNECTION_ID,
   PROFESSOR_MARI_ID,
   createChatSchema,
   createMessageSchema,
@@ -46,8 +45,8 @@ import { createConnectionsStorage } from "../services/storage/connections.storag
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
 import { createGameStateStorage, type GameStateVisibleAnchor } from "../services/storage/game-state.storage.js";
 import { createRegexScriptsStorage } from "../services/storage/regex-scripts.storage.js";
-import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/local-sidecar.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { resolveChatSummaryConnection } from "../services/chat-summary/connection-resolution.js";
 import { generateMissingConversationSummaries } from "../services/conversation/auto-summary.service.js";
 import { clearChatActivity, recordUserReaction } from "../services/conversation/autonomous.service.js";
 import { rebuildMemoryChunks } from "../services/memory-recall.js";
@@ -2676,49 +2675,33 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     const connections = createConnectionsStorage(app.db);
 
-    // Model resolution chain:
-    // 1. Chat summary override connection
-    // 2. Default-for-agents connection
-    // 3. Chat's active connection
-    const summaryConnectionId =
-      typeof chatMeta.summaryConnectionId === "string" && chatMeta.summaryConnectionId.trim()
-        ? chatMeta.summaryConnectionId.trim()
-        : null;
-    const defaultAgentConn = await connections.getDefaultForAgents();
-
-    const resolvedConnId: string | null = summaryConnectionId ?? defaultAgentConn?.id ?? chat.connectionId ?? null;
-
-    if (!resolvedConnId) return reply.status(400).send({ error: "No API connection configured for this chat" });
-
-    let provider = getLocalSidecarProvider();
-    let model = LOCAL_SIDECAR_MODEL;
-
-    if (resolvedConnId !== LOCAL_SIDECAR_CONNECTION_ID) {
-      let id = resolvedConnId;
-      if (id === "random") {
-        const pool = await connections.listRandomPool();
-        if (!pool.length) return reply.status(400).send({ error: "No connections in random pool" });
-        id = pool[Math.floor(Math.random() * pool.length)]!.id;
+    const resolvedSummaryConnection = await resolveChatSummaryConnection({
+      chatConnectionId: chat.connectionId,
+      chatMetadata: chatMeta,
+      connections,
+      resolveBaseUrl,
+    });
+    if (!resolvedSummaryConnection.ok) {
+      if (resolvedSummaryConnection.warnings.length > 0) {
+        logger.warn(
+          { chatId: req.params.id, warnings: resolvedSummaryConnection.warnings },
+          "[chat-summary] Could not resolve summary connection",
+        );
       }
-      const conn = await connections.getWithKey(id);
-      if (!conn) return reply.status(400).send({ error: "API connection not found" });
-      if (conn.provider === "image_generation") {
-        return reply.status(400).send({ error: "Chat summary connection must be a text generation connection" });
-      }
-
-      const baseUrl = resolveBaseUrl(conn);
-      if (!baseUrl) return reply.status(400).send({ error: "No base URL for this connection" });
-
-      provider = createLLMProvider(
-        conn.provider,
-        baseUrl,
-        conn.apiKey,
-        conn.maxContext,
-        conn.openrouterProvider,
-        conn.maxTokensOverride,
-      );
-      model = conn.model;
+      return reply.status(400).send({ error: resolvedSummaryConnection.error });
     }
+    if (resolvedSummaryConnection.warnings.length > 0) {
+      logger.warn(
+        {
+          chatId: req.params.id,
+          connectionId: resolvedSummaryConnection.connectionId,
+          source: resolvedSummaryConnection.source,
+          warnings: resolvedSummaryConnection.warnings,
+        },
+        "[chat-summary] Resolved summary connection after fallback",
+      );
+    }
+    const { provider, model } = resolvedSummaryConnection;
 
     // Build conversation context (use contextSize from popover, or a custom range).
     // Hidden-from-AI messages are excluded from summary generation even when
