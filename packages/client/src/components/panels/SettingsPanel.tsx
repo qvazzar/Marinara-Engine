@@ -1509,6 +1509,8 @@ function GeneralSettings() {
 }
 
 function ImageGenerationSettings() {
+  const queueImageGenerationRequests = useUIStore((s) => s.queueImageGenerationRequests);
+  const setQueueImageGenerationRequests = useUIStore((s) => s.setQueueImageGenerationRequests);
   const reviewImagePromptsBeforeSend = useUIStore((s) => s.reviewImagePromptsBeforeSend);
   const setReviewImagePromptsBeforeSend = useUIStore((s) => s.setReviewImagePromptsBeforeSend);
   const imageBackgroundWidth = useUIStore((s) => s.imageBackgroundWidth);
@@ -1533,6 +1535,12 @@ function ImageGenerationSettings() {
       icon={<Image size="0.875rem" />}
     >
       <div className="flex flex-col gap-2.5">
+        <ToggleSetting
+          label="Queue image generation requests"
+          checked={queueImageGenerationRequests}
+          onChange={setQueueImageGenerationRequests}
+          help="Sends image generation jobs one at a time. Keep this on for providers that reject simultaneous background, illustration, or portrait requests."
+        />
         <ToggleSetting
           label="Expose image prompts before sending"
           checked={reviewImagePromptsBeforeSend}
@@ -3401,7 +3409,7 @@ function ThemesSettings() {
       let failed = 0;
 
       if (file.name.endsWith(".json")) {
-        const parsed = JSON.parse(text);
+        const parsed = parseThemeJsonWithControlCharFallback(text);
         const entries = getFolderImportEntries(parsed, ["themes"]);
         for (const entry of entries) {
           const source = getFolderManifestConfig(entry);
@@ -3803,6 +3811,21 @@ const CSS_TEMPLATE = `/* ══════════════════�
    You can also add any custom CSS below: */
 `;
 
+function parseThemeJsonWithControlCharFallback(text: string) {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (parseErr) {
+    try {
+      const sanitized = text.replace(/"([^"\\]|\\.)*"/g, (match) =>
+        match.replace(/\r/g, "").replace(/\n/g, "\\n").replace(/\t/g, "\\t"),
+      );
+      return JSON.parse(sanitized) as unknown;
+    } catch {
+      throw parseErr;
+    }
+  }
+}
+
 function createInlineFolderPackageImportEntry(raw: unknown, path: string): FolderPackageImportEntry {
   return {
     raw,
@@ -3874,7 +3897,7 @@ function describeExtensionImportError(error: unknown, name?: string) {
         : "Failed to import extension.";
   const subject = name ? `Failed to install "${name}": ${rawMessage}` : rawMessage;
   if (error instanceof ApiError && error.status === 403) {
-    return `${subject} Installing extensions requires loopback access or admin access. Open Marinara Engine through localhost, or set ADMIN_SECRET on the server and enter it in Settings.`;
+    return `${subject} Installing extensions requires loopback access or admin access. Open Marinara Engine through localhost, or set ADMIN_SECRET=<secret> in the server .env and paste the same value in Settings → Advanced → Admin Access. Marinara sends it as the X-Admin-Secret header.`;
   }
   return subject;
 }
@@ -3885,8 +3908,13 @@ function triggerFilePicker(options: {
   webkitdirectory?: boolean;
   onSelect: (files: FileList) => void;
 }) {
+  // Clean up any previously created/leaked inputs before spawning a new one.
+  const existing = document.querySelectorAll(".marinara-programmatic-picker");
+  existing.forEach((el) => el.parentNode?.removeChild(el));
+
   const el = document.createElement("input");
   el.type = "file";
+  el.className = "marinara-programmatic-picker";
   el.style.position = "fixed";
   el.style.top = "10px";
   el.style.left = "10px";
@@ -3898,21 +3926,6 @@ function triggerFilePicker(options: {
     el.setAttribute("webkitdirectory", "");
   }
 
-  let cleaned = false;
-  const cleanup = () => {
-    if (cleaned) return;
-    cleaned = true;
-    if (el.parentNode === document.body) {
-      document.body.removeChild(el);
-    }
-    window.removeEventListener("focus", handleWindowFocus);
-  };
-
-  const handleWindowFocus = () => {
-    // Wait a tiny bit for the 'change' event to register and run first if a file was selected.
-    setTimeout(cleanup, 300);
-  };
-
   el.addEventListener("change", (e) => {
     const files = (e.target as HTMLInputElement).files;
     if (files && files.length > 0) {
@@ -3922,11 +3935,12 @@ function triggerFilePicker(options: {
         console.error("[triggerFilePicker] Error in onSelect callback:", err);
       }
     }
-    cleanup();
+    if (el.parentNode === document.body) {
+      document.body.removeChild(el);
+    }
   });
 
   document.body.appendChild(el);
-  window.addEventListener("focus", handleWindowFocus);
   el.click();
 }
 
@@ -3936,8 +3950,6 @@ function ExtensionsSettings() {
   const createExtension = useCreateExtension();
   const updateExtension = useUpdateExtension();
   const deleteExtension = useDeleteExtension();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const folderRef = useRef<HTMLInputElement>(null);
 
   const importExtensionEntries = async (
     entries: FolderPackageImportEntry[],
@@ -3992,9 +4004,7 @@ function ExtensionsSettings() {
     }
   };
 
-  const handleImportExtension = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImportExtensionFile = async (file: File) => {
     try {
       const installedAt = new Date().toISOString();
       const fallbackName = file.name.replace(/\.(json|css|js|zip)$/i, "");
@@ -4054,13 +4064,12 @@ function ExtensionsSettings() {
     } catch (err) {
       toast.error(getPrivilegedActionErrorMessage(err, "Failed to import extension."));
     }
-    e.target.value = "";
   };
 
-  const handleImportExtensionFolder = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportExtensionFolder = async (selectedFiles: FileList | null) => {
     try {
       const installedAt = new Date().toISOString();
-      const files = await readTextFilesFromFileList(e.target.files);
+      const files = await readTextFilesFromFileList(selectedFiles);
       const folderName = getLooseExtensionFolderName(files, "extension");
       const entries = collectFolderPackageEntries(files, {
         rootFilenames: ["marinara-extensions.json", "marinara-extension.json"],
@@ -4074,7 +4083,6 @@ function ExtensionsSettings() {
     } catch (err) {
       toast.error(getPrivilegedActionErrorMessage(err, "Failed to import extension folder."));
     }
-    e.target.value = "";
   };
 
   return (
@@ -4089,33 +4097,31 @@ function ExtensionsSettings() {
         <div className="flex flex-col gap-3">
           {/* Import button */}
           <button
-            onClick={() => fileRef.current?.click()}
+            onClick={() => {
+              triggerFilePicker({
+                accept: ".zip,.json,.css,.js,application/zip,application/json",
+                onSelect: (files) => {
+                  const file = files[0];
+                  if (file) void handleImportExtensionFile(file);
+                },
+              });
+            }}
             className="flex items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/50"
           >
             <Download size="0.875rem" /> Import Extension File (.zip, .json, .css, or .js)
           </button>
           <button
-            onClick={() => folderRef.current?.click()}
+            onClick={() => {
+              triggerFilePicker({
+                multiple: true,
+                webkitdirectory: true,
+                onSelect: (files) => void handleImportExtensionFolder(files),
+              });
+            }}
             className="flex items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/50"
           >
             <FolderOpen size="0.875rem" /> Import Extension Folder
           </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".zip,.json,.css,.js,application/zip,application/json"
-            className="hidden"
-            onChange={handleImportExtension}
-          />
-          <input
-            ref={folderRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={handleImportExtensionFolder}
-            // @ts-expect-error — webkitdirectory is a non-standard but widely-supported attribute
-            webkitdirectory=""
-          />
 
           {/* Extension list */}
           <div className="flex flex-col gap-1.5">
