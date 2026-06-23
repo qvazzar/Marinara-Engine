@@ -48,16 +48,13 @@ import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { usePresenceClock } from "../../hooks/use-presence-clock";
 import { toast } from "sonner";
 import {
-  getActiveStatusOverride,
-  getEffectiveCurrentStatus,
   includesTextForMatch,
   normalizeTextForMatch,
   type Chat,
   type ChatFolder,
   type ChatMode,
-  type ConversationStatusOverride,
-  type WeekSchedule,
 } from "@marinara-engine/shared";
+import { resolveLiveConversationStatus } from "../../lib/conversation-presence-status";
 import { Modal } from "../ui/Modal";
 import { Reorder, useDragControls } from "framer-motion";
 import { parseChatMetadata } from "../../lib/chat-display";
@@ -861,25 +858,10 @@ export function ChatSidebar() {
             const chatCharStatuses = convoMeta?.conversationCharacterStatuses as
               | Record<string, { status?: string }>
               | undefined;
-            const statusOverrides = convoMeta?.conversationStatusOverrides as
-              | Record<string, ConversationStatusOverride>
-              | undefined;
-            const characterSchedules =
-              convoMeta?.conversationSchedulesEnabled === false
-                ? undefined
-                : (convoMeta?.characterSchedules as Record<string, WeekSchedule> | undefined);
-            const statusNow = presenceNow;
-            // Prefer the live override/schedule-derived status (matching the presence pill)
-            // over the generation-time snapshot, which only refreshes on the next generated
-            // message. Fall back to the snapshot when there is no active override or schedule.
-            const resolveConvoStatus = (id: string): string | undefined => {
-              const schedule = characterSchedules?.[id];
-              const override = statusOverrides?.[id];
-              if (getActiveStatusOverride(override, statusNow) || schedule) {
-                return getEffectiveCurrentStatus(schedule, override, statusNow).status;
-              }
-              return chatCharStatuses?.[id]?.status;
-            };
+            // Prefer the live override/schedule-derived status (matching the presence pill) over the
+            // generation-time snapshot, which only refreshes on the next generated message.
+            const resolveConvoStatus = (id: string): string | undefined =>
+              resolveLiveConversationStatus(convoMeta, id, presenceNow)?.status ?? chatCharStatuses?.[id]?.status;
             const avatars = charIds
               .slice(0, 3)
               .map((id) => {

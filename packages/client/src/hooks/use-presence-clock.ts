@@ -16,6 +16,10 @@ export function usePresenceClock(intervalMs = 60_000): Date {
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
+    // Guard non-DOM environments (tests / any non-browser runtime); the client
+    // normally runs in a browser or Tauri webview where `document` exists.
+    if (typeof document === "undefined") return;
+
     let timer: ReturnType<typeof setInterval> | null = null;
 
     const start = () => {
