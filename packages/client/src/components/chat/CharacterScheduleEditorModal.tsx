@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { cn } from "../../lib/utils";
 import type { ScheduleBlock, WeekSchedule } from "@marinara-engine/shared";
@@ -13,6 +13,35 @@ const STATUS_COLORS: Record<ScheduleBlock["status"], string> = {
   offline: "bg-gray-400",
 };
 const AUTONOMOUS_DAILY_CAP_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+
+const SCHEDULE_HINTS = ["Keep the week compact, readable, and easy to edit later."] as const;
+const CURRENT_SCHEDULE_DAY = CONVERSATION_SCHEDULE_DAYS[(new Date().getDay() + 6) % 7];
+const CURRENT_SCHEDULE_MINUTES = new Date().getHours() * 60 + new Date().getMinutes();
+const RULER_HOURS = Array.from({ length: 25 }, (_, hour) => hour);
+
+function parseScheduleMinutes(value: string) {
+  const [hoursPart, minutesPart] = value.split(":");
+  const hours = Number(hoursPart);
+  const minutes = Number(minutesPart);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+function parseScheduleRange(value: string) {
+  const [startRaw, endRaw] = value.split("-");
+  const start = parseScheduleMinutes(startRaw ?? "");
+  const end = parseScheduleMinutes(endRaw ?? "");
+  if (start == null || end == null) return null;
+
+  const normalizedEnd = end === 0 && start > 0 ? 1440 : end;
+  if (normalizedEnd <= start) return null;
+
+  return { start, end: normalizedEnd };
+}
+
+function statusLabel(status?: ScheduleBlock["status"]) {
+  return status === "offline" ? "Offline" : status === "dnd" ? "Busy" : status === "idle" ? "Away" : "Online";
+}
 
 function getMonday(date: Date = new Date()) {
   const next = new Date(date);
@@ -37,6 +66,7 @@ interface CharacterScheduleEditorModalProps {
   characterId: string | null;
   characterName: string;
   schedule?: WeekSchedule;
+  initialDay?: string | null;
   onClose: () => void;
   onSave: (characterId: string, updated: WeekSchedule) => void;
 }
@@ -46,6 +76,7 @@ export function CharacterScheduleEditorModal({
   characterId,
   characterName,
   schedule,
+  initialDay,
   onClose,
   onSave,
 }: CharacterScheduleEditorModalProps) {
@@ -75,8 +106,8 @@ export function CharacterScheduleEditorModal({
     setAutonomousDailyCapOverride(
       typeof nextDraft.autonomousDailyCapOverride === "number" ? String(nextDraft.autonomousDailyCapOverride) : "",
     );
-    setExpandedDay(null);
-  }, [characterId, open, schedule]);
+    setExpandedDay(initialDay ?? null);
+  }, [characterId, initialDay, open, schedule]);
 
   const parseRequiredMinutes = useCallback((value: string, fallback: number, min: number, max: number) => {
     const parsed = Number(value);
@@ -166,19 +197,103 @@ export function CharacterScheduleEditorModal({
     parseRequiredMinutes,
   ]);
 
-  return (
-    <Modal open={open} onClose={onClose} title={`Edit ${characterName} Schedule`} width="max-w-4xl" mobileFullScreen>
-      {!draft ? null : (
-        <div className="space-y-3">
-          <div className="rounded-xl bg-[var(--foreground)]/[0.03] px-3 py-2.5 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]/45">
-            Open one character at a time, edit their routine and check-in cap, then save back to chat settings.
-          </div>
+  const totalBlocks = draft ? Object.values(draft.days).reduce((count, blocks) => count + blocks.length, 0) : 0;
+  const scheduledDays = draft ? Object.values(draft.days).filter((blocks) => blocks.length > 0).length : 0;
+  const hasAnyBlocks = totalBlocks > 0;
 
-          <div className="rounded-2xl bg-[var(--secondary)]/20 p-2.5 ring-1 ring-[var(--border)]/70">
-            <div className="grid gap-2 sm:grid-cols-4">
-              <label className="space-y-1">
-                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]/85">
-                  Inactivity
+  const renderBlockEditor = (day: string, block: ScheduleBlock, idx: number) => (
+    <div
+      key={`${day}-${idx}-${block.time}`}
+      className="rounded-2xl border border-[var(--border)]/65 bg-[var(--foreground)]/[0.035] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+    >
+      <div className="flex flex-col gap-3 md:flex-row md:items-start">
+        <div className="flex shrink-0 flex-row items-start gap-1.5 md:flex-col md:pt-0.5">
+          <div className="relative w-[7.25rem]">
+            <select
+              value={block.status}
+              onChange={(e) => updateBlock(day, idx, "status", e.target.value)}
+              aria-label={`Change status: ${statusLabel(block.status)}`}
+              className={cn(
+                "mari-chrome-control mari-chrome-control--small h-[2rem] w-full appearance-none gap-1 px-2 py-1.5 pr-6 text-[0.625rem]",
+                STATUS_COLORS[block.status],
+              )}
+            >
+              {STATUS_OPTIONS.map((status) => (
+                <option key={status} value={status}>
+                  {statusLabel(status)}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              size="0.625rem"
+              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]/70"
+            />
+          </div>
+          <input
+            value={block.time}
+            onChange={(e) => updateBlock(day, idx, "time", e.target.value)}
+            className="mari-chrome-control mari-chrome-control--small w-[7.25rem] min-h-[2rem] px-2 py-1.5 text-center text-[0.625rem] tabular-nums"
+            placeholder="06:00-08:00"
+          />
+        </div>
+        <textarea
+          value={block.activity}
+          onChange={(e) => updateBlock(day, idx, "activity", e.target.value)}
+          rows={5}
+          className="mari-chrome-field min-h-[7.5rem] min-w-0 flex-1 resize-none px-3 py-2 text-[0.625rem] leading-5"
+          placeholder="Activity description"
+        />
+        <button
+          type="button"
+          onClick={() => removeBlock(day, idx)}
+          className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] md:mt-0.5"
+          title="Delete block"
+        >
+          <Trash2 size="0.7rem" />
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Edit ${characterName} Schedule`} width="max-w-5xl" mobileFullScreen>
+      {!draft ? null : (
+        <div className="space-y-4">
+          <section className="rounded-md border border-[var(--border)]/75 bg-[var(--foreground)]/[0.03] px-3 py-3 transition-colors hover:bg-[var(--foreground)]/[0.05]">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 space-y-1">
+                <p className="text-[0.5625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/72">
+                  Weekly routine
+                </p>
+                <h3 className="text-[0.9rem] font-semibold text-[var(--foreground)]">{characterName}</h3>
+                <p className="max-w-[68ch] text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]/78">
+                  Adjust how this character moves through the week, how fast they check in, and how many autonomous touches they can make.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-full bg-[var(--foreground)]/8 px-2.5 py-1 text-[0.5625rem] font-medium text-[var(--foreground)]/82 ring-1 ring-[var(--border)]/45">
+                  {scheduledDays} day{scheduledDays === 1 ? "" : "s"} active
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-[var(--foreground)]/8 px-2.5 py-1 text-[0.5625rem] font-medium text-[var(--foreground)]/82 ring-1 ring-[var(--border)]/45">
+                  {totalBlocks} block{totalBlocks === 1 ? "" : "s"}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-[var(--foreground)]/8 px-2.5 py-1 text-[0.5625rem] font-medium text-[var(--foreground)]/82 ring-1 ring-[var(--border)]/45">
+                  {hasAnyBlocks ? "Schedule drafted" : "No blocks yet"}
+                </span>
+              </div>
+            </div>
+
+            <p className="mt-3 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/55 px-3 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]/76">
+              {SCHEDULE_HINTS[0]}
+            </p>
+          </section>
+
+          <section className="rounded-md border border-[var(--border)]/75 bg-[var(--foreground)]/[0.03] p-3 transition-colors hover:bg-[var(--foreground)]/[0.045]">
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <label className="space-y-1.5 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/72 px-3 py-2.5">
+                <span className="block text-[0.5625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/78">
+                  Inactivity threshold
                 </span>
                 <input
                   type="number"
@@ -187,15 +302,16 @@ export function CharacterScheduleEditorModal({
                   step={5}
                   value={inactivityThresholdMinutes}
                   onChange={(e) => setInactivityThresholdMinutes(e.target.value)}
-                  className="w-full rounded-md bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/80 transition-shadow focus:ring-[var(--primary)]/40"
+                  className="w-full rounded-lg border border-[var(--border)]/70 bg-[var(--background)] px-3 py-2 text-[0.6875rem] text-[var(--foreground)] outline-none transition-shadow focus:border-[var(--primary)]/40 focus:ring-2 focus:ring-[var(--primary)]/20"
                 />
-                <span className="block text-[0.5rem] leading-snug text-[var(--muted-foreground)]/70">
-                  Minutes before they follow up.
+                <span className="block text-[0.5625rem] leading-snug text-[var(--muted-foreground)]/68">
+                  Minutes before the character nudges again.
                 </span>
               </label>
-              <label className="space-y-1">
-                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]/85">
-                  Idle Delay
+
+              <label className="space-y-1.5 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/72 px-3 py-2.5">
+                <span className="block text-[0.5625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/78">
+                  Idle delay
                 </span>
                 <input
                   type="number"
@@ -204,16 +320,17 @@ export function CharacterScheduleEditorModal({
                   step={0.5}
                   value={idleResponseDelayMinutes}
                   onChange={(e) => setIdleResponseDelayMinutes(e.target.value)}
-                  className="w-full rounded-md bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/80 transition-shadow focus:ring-[var(--primary)]/40"
+                  className="w-full rounded-lg border border-[var(--border)]/70 bg-[var(--background)] px-3 py-2 text-[0.6875rem] text-[var(--foreground)] outline-none transition-shadow focus:border-[var(--primary)]/40 focus:ring-2 focus:ring-[var(--primary)]/20"
                   placeholder="Default"
                 />
-                <span className="block text-[0.5rem] leading-snug text-[var(--muted-foreground)]/70">
-                  Blank keeps the built-in 1-3 minute range.
+                <span className="block text-[0.5625rem] leading-snug text-[var(--muted-foreground)]/68">
+                  Leave blank to keep the default idle response timing.
                 </span>
               </label>
-              <label className="space-y-1">
-                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]/85">
-                  DND Delay
+
+              <label className="space-y-1.5 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/72 px-3 py-2.5">
+                <span className="block text-[0.5625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/78">
+                  DND delay
                 </span>
                 <input
                   type="number"
@@ -222,21 +339,22 @@ export function CharacterScheduleEditorModal({
                   step={0.5}
                   value={dndResponseDelayMinutes}
                   onChange={(e) => setDndResponseDelayMinutes(e.target.value)}
-                  className="w-full rounded-md bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/80 transition-shadow focus:ring-[var(--primary)]/40"
+                  className="w-full rounded-lg border border-[var(--border)]/70 bg-[var(--background)] px-3 py-2 text-[0.6875rem] text-[var(--foreground)] outline-none transition-shadow focus:border-[var(--primary)]/40 focus:ring-2 focus:ring-[var(--primary)]/20"
                   placeholder="Default"
                 />
-                <span className="block text-[0.5rem] leading-snug text-[var(--muted-foreground)]/70">
-                  Blank keeps the built-in 2-5 minute range.
+                <span className="block text-[0.5625rem] leading-snug text-[var(--muted-foreground)]/68">
+                  Leave blank to keep the default busy response timing.
                 </span>
               </label>
-              <label className="space-y-1">
-                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]/85">
-                  Character Check-In Cap
+
+              <label className="space-y-1.5 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/72 px-3 py-2.5">
+                <span className="block text-[0.5625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/78">
+                  Check-in cap
                 </span>
                 <select
                   value={autonomousDailyCapOverride}
                   onChange={(e) => setAutonomousDailyCapOverride(e.target.value)}
-                  className="w-full rounded-md bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/80 transition-shadow focus:ring-[var(--primary)]/40"
+                  className="w-full rounded-lg border border-[var(--border)]/70 bg-[var(--background)] px-3 py-2 text-[0.6875rem] text-[var(--foreground)] outline-none transition-shadow focus:border-[var(--primary)]/40 focus:ring-2 focus:ring-[var(--primary)]/20"
                 >
                   <option value="">Default</option>
                   {AUTONOMOUS_DAILY_CAP_OPTIONS.map((cap) => (
@@ -245,123 +363,269 @@ export function CharacterScheduleEditorModal({
                     </option>
                   ))}
                 </select>
-                <span className="block text-[0.5rem] leading-snug text-[var(--muted-foreground)]/70">
-                  Blank uses the chat ceiling, then talkativeness.
+                <span className="block text-[0.5625rem] leading-snug text-[var(--muted-foreground)]/68">
+                  Blank uses the chat limit, then talkativeness.
                 </span>
               </label>
             </div>
-          </div>
+          </section>
 
-          <div className="space-y-2">
-            {CONVERSATION_SCHEDULE_DAYS.map((day) => {
-              const blocks = draft.days[day] ?? [];
-              const isDayExpanded = expandedDay === day;
+          <section className="space-y-2">
+            <div className="flex items-center justify-between gap-3 px-1">
+              <div>
+                <p className="text-[0.625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/72">
+                  Weekly blocks
+                </p>
+                <p className="text-[0.5625rem] text-[var(--muted-foreground)]/60">
+                  Expand a day, edit the block, then collapse it again to keep the week readable.
+                </p>
+              </div>
+            </div>
 
-              return (
-                <div key={day} className="rounded-2xl bg-[var(--accent)]/10 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/16">
-                  <button
-                    type="button"
-                    onClick={() => setExpandedDay(isDayExpanded ? null : day)}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[var(--accent)]/12"
-                  >
-                    <ChevronRight
-                      size="0.5625rem"
-                      className={cn("text-[var(--muted-foreground)]/75 transition-transform", isDayExpanded && "rotate-90")}
-                    />
-                    <span className="flex-1 text-[0.625rem] font-medium text-[var(--foreground)]/90">{day}</span>
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      {blocks.slice(0, 8).map((block, index) => (
-                        <span
-                          key={index}
-                          className={cn("inline-block h-1.5 w-1.5 rounded-full ring-1 ring-[var(--card)]", STATUS_COLORS[block.status])}
-                          title={`${block.time} — ${block.activity}`}
-                        />
-                      ))}
-                      {blocks.length > 8 && (
-                        <span className="text-[0.5rem] text-[var(--muted-foreground)]/70">+{blocks.length - 8}</span>
+            <div className="space-y-2.5">
+              {CONVERSATION_SCHEDULE_DAYS.map((day) => {
+                const blocks = draft.days[day] ?? [];
+                const isDayExpanded = expandedDay === day;
+                const isToday = day === CURRENT_SCHEDULE_DAY;
+                const timelineBlocks = blocks
+                  .map((block) => {
+                    const range = parseScheduleRange(block.time);
+                    return range ? { ...block, ...range } : null;
+                  })
+                  .filter((block): block is ScheduleBlock & { start: number; end: number } => block !== null)
+                  .sort((left, right) => left.start - right.start);
+
+                const formatRulerTick = (hour: number) => {
+                  return (hour % 24).toString().padStart(2, "0");
+                };
+
+                return (
+                  <div key={day} className="overflow-hidden rounded-md border border-[var(--border)]/75 bg-[var(--foreground)]/[0.03] transition-colors hover:bg-[var(--foreground)]/[0.05]">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedDay(isDayExpanded ? null : day)}
+                      aria-expanded={isDayExpanded}
+                      className={cn(
+                        "grid w-full grid-cols-[minmax(0,6.75rem)_minmax(0,5.25rem)_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--foreground)]/[0.045] max-md:grid-cols-1 max-md:items-start",
+                        isDayExpanded && "bg-[var(--primary)]/[0.05] hover:bg-[var(--primary)]/[0.07]",
                       )}
-                    </span>
-                    <span className="rounded-full bg-[var(--foreground)]/6 px-1.5 py-0.5 text-[0.5rem] text-[var(--muted-foreground)]/75 ring-1 ring-[var(--border)]/45">
-                      {blocks.length}
-                    </span>
-                  </button>
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <ChevronRight
+                          size="0.6875rem"
+                          className={cn("shrink-0 text-[var(--primary)] transition-transform", isDayExpanded && "rotate-90")}
+                        />
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="text-[0.6875rem] font-medium leading-none text-[var(--foreground)]/90">{day}</span>
+                            {isToday && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--primary)]/10 px-2 py-0.5 text-[0.5rem] font-medium text-[var(--primary)] ring-1 ring-[var(--primary)]/20 md:hidden">
+                                <ArrowRight size="0.55rem" />
+                                Today
+                              </span>
+                            )}
+                          </div>
+                          {isToday && (
+                            <span className="hidden md:inline-flex items-center gap-1 rounded-full bg-[var(--primary)]/10 px-2 py-0.5 text-[0.5rem] font-medium text-[var(--primary)] ring-1 ring-[var(--primary)]/20">
+                              <ArrowRight size="0.55rem" />
+                              Today
+                            </span>
+                          )}
+                        </div>
+                      </div>
 
-                  {isDayExpanded && (
-                    <div className="mt-1.5 space-y-2 rounded-b-2xl bg-[var(--foreground)]/[0.03] px-2.5 py-2">
-                      {blocks.map((block, idx) => (
-                        <div key={idx} className="flex items-start gap-2 rounded-lg bg-[var(--background)]/75 p-2 ring-1 ring-[var(--border)]/70">
-                          <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full ring-1 ring-[var(--card)]", STATUS_COLORS[block.status])} />
-                          <div className="min-w-0 flex-1 space-y-1">
-                            <input
-                              value={block.time}
-                              onChange={(e) => updateBlock(day, idx, "time", e.target.value)}
-                              className="w-full rounded-md bg-[var(--secondary)] px-2 py-1 text-[0.625rem] font-mono text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/70 transition-shadow focus:ring-[var(--primary)]/40"
-                              placeholder="06:00-08:00"
-                            />
-                            <input
-                              value={block.activity}
-                              onChange={(e) => updateBlock(day, idx, "activity", e.target.value)}
-                              className="w-full rounded-md bg-[var(--secondary)] px-2 py-1 text-[0.625rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/70 transition-shadow focus:ring-[var(--primary)]/40"
-                              placeholder="Activity description"
-                            />
-                            <div className="flex flex-wrap gap-1">
-                              {STATUS_OPTIONS.map((status) => (
-                                <button
-                                  key={status}
-                                  type="button"
-                                  onClick={() => updateBlock(day, idx, "status", status)}
-                                  className={cn(
-                                    "rounded-md px-2 py-0.5 text-[0.5625rem] font-medium transition-colors",
-                                    block.status === status
-                                      ? "bg-[var(--foreground)]/90 text-[var(--background)]"
-                                      : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-                                  )}
+                      <div className="flex min-w-0 items-start pt-0.5 text-[0.5625rem] text-[var(--muted-foreground)]/76 max-md:pt-0">
+                        {!isDayExpanded && (
+                          <span className="rounded-full bg-[var(--foreground)]/8 px-2 py-0.5 ring-1 ring-[var(--border)]/45">
+                            {blocks.length} block{blocks.length === 1 ? "" : "s"}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="min-w-0 max-md:w-full">
+                        {!isDayExpanded && (blocks.length === 0 ? (
+                          <div className="rounded-md border border-dashed border-[var(--border)]/55 bg-[var(--background)]/45 px-3 py-2 text-[0.5625rem] text-[var(--muted-foreground)]/60">
+                            No blocks yet
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <div
+                              className="relative h-4 min-w-0 overflow-hidden rounded-full border border-[var(--border)]/55"
+                            >
+                              {timelineBlocks.map((block, index) => {
+                                const left = (block.start / 1440) * 100;
+                                const width = Math.max(3, ((block.end - block.start) / 1440) * 100);
+
+                                return (
+                                  <span
+                                    key={`${day}-${index}-${block.time}`}
+                                    className={cn(
+                                      "absolute inset-y-[0.125rem] overflow-hidden rounded-full border border-black/10 shadow-sm",
+                                      STATUS_COLORS[block.status],
+                                    )}
+                                    style={{ left: `${left}%`, width: `calc(${width}% - 0.1rem)` }}
+                                    title={`${block.time} — ${block.activity}`}
+                                  >
+                                    <span className="sr-only">
+                                      {block.time} {block.activity}
+                                    </span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                            <div className="relative grid grid-cols-[repeat(25,minmax(0,1fr))] gap-0 text-[0.45rem] text-[var(--muted-foreground)]/58">
+                              {isToday && (
+                                <span
+                                  className="pointer-events-none absolute left-0 top-0 w-full"
+                                  style={{
+                                    transform: `translateX(${Math.max(1.5, Math.min(98.5, (CURRENT_SCHEDULE_MINUTES / 1440) * 100))}%)`,
+                                  }}
                                 >
-                                  {status}
-                                </button>
-                              ))}
+                                  <span className="absolute left-0 top-[-0.12rem] -translate-x-1/2">
+                                    <span className="block h-0 w-0 border-b-[0.42rem] border-l-[0.28rem] border-r-[0.28rem] border-b-[var(--primary)] border-l-transparent border-r-transparent drop-shadow-[0_1px_0_rgba(0,0,0,0.08)]" />
+                                  </span>
+                                </span>
+                              )}
+                              {RULER_HOURS.map((hour) => {
+                                const showLabel = hour % 3 === 0;
+
+                                return (
+                                  <div
+                                    key={hour}
+                                    className={cn("flex flex-col items-center gap-0.25 pt-0.5", hour === 0 && "items-start", hour === 24 && "items-end")}
+                                  >
+                                    <span className={cn("w-px bg-[var(--border)]/70", showLabel ? "h-2" : "h-1")} />
+                                    {showLabel && <span className="translate-y-[-0.1rem]">{formatRulerTick(hour)}</span>}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => removeBlock(day, idx)}
-                            className="mt-1 rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:bg-red-500/15 hover:text-red-400"
-                            title="Delete block"
-                          >
-                            <Trash2 size="0.625rem" />
-                          </button>
-                        </div>
-                      ))}
-                      <button
-                        type="button"
-                        onClick={() => addBlock(day)}
-                        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)]/80 bg-[var(--background)]/55 px-2.5 py-1.5 text-[0.5625rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]/20 hover:text-[var(--foreground)]"
-                      >
-                        <Plus size="0.5625rem" />
-                        Add time block
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                        ))}
+                      </div>
+                    </button>
+
+                    {isDayExpanded && (
+                      <div className="space-y-3 border-t border-[var(--primary)]/15 bg-[color-mix(in_srgb,var(--primary)_4%,var(--background))] px-3 py-3 shadow-[inset_0_1px_0_color-mix(in_srgb,var(--primary)_6%,transparent)]">
+          <div className="flex items-center justify-between gap-2 px-0.5">
+            <div className="text-[0.5625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/72">
+              Edit blocks
+            </div>
           </div>
 
-          <div className="flex justify-end gap-2 border-t border-[var(--border)]/60 pt-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md px-3 py-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              className="rounded-md bg-[var(--foreground)]/90 px-3 py-1.5 text-[0.625rem] font-medium text-[var(--background)] transition-colors hover:bg-[var(--foreground)]"
-            >
-              Save Changes
-            </button>
+                        <div className="space-y-1.5 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/45 px-3 py-2">
+                          <p className="text-[0.5rem] uppercase tracking-[0.08em] text-[var(--muted-foreground)]/60">Timeline preview</p>
+                          {blocks.length === 0 ? (
+                            <div className="rounded-md border border-dashed border-[var(--border)]/65 bg-[var(--background)]/55 px-3 py-3 text-[0.625rem] text-[var(--muted-foreground)]/76">
+                              No timeline yet for {day}.
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              <div className="relative h-4 min-w-0 overflow-hidden rounded-full border border-[var(--border)]/55">
+                                {timelineBlocks.map((block, index) => {
+                                  const left = (block.start / 1440) * 100;
+                                  const width = Math.max(3, ((block.end - block.start) / 1440) * 100);
+
+                                  return (
+                                    <span
+                                      key={`${day}-${index}-${block.time}`}
+                                      className={cn(
+                                        "absolute inset-y-[0.125rem] overflow-hidden rounded-full border border-black/10 shadow-sm",
+                                        STATUS_COLORS[block.status],
+                                      )}
+                                      style={{ left: `${left}%`, width: `calc(${width}% - 0.1rem)` }}
+                                      title={`${block.time} — ${block.activity}`}
+                                    >
+                                      <span className="sr-only">
+                                        {block.time} {block.activity}
+                                      </span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              <div className="relative grid grid-cols-[repeat(25,minmax(0,1fr))] gap-0 text-[0.45rem] text-[var(--muted-foreground)]/58">
+                                {isToday && (
+                                  <span
+                                    className="pointer-events-none absolute left-0 top-0 w-full"
+                                    style={{
+                                      transform: `translateX(${Math.max(1.5, Math.min(98.5, (CURRENT_SCHEDULE_MINUTES / 1440) * 100))}%)`,
+                                    }}
+                                  >
+                                    <span className="absolute left-0 top-[-0.12rem] -translate-x-1/2">
+                                      <span className="block h-0 w-0 border-b-[0.42rem] border-l-[0.28rem] border-r-[0.28rem] border-b-[var(--primary)] border-l-transparent border-r-transparent drop-shadow-[0_1px_0_rgba(0,0,0,0.08)]" />
+                                    </span>
+                                  </span>
+                                )}
+                                {RULER_HOURS.map((hour) => {
+                                  const showLabel = hour % 3 === 0;
+
+                                  return (
+                                    <div
+                                      key={hour}
+                                      className={cn("flex flex-col items-center gap-0.25 pt-0.5", hour === 0 && "items-start", hour === 24 && "items-end")}
+                                    >
+                                      <span className={cn("w-px bg-[var(--border)]/70", showLabel ? "h-2" : "h-1")} />
+                                      {showLabel && <span className="translate-y-[-0.1rem]">{formatRulerTick(hour)}</span>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="rounded-md border border-[var(--border)]/55 bg-[var(--background)]/45 px-3 py-2 text-[0.5625rem] text-[var(--muted-foreground)]/64">
+                            {blocks.length === 0
+                              ? "No blocks yet in this day."
+                              : `${blocks.length} block${blocks.length === 1 ? "" : "s"} scheduled.`}
+                          </div>
+
+                          {blocks.length === 0 ? (
+                            <div className="rounded-md border border-dashed border-[var(--border)]/75 bg-[var(--background)]/60 px-3 py-3 text-[0.625rem] text-[var(--muted-foreground)]/76">
+                              No blocks yet for {day}. Add one to start shaping this day.
+                            </div>
+                          ) : (
+                            <div className="space-y-2">{blocks.map((block, idx) => renderBlockEditor(day, block, idx))}</div>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => addBlock(day)}
+                          className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-[var(--border)]/80 bg-[var(--foreground)]/[0.03] px-3 py-2 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/30 hover:bg-[var(--foreground)]/[0.06] hover:text-[var(--foreground)]"
+                        >
+                          <Plus size="0.625rem" />
+                          Add time block
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <div className="flex flex-col gap-2 border-t border-[var(--border)]/60 pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[0.5625rem] leading-relaxed text-[var(--muted-foreground)]/68">
+              Save returns the edited routine to chat settings immediately.
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md px-3 py-2 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                className="rounded-md bg-[var(--foreground)]/92 px-3 py-2 text-[0.625rem] font-medium text-[var(--background)] transition-colors hover:bg-[var(--foreground)]"
+              >
+                Save changes
+              </button>
+            </div>
           </div>
         </div>
       )}

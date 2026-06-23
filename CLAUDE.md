@@ -9,6 +9,16 @@ This file is a thin maintainer note for contributors using Claude. Canonical wor
 - Run `pnpm db:push` when server or database changes need schema verification.
 - Run `pnpm version:check` when you touch release metadata, version-bearing files, or README release references.
 
+## Dev Server - Data Directory
+
+Always start the dev server with the existing test data on ubuntu:
+
+```bash
+DATA_DIR=/root/.local/share/marinara-engine-dev/data pnpm dev
+```
+
+This preserves test characters, settings, and connections between sessions.
+
 ## Repo-Specific Cautions
 
 - Keep edits non-destructive. Do not revert unrelated work in the tree.

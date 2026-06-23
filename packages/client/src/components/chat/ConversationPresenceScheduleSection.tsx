@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { ChevronDown, Eye, EyeOff, MoreVertical, PencilLine, Settings2 } from "lucide-react";
+import { MoreVertical, PencilLine, Settings2, Trash2 } from "lucide-react";
 import type { ConversationPresenceStatus, WeekSchedule as SharedWeekSchedule } from "@marinara-engine/shared";
 import { useUpdateChatMetadata } from "../../hooks/use-chats";
 import { cn } from "../../lib/utils";
@@ -18,6 +18,8 @@ type ConversationPresenceScheduleSectionProps = {
 };
 
 type UpcomingScheduleBlock = {
+  day: string;
+  index: number;
   label: string;
   time: string;
   activity: string;
@@ -75,19 +77,23 @@ function getUpcomingScheduleBlocks(schedule?: Partial<SharedWeekSchedule>, limit
   for (let dayOffset = 0; dayOffset < SCHEDULE_DAYS.length; dayOffset += 1) {
     const dayIndex = (todayIndex + dayOffset) % SCHEDULE_DAYS.length;
     const dayName = SCHEDULE_DAYS[dayIndex];
-    const blocks = [...(schedule.days[dayName] ?? [])].sort((left, right) => {
-      const leftStart = parseTimeToMinutes(left.time?.split("-")[0]) ?? Number.MAX_SAFE_INTEGER;
-      const rightStart = parseTimeToMinutes(right.time?.split("-")[0]) ?? Number.MAX_SAFE_INTEGER;
+    const blocks = [...(schedule.days[dayName] ?? [])]
+      .map((block, index) => ({ block, index }))
+      .sort((left, right) => {
+        const leftStart = parseTimeToMinutes(left.block.time?.split("-")[0]) ?? Number.MAX_SAFE_INTEGER;
+        const rightStart = parseTimeToMinutes(right.block.time?.split("-")[0]) ?? Number.MAX_SAFE_INTEGER;
       return leftStart - rightStart;
     });
 
-    for (const block of blocks) {
+    for (const { block, index } of blocks) {
       const startMinutes = parseTimeToMinutes(block.time?.split("-")[0]);
       if (startMinutes == null) continue;
       if (dayOffset === 0 && startMinutes <= currentMinutes) continue;
 
       const dayPrefix = dayOffset === 0 ? "" : dayOffset === 1 ? "Next day" : dayName;
       upcoming.push({
+        day: dayName,
+        index,
         label: dayPrefix,
         time: block.time ?? "",
         activity: block.activity || statusLabel(block.status),
@@ -110,8 +116,8 @@ export function ConversationPresenceScheduleSection({
 }: ConversationPresenceScheduleSectionProps) {
   const updateMeta = useUpdateChatMetadata();
   const [scheduleModalCharacterId, setScheduleModalCharacterId] = useState<string | null>(null);
+  const [scheduleModalInitialDay, setScheduleModalInitialDay] = useState<string | null>(null);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ x: number; y: number } | null>(null);
-  const [isPreviewVisible, setIsPreviewVisible] = useState(false);
 
   const hasGeneratedConversationSchedules =
     !!chatMeta.characterSchedules &&
@@ -135,7 +141,6 @@ export function ConversationPresenceScheduleSection({
         : "Schedule exists, but nothing is upcoming yet."
       : "Autonomous scheduling is on, but no schedule has been generated yet.";
 
-  const showPreviewToggle = hasSchedule && hasUpcomingScheduleBlocks;
   const editScheduleLabel = hasSchedule ? "Edit schedule" : "Create schedule";
 
   const openAutonomousSettings = useCallback(
@@ -153,6 +158,42 @@ export function ConversationPresenceScheduleSection({
   }, [chatId, conversationSchedulesEnabled, updateMeta]);
 
   const openFullScheduleEditor = useCallback(() => setScheduleModalCharacterId(characterId), [characterId]);
+
+  const openDayInEditor = useCallback(
+    (day: string) => {
+      setScheduleModalInitialDay(day);
+      setScheduleModalCharacterId(characterId);
+    },
+    [characterId],
+  );
+
+  const saveCharacterSchedule = useCallback(
+    (savedCharacterId: string, updated: SharedWeekSchedule) => {
+      updateMeta.mutate({
+        id: chatId,
+        characterSchedules: {
+          ...(chatMeta.characterSchedules ?? {}),
+          [savedCharacterId]: updated,
+        },
+      });
+    },
+    [chatId, chatMeta.characterSchedules, updateMeta],
+  );
+
+  const removeScheduleBlock = useCallback(
+    (day: string, blockIndex: number) => {
+      if (!schedule) return;
+      const nextSchedule: SharedWeekSchedule = {
+        ...schedule,
+        days: {
+          ...(schedule.days ?? {}),
+          [day]: (schedule.days?.[day] ?? []).filter((_, index) => index !== blockIndex),
+        },
+      };
+      saveCharacterSchedule(characterId, nextSchedule);
+    },
+    [characterId, saveCharacterSchedule, schedule],
+  );
 
   const menuItems = useMemo<ContextMenuItem[]>(
     () => [
@@ -206,17 +247,6 @@ export function ConversationPresenceScheduleSection({
             <PencilLine size="0.75rem" className="shrink-0" />
             <span>{editScheduleLabel}</span>
           </button>
-          {showPreviewToggle && (
-            <button
-              type="button"
-              className="inline-flex min-h-[2rem] items-center gap-1 rounded-md px-1.5 text-[0.625rem] leading-4 text-[var(--muted-foreground)]/72 transition-colors hover:bg-[var(--foreground)]/6 hover:text-[var(--muted-foreground)]/92"
-              title={isPreviewVisible ? "Hide upcoming schedule" : "Show upcoming schedule"}
-              onClick={() => setIsPreviewVisible((current) => !current)}
-            >
-              {isPreviewVisible ? <EyeOff size="0.75rem" /> : <Eye size="0.75rem" />}
-              <span>{isPreviewVisible ? "Hide" : "Preview"}</span>
-            </button>
-          )}
           <button
             type="button"
             className="inline-flex min-h-[2rem] items-center rounded-md px-1.5 text-[var(--muted-foreground)]/72 transition-colors hover:bg-[var(--foreground)]/6 hover:text-[var(--muted-foreground)]/92"
@@ -247,26 +277,62 @@ export function ConversationPresenceScheduleSection({
               Open settings
             </button>
           </div>
-        ) : isPreviewVisible && hasUpcomingScheduleBlocks ? (
+        ) : hasUpcomingScheduleBlocks ? (
           <div className="space-y-2">
             {upcomingScheduleBlocks.map((block, index) => {
               const previousBlock = index > 0 ? upcomingScheduleBlocks[index - 1] : null;
               const showLabel = !!block.label && block.label !== previousBlock?.label;
 
               return (
-                <div key={`${block.label}-${block.time}-${block.activity}`} className="min-w-0">
+                <div
+                  key={`${block.day}-${block.index}`}
+                  role="button"
+                  tabIndex={0}
+                  className="group min-w-0 rounded-md bg-[var(--foreground)]/[0.03] px-2 py-1.5 text-left ring-1 ring-[var(--border)]/45 transition-colors hover:bg-[var(--foreground)]/[0.05]"
+                  onClick={() => openDayInEditor(block.day)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      openDayInEditor(block.day);
+                    }
+                  }}
+                >
                   {showLabel ? (
                     <div className="mb-1 text-[0.5625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/52">
                       {block.label}
                     </div>
                   ) : null}
-                  <div className="grid min-w-0 grid-cols-[auto_6.75rem_minmax(0,1fr)] items-start gap-x-2">
+                  <div className="grid min-w-0 grid-cols-[auto_6.75rem_minmax(0,1fr)_auto] items-start gap-x-2">
                     <span className={cn("mt-[0.4rem] h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(block.status))} />
                     <span className="justify-self-start rounded-full bg-[var(--foreground)]/6 px-1.5 py-0.5 text-center text-[0.5625rem] tabular-nums text-[var(--muted-foreground)]/78 ring-1 ring-[var(--border)]/45">
                       {formatScheduleTimeRange(block.time)}
                     </span>
-                    <div className="min-w-0 flex-1 whitespace-pre-wrap break-words pt-[0.05rem] text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">
+                    <div className="min-w-0 flex-1 whitespace-pre-wrap break-words pt-[0.05rem] text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82 group-hover:text-[var(--foreground)]/88">
                       {block.activity}
+                    </div>
+                    <div className="flex items-center gap-1 opacity-80 transition-opacity group-hover:opacity-100">
+                      <button
+                        type="button"
+                        className="rounded-md p-1 text-[var(--muted-foreground)]/76 transition-colors hover:bg-[var(--foreground)]/8 hover:text-[var(--foreground)]"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openDayInEditor(block.day);
+                        }}
+                        aria-label={`Edit ${block.time}`}
+                      >
+                        <PencilLine size="0.7rem" />
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-md p-1 text-[var(--muted-foreground)]/76 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeScheduleBlock(block.day, block.index);
+                        }}
+                        aria-label={`Remove ${block.time}`}
+                      >
+                        <Trash2 size="0.7rem" />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -274,9 +340,8 @@ export function ConversationPresenceScheduleSection({
             })}
           </div>
         ) : hasSchedule ? (
-          <div className="flex items-center gap-1.5 text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">
-            <ChevronDown size="0.75rem" className="shrink-0 rotate-[-90deg] text-[var(--muted-foreground)]/55" />
-            <span>No upcoming blocks right now.</span>
+          <div className="rounded-md bg-[var(--foreground)]/[0.03] px-2 py-1.5 ring-1 ring-[var(--border)]/50">
+            <p className="text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">No upcoming blocks right now.</p>
           </div>
         ) : null}
       </div>
@@ -290,16 +355,9 @@ export function ConversationPresenceScheduleSection({
         characterId={scheduleModalCharacterId}
         characterName={characterName}
         schedule={schedule}
+        initialDay={scheduleModalInitialDay}
         onClose={() => setScheduleModalCharacterId(null)}
-        onSave={(savedCharacterId, updated) => {
-          updateMeta.mutate({
-            id: chatId,
-            characterSchedules: {
-              ...(chatMeta.characterSchedules ?? {}),
-              [savedCharacterId]: updated,
-            },
-          });
-        }}
+        onSave={saveCharacterSchedule}
       />
     </div>
   );

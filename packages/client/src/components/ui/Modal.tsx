@@ -81,8 +81,8 @@ export function Modal({ open, onClose, title, children, width = "max-w-md", mobi
     ? "mari-modal fixed inset-0 z-[10000] flex items-stretch justify-center p-0 sm:p-4"
     : "mari-modal fixed inset-0 z-[10000] flex items-center justify-center p-3 max-md:pt-[max(0.75rem,env(safe-area-inset-top))] max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4";
   const panelClassName = mobileFullScreen
-    ? `mari-modal-panel ${NEUTRAL_PANEL_SHELL} relative flex h-[100dvh] w-full flex-col ${width} max-h-[100dvh] max-md:max-w-none max-md:rounded-none max-md:border-0 max-md:shadow-none`
-    : `mari-modal-panel ${NEUTRAL_PANEL_SHELL} relative flex w-full flex-col ${width} max-h-[calc(100dvh-1.5rem)] sm:max-h-[min(90dvh,52rem)]`;
+    ? `mari-modal-panel ${NEUTRAL_PANEL_SHELL} relative z-10 flex h-[100dvh] w-full flex-col ${width} max-h-[100dvh] max-md:max-w-none max-md:rounded-none max-md:border-0 max-md:shadow-none`
+    : `mari-modal-panel ${NEUTRAL_PANEL_SHELL} relative z-10 flex w-full flex-col ${width} max-h-[calc(100dvh-1.5rem)] sm:max-h-[min(90dvh,52rem)]`;
 
   return createPortal(
     <div
@@ -113,11 +113,14 @@ export function Modal({ open, onClose, title, children, width = "max-w-md", mobi
       {/* Panel */}
       <div
         className={panelClassName}
+        data-chat-floating-panel
         style={{
           opacity: isEntering ? 1 : 0,
           transform: isEntering ? "scale(1) translateY(0)" : "scale(0.97) translateY(6px)",
           transition: "opacity 150ms ease-out, transform 150ms ease-out",
         }}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className={`shrink-0 flex items-center justify-between ${NEUTRAL_PANEL_HEADER}`}>
