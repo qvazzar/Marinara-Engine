@@ -12,6 +12,7 @@ const STATUS_COLORS: Record<ScheduleBlock["status"], string> = {
   dnd: "bg-red-500",
   offline: "bg-gray-400",
 };
+const AUTONOMOUS_DAILY_CAP_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 function getMonday(date: Date = new Date()) {
   const next = new Date(date);
@@ -53,6 +54,7 @@ export function CharacterScheduleEditorModal({
   const [inactivityThresholdMinutes, setInactivityThresholdMinutes] = useState("120");
   const [idleResponseDelayMinutes, setIdleResponseDelayMinutes] = useState("");
   const [dndResponseDelayMinutes, setDndResponseDelayMinutes] = useState("");
+  const [autonomousDailyCapOverride, setAutonomousDailyCapOverride] = useState("");
 
   useEffect(() => {
     if (!open || !characterId) return;
@@ -70,6 +72,9 @@ export function CharacterScheduleEditorModal({
     setDndResponseDelayMinutes(
       typeof nextDraft.dndResponseDelayMinutes === "number" ? String(nextDraft.dndResponseDelayMinutes) : "",
     );
+    setAutonomousDailyCapOverride(
+      typeof nextDraft.autonomousDailyCapOverride === "number" ? String(nextDraft.autonomousDailyCapOverride) : "",
+    );
     setExpandedDay(null);
   }, [characterId, open, schedule]);
 
@@ -84,6 +89,13 @@ export function CharacterScheduleEditorModal({
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return undefined;
     return Math.max(min, Math.min(max, parsed));
+  }, []);
+
+  const parseOptionalCap = useCallback((value: string, min: number, max: number) => {
+    if (!value.trim()) return undefined;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return undefined;
+    return Math.max(min, Math.min(max, Math.floor(parsed)));
   }, []);
 
   const updateBlock = useCallback((day: string, idx: number, field: keyof ScheduleBlock, value: string) => {
@@ -121,6 +133,7 @@ export function CharacterScheduleEditorModal({
 
   const handleSave = useCallback(() => {
     if (!characterId || !draft) return;
+    const parsedAutonomousDailyCap = parseOptionalCap(autonomousDailyCapOverride, 1, 8);
     const nextDraft: WeekSchedule = {
       ...draft,
       inactivityThresholdMinutes: parseRequiredMinutes(
@@ -135,23 +148,36 @@ export function CharacterScheduleEditorModal({
       ...(parseOptionalMinutes(dndResponseDelayMinutes, 0, 120) === undefined
         ? {}
         : { dndResponseDelayMinutes: parseOptionalMinutes(dndResponseDelayMinutes, 0, 120) }),
+      ...(parsedAutonomousDailyCap === undefined ? {} : { autonomousDailyCapOverride: parsedAutonomousDailyCap }),
     };
     onSave(characterId, nextDraft);
     onClose();
-  }, [characterId, dndResponseDelayMinutes, draft, idleResponseDelayMinutes, inactivityThresholdMinutes, onClose, onSave, parseOptionalMinutes, parseRequiredMinutes]);
+  }, [
+    autonomousDailyCapOverride,
+    characterId,
+    dndResponseDelayMinutes,
+    draft,
+    idleResponseDelayMinutes,
+    inactivityThresholdMinutes,
+    onClose,
+    onSave,
+    parseOptionalCap,
+    parseOptionalMinutes,
+    parseRequiredMinutes,
+  ]);
 
   return (
-    <Modal open={open} onClose={onClose} title={`Edit ${characterName} Schedule`} width="max-w-4xl">
+    <Modal open={open} onClose={onClose} title={`Edit ${characterName} Schedule`} width="max-w-4xl" mobileFullScreen>
       {!draft ? null : (
-        <div className="space-y-4">
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/30 px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-            Open one character at a time, edit their routine, then save back to chat settings.
+        <div className="space-y-3">
+          <div className="rounded-xl bg-[var(--foreground)]/[0.03] px-3 py-2.5 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]/45">
+            Open one character at a time, edit their routine and check-in cap, then save back to chat settings.
           </div>
 
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/20 px-3 py-2">
-            <div className="grid gap-2 sm:grid-cols-3">
+          <div className="rounded-2xl bg-[var(--secondary)]/20 p-2.5 ring-1 ring-[var(--border)]/70">
+            <div className="grid gap-2 sm:grid-cols-4">
               <label className="space-y-1">
-                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]/85">
                   Inactivity
                 </span>
                 <input
@@ -161,14 +187,14 @@ export function CharacterScheduleEditorModal({
                   step={5}
                   value={inactivityThresholdMinutes}
                   onChange={(e) => setInactivityThresholdMinutes(e.target.value)}
-                  className="w-full rounded bg-[var(--background)] px-2 py-1.5 text-[0.6875rem] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]/40"
+                  className="w-full rounded-md bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/80 transition-shadow focus:ring-[var(--primary)]/40"
                 />
-                <span className="block text-[0.5rem] text-[var(--muted-foreground)]">
+                <span className="block text-[0.5rem] leading-snug text-[var(--muted-foreground)]/70">
                   Minutes before they follow up.
                 </span>
               </label>
               <label className="space-y-1">
-                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]/85">
                   Idle Delay
                 </span>
                 <input
@@ -178,15 +204,15 @@ export function CharacterScheduleEditorModal({
                   step={0.5}
                   value={idleResponseDelayMinutes}
                   onChange={(e) => setIdleResponseDelayMinutes(e.target.value)}
-                  className="w-full rounded bg-[var(--background)] px-2 py-1.5 text-[0.6875rem] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]/40"
+                  className="w-full rounded-md bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/80 transition-shadow focus:ring-[var(--primary)]/40"
                   placeholder="Default"
                 />
-                <span className="block text-[0.5rem] text-[var(--muted-foreground)]">
+                <span className="block text-[0.5rem] leading-snug text-[var(--muted-foreground)]/70">
                   Blank keeps the built-in 1-3 minute range.
                 </span>
               </label>
               <label className="space-y-1">
-                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]/85">
                   DND Delay
                 </span>
                 <input
@@ -196,11 +222,31 @@ export function CharacterScheduleEditorModal({
                   step={0.5}
                   value={dndResponseDelayMinutes}
                   onChange={(e) => setDndResponseDelayMinutes(e.target.value)}
-                  className="w-full rounded bg-[var(--background)] px-2 py-1.5 text-[0.6875rem] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]/40"
+                  className="w-full rounded-md bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/80 transition-shadow focus:ring-[var(--primary)]/40"
                   placeholder="Default"
                 />
-                <span className="block text-[0.5rem] text-[var(--muted-foreground)]">
+                <span className="block text-[0.5rem] leading-snug text-[var(--muted-foreground)]/70">
                   Blank keeps the built-in 2-5 minute range.
+                </span>
+              </label>
+              <label className="space-y-1">
+                <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]/85">
+                  Character Check-In Cap
+                </span>
+                <select
+                  value={autonomousDailyCapOverride}
+                  onChange={(e) => setAutonomousDailyCapOverride(e.target.value)}
+                  className="w-full rounded-md bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/80 transition-shadow focus:ring-[var(--primary)]/40"
+                >
+                  <option value="">Default</option>
+                  {AUTONOMOUS_DAILY_CAP_OPTIONS.map((cap) => (
+                    <option key={cap} value={cap}>
+                      {cap} check-in{cap === 1 ? "" : "s"} / day
+                    </option>
+                  ))}
+                </select>
+                <span className="block text-[0.5rem] leading-snug text-[var(--muted-foreground)]/70">
+                  Blank uses the chat ceiling, then talkativeness.
                 </span>
               </label>
             </div>
@@ -212,60 +258,62 @@ export function CharacterScheduleEditorModal({
               const isDayExpanded = expandedDay === day;
 
               return (
-                <div key={day} className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/20">
+                <div key={day} className="rounded-2xl bg-[var(--accent)]/10 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/16">
                   <button
                     type="button"
                     onClick={() => setExpandedDay(isDayExpanded ? null : day)}
-                    className="flex w-full items-center gap-1.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-[var(--accent)]/40"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[var(--accent)]/12"
                   >
                     <ChevronRight
                       size="0.5625rem"
-                      className={cn("text-[var(--muted-foreground)] transition-transform", isDayExpanded && "rotate-90")}
+                      className={cn("text-[var(--muted-foreground)]/75 transition-transform", isDayExpanded && "rotate-90")}
                     />
-                    <span className="flex-1 text-[0.625rem] font-medium">{day}</span>
-                    <span className="flex gap-0.5">
+                    <span className="flex-1 text-[0.625rem] font-medium text-[var(--foreground)]/90">{day}</span>
+                    <span className="flex min-w-0 items-center gap-1.5">
                       {blocks.slice(0, 8).map((block, index) => (
                         <span
                           key={index}
-                          className={cn("inline-block h-1.5 w-1.5 rounded-full", STATUS_COLORS[block.status])}
+                          className={cn("inline-block h-1.5 w-1.5 rounded-full ring-1 ring-[var(--card)]", STATUS_COLORS[block.status])}
                           title={`${block.time} — ${block.activity}`}
                         />
                       ))}
                       {blocks.length > 8 && (
-                        <span className="text-[0.5rem] text-[var(--muted-foreground)]">+{blocks.length - 8}</span>
+                        <span className="text-[0.5rem] text-[var(--muted-foreground)]/70">+{blocks.length - 8}</span>
                       )}
                     </span>
-                    <span className="text-[0.5rem] text-[var(--muted-foreground)]">{blocks.length}</span>
+                    <span className="rounded-full bg-[var(--foreground)]/6 px-1.5 py-0.5 text-[0.5rem] text-[var(--muted-foreground)]/75 ring-1 ring-[var(--border)]/45">
+                      {blocks.length}
+                    </span>
                   </button>
 
                   {isDayExpanded && (
-                    <div className="space-y-1.5 border-t border-[var(--border)] px-3 py-2">
+                    <div className="mt-1.5 space-y-2 rounded-b-2xl bg-[var(--foreground)]/[0.03] px-2.5 py-2">
                       {blocks.map((block, idx) => (
-                        <div key={idx} className="flex items-start gap-1.5 rounded-md bg-[var(--background)] p-1.5">
-                          <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", STATUS_COLORS[block.status])} />
+                        <div key={idx} className="flex items-start gap-2 rounded-lg bg-[var(--background)]/75 p-2 ring-1 ring-[var(--border)]/70">
+                          <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full ring-1 ring-[var(--card)]", STATUS_COLORS[block.status])} />
                           <div className="min-w-0 flex-1 space-y-1">
                             <input
                               value={block.time}
                               onChange={(e) => updateBlock(day, idx, "time", e.target.value)}
-                              className="w-full rounded bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] font-mono outline-none ring-1 ring-transparent focus:ring-[var(--primary)]/40"
+                              className="w-full rounded-md bg-[var(--secondary)] px-2 py-1 text-[0.625rem] font-mono text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/70 transition-shadow focus:ring-[var(--primary)]/40"
                               placeholder="06:00-08:00"
                             />
                             <input
                               value={block.activity}
                               onChange={(e) => updateBlock(day, idx, "activity", e.target.value)}
-                              className="w-full rounded bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] outline-none ring-1 ring-transparent focus:ring-[var(--primary)]/40"
+                              className="w-full rounded-md bg-[var(--secondary)] px-2 py-1 text-[0.625rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)]/70 transition-shadow focus:ring-[var(--primary)]/40"
                               placeholder="Activity description"
                             />
-                            <div className="flex gap-1">
+                            <div className="flex flex-wrap gap-1">
                               {STATUS_OPTIONS.map((status) => (
                                 <button
                                   key={status}
                                   type="button"
                                   onClick={() => updateBlock(day, idx, "status", status)}
                                   className={cn(
-                                    "rounded px-1.5 py-0.5 text-[0.5625rem] font-medium transition-colors",
+                                    "rounded-md px-2 py-0.5 text-[0.5625rem] font-medium transition-colors",
                                     block.status === status
-                                      ? "bg-[var(--primary)] text-white"
+                                      ? "bg-[var(--foreground)]/90 text-[var(--background)]"
                                       : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
                                   )}
                                 >
@@ -277,7 +325,7 @@ export function CharacterScheduleEditorModal({
                           <button
                             type="button"
                             onClick={() => removeBlock(day, idx)}
-                            className="mt-1 rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-red-500/15 hover:text-red-400"
+                            className="mt-1 rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:bg-red-500/15 hover:text-red-400"
                             title="Delete block"
                           >
                             <Trash2 size="0.625rem" />
@@ -287,7 +335,7 @@ export function CharacterScheduleEditorModal({
                       <button
                         type="button"
                         onClick={() => addBlock(day)}
-                        className="flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-[var(--border)] px-2 py-1 text-[0.5625rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]/40 hover:text-[var(--foreground)]"
+                        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)]/80 bg-[var(--background)]/55 px-2.5 py-1.5 text-[0.5625rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]/20 hover:text-[var(--foreground)]"
                       >
                         <Plus size="0.5625rem" />
                         Add time block
@@ -299,18 +347,18 @@ export function CharacterScheduleEditorModal({
             })}
           </div>
 
-          <div className="flex justify-end gap-2 border-t border-[var(--border)] pt-3">
+          <div className="flex justify-end gap-2 border-t border-[var(--border)]/60 pt-3">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]"
+              className="rounded-md px-3 py-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={handleSave}
-              className="rounded-md bg-[var(--primary)] px-2.5 py-1 text-[0.625rem] font-medium text-white transition-colors hover:bg-[var(--primary)]/80"
+              className="rounded-md bg-[var(--foreground)]/90 px-3 py-1.5 text-[0.625rem] font-medium text-[var(--background)] transition-colors hover:bg-[var(--foreground)]"
             >
               Save Changes
             </button>

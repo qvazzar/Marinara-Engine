@@ -20,10 +20,11 @@ interface ModalProps {
   children: ReactNode;
   /** Width class, e.g. "max-w-md", "max-w-lg" */
   width?: string;
+  mobileFullScreen?: boolean;
   contentRef?: Ref<HTMLDivElement>;
 }
 
-export function Modal({ open, onClose, title, children, width = "max-w-md", contentRef }: ModalProps) {
+export function Modal({ open, onClose, title, children, width = "max-w-md", mobileFullScreen = false, contentRef }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   // Track mounted state separately so we can play the exit animation
   // before actually removing the DOM nodes.
@@ -76,6 +77,12 @@ export function Modal({ open, onClose, title, children, width = "max-w-md", cont
   if (!mounted) return null;
 
   const isEntering = animating === "enter";
+  const overlayClassName = mobileFullScreen
+    ? "mari-modal fixed inset-0 z-[10000] flex items-stretch justify-center p-0 sm:p-4"
+    : "mari-modal fixed inset-0 z-[10000] flex items-center justify-center p-3 max-md:pt-[max(0.75rem,env(safe-area-inset-top))] max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4";
+  const panelClassName = mobileFullScreen
+    ? `mari-modal-panel ${NEUTRAL_PANEL_SHELL} relative flex h-[100dvh] w-full flex-col ${width} max-h-[100dvh] max-md:max-w-none max-md:rounded-none max-md:border-0 max-md:shadow-none`
+    : `mari-modal-panel ${NEUTRAL_PANEL_SHELL} relative flex w-full flex-col ${width} max-h-[calc(100dvh-1.5rem)] sm:max-h-[min(90dvh,52rem)]`;
 
   return createPortal(
     <div
@@ -84,7 +91,7 @@ export function Modal({ open, onClose, title, children, width = "max-w-md", cont
       aria-modal="true"
       aria-label={title}
       data-component="Modal"
-      className="mari-modal fixed inset-0 z-[10000] flex items-center justify-center p-3 max-md:pt-[max(0.75rem,env(safe-area-inset-top))] max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"
+      className={overlayClassName}
       style={{
         opacity: isEntering ? 1 : 0,
         transition: "opacity 150ms ease-out",
@@ -105,7 +112,7 @@ export function Modal({ open, onClose, title, children, width = "max-w-md", cont
 
       {/* Panel */}
       <div
-        className={`mari-modal-panel ${NEUTRAL_PANEL_SHELL} relative flex w-full flex-col ${width} max-h-[calc(100dvh-1.5rem)] sm:max-h-[min(90dvh,52rem)]`}
+        className={panelClassName}
         style={{
           opacity: isEntering ? 1 : 0,
           transform: isEntering ? "scale(1) translateY(0)" : "scale(0.97) translateY(6px)",

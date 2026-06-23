@@ -35,6 +35,8 @@ export interface WeekSchedule {
   idleResponseDelayMinutes?: number;
   /** Optional exact response delay in minutes while busy / DND */
   dndResponseDelayMinutes?: number;
+  /** Optional per-character daily autonomous check-in cap. Missing/null uses chat-level or talkativeness defaults. */
+  autonomousDailyCapOverride?: number | null;
   /** How chatty the character is — affects autonomous messaging frequency (0-100) */
   talkativeness: number;
 }

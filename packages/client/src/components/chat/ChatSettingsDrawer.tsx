@@ -4259,7 +4259,7 @@ export function ChatSettingsDrawer({
                     <div className="border-t border-[var(--border)]/50 px-3 pb-2.5 pt-2">
                       <label className="space-y-1.5">
                         <span className="block text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                          Daily Check-In Cap
+                          Chat Check-In Cap
                         </span>
                         <select
                           value={autonomousDailyCapOverride ?? ""}
@@ -4271,7 +4271,7 @@ export function ChatSettingsDrawer({
                           }
                           className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
                         >
-                          <option value="">Default (talkativeness-based)</option>
+                          <option value="">Default chat ceiling (talkativeness-based)</option>
                           {AUTONOMOUS_DAILY_CAP_OPTIONS.map((cap) => (
                             <option key={cap} value={cap}>
                               {cap} check-in{cap === 1 ? "" : "s"} / day
@@ -4279,7 +4279,7 @@ export function ChatSettingsDrawer({
                           ))}
                         </select>
                         <p className="text-[0.55rem] text-[var(--muted-foreground)]">
-                          Overrides the talkativeness-based daily limit for each character.
+                          Sets the chat-wide ceiling; character caps can only lower it.
                         </p>
                       </label>
                     </div>

@@ -109,8 +109,11 @@ function readAutonomousDailyCapOverride(value: unknown): number | null {
 }
 
 export function dailyCapForCharacter(schedule: WeekSchedule | undefined, chatMeta?: Record<string, unknown>): number {
-  const override = chatMeta ? readAutonomousDailyCapOverride(chatMeta.autonomousDailyCapOverride) : null;
-  if (override != null) return override;
+  const scheduleOverride = readAutonomousDailyCapOverride(schedule?.autonomousDailyCapOverride);
+  const chatOverride = chatMeta ? readAutonomousDailyCapOverride(chatMeta.autonomousDailyCapOverride) : null;
+  if (scheduleOverride != null && chatOverride != null) return Math.min(scheduleOverride, chatOverride);
+  if (scheduleOverride != null) return scheduleOverride;
+  if (chatOverride != null) return chatOverride;
 
   const talkativeness = schedule?.talkativeness ?? 50;
   if (talkativeness >= 80) return 8;
