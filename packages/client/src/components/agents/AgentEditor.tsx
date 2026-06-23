@@ -466,9 +466,6 @@ export function AgentEditor() {
       ? getAgentRunIntervalMeta(isNewCustomAgent ? "__new__" : (dbConfig?.type ?? agentDetailId ?? ""), false)
       : null;
 
-  // Default prompt for this agent type
-  const defaultPrompt = useMemo(() => (agentDetailId ? getDefaultAgentPrompt(agentDetailId) : ""), [agentDetailId]);
-
   // ── Local editable state ──
   const [localName, setLocalName] = useState("");
   const [localDescription, setLocalDescription] = useState("");
@@ -749,6 +746,18 @@ export function AgentEditor() {
   const isMusicAgent = isSpotifyAgent;
 
   const showsYoutubeSettings = isMusicAgent;
+
+  // In YouTube mode Music DJ runs tool-free and returns its pick as a search-query
+  // JSON, so the editor reflects the YouTube-specific built-in prompt and skips the
+  // (Spotify-only) tool toggles.
+  const musicDjYoutubeMode = isMusicAgent && localMusicProvider === "youtube";
+
+  // Default prompt for this agent type. Music DJ has a separate built-in prompt per
+  // provider, so show the YouTube prompt when the YouTube provider is selected.
+  const defaultPrompt = useMemo(
+    () => (agentDetailId ? getDefaultAgentPrompt(musicDjYoutubeMode ? "youtube" : agentDetailId) : ""),
+    [agentDetailId, musicDjYoutubeMode],
+  );
 
   // Lorebook Keeper agent — run interval setting
   const isLorebookKeeperAgent = agentDetailId === "lorebook-keeper" || dbConfig?.type === "lorebook-keeper";
@@ -3229,48 +3238,61 @@ export function AgentEditor() {
             collapsible
             expanded={toolsSectionOpen}
             onExpandedChange={setToolsSectionOpen}
-            summary={`${selectedVisibleToolCount}/${availableVisibleToolCount} enabled`}
+            summary={
+              musicDjYoutubeMode
+                ? "Not used in YouTube mode"
+                : `${selectedVisibleToolCount}/${availableVisibleToolCount} enabled`
+            }
           >
-            <p className="text-[0.625rem] text-[var(--muted-foreground)] mb-3">
-              Toggle tools on or off for this agent. When enabled for a chat, only selected tools will be available
-              during generation.
-            </p>
-            <div className="space-y-2">
-              {visibleBuiltInTools.map((tool: ToolDefinition) => (
-                <ToolCard
-                  key={tool.name}
-                  tool={tool}
-                  enabled={localEnabledTools.includes(tool.name)}
-                  onToggle={(name) => {
-                    setLocalEnabledTools((prev) =>
-                      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
-                    );
-                    markDirty();
-                  }}
-                />
-              ))}
-              {selectableCustomTools.map((tool) => (
-                <ToolCard
-                  key={tool.name}
-                  tool={{
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: JSON.parse(tool.parametersSchema || "{}"),
-                  }}
-                  enabled={localEnabledTools.includes(tool.name)}
-                  onToggle={(name) => {
-                    setLocalEnabledTools((prev) =>
-                      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
-                    );
-                    markDirty();
-                  }}
-                  isCustom
-                />
-              ))}
-            </div>
-            <p className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
-              Tool-use must also be enabled per chat via Chat Settings → "Enable Function Calling".
-            </p>
+            {musicDjYoutubeMode ? (
+              <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                In YouTube mode, Music DJ doesn't use function tools. It returns its pick as JSON and the app plays the
+                top YouTube search result directly. Switch the Music Player to Spotify to enable playback tools.
+              </p>
+            ) : (
+              <>
+                <p className="text-[0.625rem] text-[var(--muted-foreground)] mb-3">
+                  Toggle tools on or off for this agent. When enabled for a chat, only selected tools will be available
+                  during generation.
+                </p>
+                <div className="space-y-2">
+                  {visibleBuiltInTools.map((tool: ToolDefinition) => (
+                    <ToolCard
+                      key={tool.name}
+                      tool={tool}
+                      enabled={localEnabledTools.includes(tool.name)}
+                      onToggle={(name) => {
+                        setLocalEnabledTools((prev) =>
+                          prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+                        );
+                        markDirty();
+                      }}
+                    />
+                  ))}
+                  {selectableCustomTools.map((tool) => (
+                    <ToolCard
+                      key={tool.name}
+                      tool={{
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: JSON.parse(tool.parametersSchema || "{}"),
+                      }}
+                      enabled={localEnabledTools.includes(tool.name)}
+                      onToggle={(name) => {
+                        setLocalEnabledTools((prev) =>
+                          prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+                        );
+                        markDirty();
+                      }}
+                      isCustom
+                    />
+                  ))}
+                </div>
+                <p className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+                  Tool-use must also be enabled per chat via Chat Settings → "Enable Function Calling".
+                </p>
+              </>
+            )}
           </FieldGroup>
         </div>
       </div>
