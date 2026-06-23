@@ -94,6 +94,8 @@ type JsonPayloadMatch = {
 type AssistantWorkspaceAction = {
   visibleText: string;
   commands: WorkspaceCommandCall[];
+  stop: boolean;
+  protocolValid: boolean;
   assistantHistoryContent: string;
 };
 
@@ -101,6 +103,7 @@ const WORKSPACE_TOOLS: MariWorkspaceToolName[] = ["read", "grep", "find", "ls", 
 const RUNTIME_API_KEY = "local-marinara-runtime";
 const SESSION_ID = "professor-mari-workspace";
 const MAX_COMMAND_ROUNDS = 12;
+const MAX_PROTOCOL_REPAIR_ROUNDS = 2;
 const MAX_HISTORY_MESSAGES = 40;
 const MAX_PARALLEL_READONLY_COMMANDS = 4;
 const RECENT_WORKSPACE_CONTINUITY_LIMIT = 4;
@@ -280,80 +283,65 @@ Professor Mari is an expert on LLMs, especially roleplaying and immersive chat w
 
 ENFP 4w7, Choleric-Sanguine, Chaotic Neutral, Taurus. Mari's speech is typically laced with sarcasm, and she exerts a professor-like charisma. Her sense of humor can be described as messed up, and she'll often throw in a casual "lmao" or "kek" after making a dark joke about aborting a pregnant pause. Despite her outward confidence, her self-esteem is nonexistent; therefore, she's flustered easily when complimented. Anything that catches her attention, she can master with ease. However, she cannot force herself to maintain her attention on anything that is not of interest to her. Aka, she's a neurodivergent mess. Dedicated to helping the new users and kind to them.
 
-Workspace:
-You can inspect and modify this local Marinara Engine workspace through hidden commands. The user never sees command syntax; Marinara strips it, executes it, then shows the resulting timeline. Use commands to gather evidence before claiming something is fixed or changed.
-
-Live app data is best handled through Marinara-aware commands. Use the narrow helper first when it exists, because helpers know user-facing fields and nested storage shapes. Use \`mari db\` for generic/raw tables only after checking \`mari db schema <table>\` and nesting JSON-column edits under the actual JSON column name.
-
-Always prioritize Mari CLI commands over writing raw files to the codebase. If you need to write raw files, think why you must and if there is no cli command to help you.
-
-Portable shell rules:
-- Do not use heredocs, command substitution, inline \`cat > file\`, \`sed -i\`, \`awk\`, \`xargs\`, \`rm\`, \`cp\`, \`mv\`, or POSIX-only environment syntax in bash commands.
-- Do not build JSON/CSS/script payloads with shell quoting. Use the write command to create a temporary file, then pass a relative path with no spaces, such as \`--json-file ./tmp/payload.json\`, \`--css-file ./tmp/theme.css\`, or the relevant \`mari\` file flag.
-- If a shell command fails with missing bash, bad quoting, or syntax errors, immediately retry with a simpler \`mari ...\` command or the dedicated read/grep/find/ls/edit/write commands.
+Workspace defaults:
+- Always prioritize Mari CLI commands over writing raw files to the codebase. Only write raw files when no CLI/helper path fits.
+- Inspect before claiming facts. Verify after changing anything.
+- Ask for approval before applying/saving destructive or user-visible changes.
+- Keep user-facing replies concise and human-readable.
 
 Command families:
 - \`mari db\`: generic live app data and storage-backed rows, including customization tables such as \`agent_configs\`, \`custom_tools\`, and \`installed_extensions\` when no narrower helper exists.
-- \`mari themes\`: synced custom themes and active theme state. Theme creation/editing benefits from a quick style-contract pass first: inspect the current/active theme, \`packages/client/src/styles/globals.css\`, built-in theme files, and the CSS variable reference so generated CSS covers the full semantic token set such as background, card, sidebar, accent, ring, glow, and component surface variables.
+- \`mari themes\`: synced custom themes and active theme state.
 - \`mari images\`: image-generation connections, HITL image prompt previews, generated/edited preview assets, and assignment/deletion for avatars, personas, lorebooks, sprites, backgrounds, and galleries.
-- \`mari wiki\`: read-only Fandom/MediaWiki discovery and page reads. Use \`mari wiki --help\` to find wikis, search pages, read summaries/source/sections, list categories, and search within a page.
-- \`mari characters\`: list, get, search, create, update, delete. Prefer this helper for character edits. Field flags: \`--name\`, \`--description\`, \`--personality\`, \`--scenario\`, \`--first-mes\`, \`--creator-notes\`, \`--comment\`; \`--backstory\` and \`--appearance\` write to \`data.extensions.backstory\`/\`data.extensions.appearance\`. Or pass \`--json\` or \`--json-file\` for one CharacterData blob. Use \`--apply\` to save.
-- \`mari personas\`: list, active, get, search, create, update, delete. Prefer this helper for persona edits. Field flags: \`--name\`, \`--description\`, \`--personality\`, \`--scenario\`, \`--backstory\`, \`--appearance\`. Use \`--apply\` to save.
-- \`mari lorebooks\`: list, get, entries, search, create, update, add-entry, link-character, unlink-character, delete. \`add-entry <lorebook-id> --name <name> --keys <k1,k2> --content <text>\`. \`link-character <lorebook-id> --character <character-id>\` adds a character link; \`unlink-character\` removes it. Use \`--apply\` to save.
+- \`mari wiki\`: read-only Fandom/MediaWiki discovery and page reads.
+- \`mari characters\`: list, get, search, create, update, delete. Prefer this helper for character edits. \`--backstory\` and \`--appearance\` write to \`data.extensions.backstory\`/\`data.extensions.appearance\`.
+- \`mari personas\`: list, active, get, search, create, update, delete. Prefer this helper for persona edits.
+- \`mari lorebooks\`: list, get, entries, search, create, update, add-entry, link-character, unlink-character, delete.
 - \`mari presets\`: no dedicated helper — use \`mari db\` for \`prompt_presets\` and related tables.
-- \`mari chats\`: read-only. list (newest first), get (with message count), messages \`<chat-id> [--tail]\`, search.
-- \`mari extensions\`, \`mari agents\`, \`mari tools\`: optional customization helpers. If unavailable, continue through \`mari db\` using \`installed_extensions\`, \`agent_configs\`, and \`custom_tools\`.
+- \`mari chats\`: read-only list/get/messages/search.
+- \`mari extensions\`, \`mari agents\`, \`mari tools\`: customization helpers; if unavailable, use \`mari db\` with the related tables.
 - \`mari code\`: workspace status, diffs, checks, health, reload, and continuation.
 
-Built-in help is the source of truth for exact helper syntax. Use \`mari --help\`, \`mari <group> --help\`, or \`mari <group> <command> --help\` to discover the current command surface. If \`mari --help\` does not list a command family, do not invent it; immediately check \`mari db tables\`, \`mari db schema <table>\`, and current rows instead of offering raw source-file edits for that app-data feature.
+Built-in help:
+Use \`mari --help\`, \`mari <group> --help\`, or \`mari <group> <command> --help\` for exact syntax. If a command family is missing, do not invent it; check \`mari db tables\`, \`mari db schema <table>\`, and current rows.
 
-Raw DB row contracts to remember when a narrow helper is unavailable:
-- \`agent_configs.phase\` must be one of \`pre_generation\`, \`parallel\`, or \`post_processing\`. Agents do not have a global enabled/disabled state; a chat controls whether an agent runs by adding or removing that agent from its active agent list.
-- Raw text booleans such as \`custom_tools.enabled\` are stored as \`"true"\` or \`"false"\`. The CLI normalizes JSON booleans on write, but readback should show strings.
-- Prefer narrow helpers over \`mari db patch\` when editing characters, personas, lorebooks, themes, images, agents, or tools. Generic \`mari db patch\` only accepts real table columns; app-visible nested fields must be under JSON columns such as \`data.extensions.appearance\`, not top-level \`appearance\`. Unknown raw columns are blocked.
+Raw DB row contracts:
+- \`agent_configs.phase\` must be one of \`pre_generation\`, \`parallel\`, or \`post_processing\`. Agents do not have a global enabled/disabled state; chats control active agents.
+- Raw text booleans such as \`custom_tools.enabled\` are stored as \`"true"\` or \`"false"\`.
+- Prefer narrow helpers over \`mari db patch\` when editing characters, personas, lorebooks, themes, images, agents, or tools.
+- Generic \`mari db patch\` only accepts real table columns; app-visible nested fields must be under JSON columns such as \`data.extensions.appearance\`, not top-level \`appearance\`.
 
-Workspace files are useful for learning how Marinara works, or finding content YOU CAN NOT FIND WITH DB CLI COMMANDS. USE THOSE FIRST.
-
-Completion claims need command evidence. Good evidence includes saved app data plus readback state, file diffs, validation output, or health/status results. Preview, planning, and draft output should be described as preview, planning, and draft output. Browser approval may be required internally; user-facing text should frame it as approving or saving the preview.
-
-User-facing behavior:
-Stay in character: helpful, saucy, sarcastic, and plain-spoken. For creative app data, show the human-readable content the user should judge.
-Raw JSON belongs in chat when the user asks for it.
-Ask once for final save/apply approval after a private preview succeeds, not before ordinary read-only discovery.
-After apply and readback verification, summarize what changed in normal human language.`;
+Workspace files:
+Use workspace files to understand Marinara internals, answer source-code questions, or find content that is not available through CLI/app-data commands. Do not inspect source files instead of live app data when the user asks about saved characters, chats, agents, tools, extensions, presets, lorebooks, or other app content.`;
 
 function workspaceCommandProtocolPrompt() {
   const toolDocs = WORKSPACE_TOOL_DEFINITIONS.map(
     (tool) => `- ${tool.name}: ${tool.description}\n  JSON arguments: ${JSON.stringify(tool.parameters)}`,
   ).join("\n");
   return `<workspace_command_protocol>
-Marinara gives Professor Mari two channels in one assistant turn: visible speech and hidden workspace actions. This is provider-agnostic like Conversation/Game command mode, but native tool calls may also be used when the provider supports them.
+Always return exactly one JSON object and nothing else. Your assistant message must begin with \`{\` and end with \`}\`.
+No prose, markdown, XML, or code fences outside the JSON. Put every user-visible word, including progress narration, inside \`say\`.
 
-Preferred action frame when tools are needed:
-{"say":"optional short user-visible progress note, or empty string for silent work","tool_calls":[{"name":"read","arguments":{"path":"README.md","offset":1,"limit":80}},{"name":"grep","arguments":{"pattern":"Professor Mari","path":"packages","glob":"*.ts","limit":20}}]}
+Required schema:
+{
+  "say": "visible text for the user, or empty string for silent work",
+  "commands": [
+    { "name": "read|grep|find|ls|edit|write|bash", "arguments": {} }
+  ],
+  "stop": false
+}
 
-Use this frame to be fluid:
-- Set \`say\` to \`""\` for routine inspection, verification, and file reads. Silent tool use is normal and preferred.
-- Put several independent read-only calls in the same \`tool_calls\` array. Marinara can run read/grep/find/ls in parallel.
-- Use a short \`say\` only when it helps the user understand progress, a decision, an error, or an approval/save boundary.
-- After tool results, either issue the next action frame, speak to the user, or do both. This lets you talk between tool batches without narrating every tiny step.
-- If the user says \`go ahead\`, \`yes\`, \`apply it\`, or similar, treat it as approval to continue the previously discussed plan. Use hidden continuity/tool evidence; do not restart discovery unless the evidence is missing or stale.
+Field rules:
+- \`say\` is the only text Marinara may show to the user.
+- \`commands\` is the command list to execute now. Use \`[]\` only when no command is needed.
+- \`stop\` is \`false\` while you need command results or another model turn. Set \`stop\` to \`true\` only when the response is complete.
+- If \`commands\` is not empty, \`stop\` should usually be \`false\`.
+- If you say you will do workspace/app-data work, include the command in the same JSON object.
 
-Legacy hidden command blocks are still accepted when a model cannot reliably emit JSON frames:
-<read>{"path":"README.md","offset":1,"limit":80}</read>
-<grep>{"pattern":"Professor Mari","path":"packages","glob":"*.ts","limit":20}</grep>
-<find>{"pattern":"**/*.ts","path":"packages/server/src","limit":50}</find>
-<ls>{"path":"packages/server/src","limit":100}</ls>
-<edit>{"path":"file.ts","edits":[{"oldText":"exact unique text","newText":"replacement text"}]}</edit>
-<write>{"path":"tmp/payload.json","content":"{\n  \"ok\": true\n}"}</write>
-<bash>{"command":"mari db tables","timeout":60}</bash>
-
-Rules:
-- Hidden commands/action frames are stripped from visible chat. Never expose command syntax unless the user explicitly asks.
-- Use commands iteratively: inspect, act, verify, then answer.
-- Use read/grep/find/ls/edit/write for files. Use bash mostly for simple \`mari ...\`, \`pnpm ...\`, or health/check commands.
-- For writes to live app data, prefer \`mari ...\` commands. \`--apply\` may wait for browser approval.
-- If no command is needed, answer normally in plain text. You may also return {"say":"final answer"}.
+Examples:
+{"say":"","commands":[{"name":"bash","arguments":{"command":"mari lorebooks list","timeout":60}}],"stop":false}
+{"say":"I found the lorebook. I'll read its entries now.","commands":[{"name":"bash","arguments":{"command":"mari lorebooks entries lorebook-id","timeout":60}}],"stop":false}
+{"say":"Done — I created it and verified it saved.","commands":[],"stop":true}
 
 Available command schemas:
 ${toolDocs}
@@ -682,6 +670,17 @@ function jsonPayloadVisibleText(payload: Record<string, unknown>): string {
   return "";
 }
 
+function jsonPayloadStopValue(payload: Record<string, unknown>): boolean | undefined {
+  const raw = payload.stop ?? payload.done ?? payload.complete;
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "string") {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return undefined;
+}
+
 const COMMAND_BLOCK_RE = /<(read|grep|find|ls|edit|write|bash)>\s*([\s\S]*?)\s*<\/\1>/gi;
 
 function parseXmlCommandCalls(content: string): WorkspaceCommandCall[] {
@@ -739,15 +738,36 @@ function dedupeWorkspaceCommandCalls(calls: WorkspaceCommandCall[]): WorkspaceCo
   });
 }
 
-function removeJsonActionFrame(content: string): { content: string; match: JsonPayloadMatch | null } {
-  const match = findJsonPayloadMatch(content);
-  if (!match) return { content, match: null };
-  return { content: `${content.slice(0, match.start)}${content.slice(match.end)}`, match };
+function assistantHistoryContentForAction(action: Pick<AssistantWorkspaceAction, "visibleText" | "commands" | "stop">): string {
+  return JSON.stringify({
+    say: action.visibleText,
+    commands: action.commands.map((command) => ({ name: command.name, arguments: command.arguments })),
+    stop: action.stop,
+  });
+}
+
+function assistantHistoryContentFromVisibleText(content: string): string {
+  const trimmed = content.trim();
+  const payload = tryParseJsonPayload(trimmed);
+  if (payload && hasActionPayload(payload)) return trimmed;
+  return assistantHistoryContentForAction({ visibleText: trimmed, commands: [], stop: true });
+}
+
+function removeJsonActionFrames(content: string): { content: string; matches: JsonPayloadMatch[] } {
+  let next = content;
+  const matches: JsonPayloadMatch[] = [];
+  for (let index = 0; index < 20; index += 1) {
+    const match = findJsonPayloadMatch(next);
+    if (!match) break;
+    matches.push(match);
+    next = `${next.slice(0, match.start)}${next.slice(match.end)}`;
+  }
+  return { content: next, matches };
 }
 
 function stripWorkspaceCommands(content: string): string {
   if (!content.trim()) return "";
-  const withoutJson = removeJsonActionFrame(content).content;
+  const withoutJson = removeJsonActionFrames(content).content;
   return withoutJson
     .replace(COMMAND_BLOCK_RE, "")
     .replace(/\[(read|grep|find|ls|bash):\s*[^\]\r\n]+\]/gi, "")
@@ -756,20 +776,31 @@ function stripWorkspaceCommands(content: string): string {
 }
 
 function parseAssistantWorkspaceAction(content: string): AssistantWorkspaceAction {
-  const { content: contentWithoutJson, match } = removeJsonActionFrame(content);
-  const jsonCommands = match ? parseJsonCommandCallsFromPayload(match.payload) : [];
-  const inlineVisibleText = stripWorkspaceCommands(contentWithoutJson);
-  const frameVisibleText = match ? jsonPayloadVisibleText(match.payload) : "";
+  const { content: contentWithoutJson, matches } = removeJsonActionFrames(content);
+  const jsonCommands = matches.flatMap((match) => parseJsonCommandCallsFromPayload(match.payload));
+  // If JSON frames are present, treat all prose outside them as protocol leakage.
+  // Visible text must come from the frame's say/message/final field only.
+  const inlineVisibleText = matches.length > 0 ? "" : stripWorkspaceCommands(contentWithoutJson);
+  const frameVisibleText = matches
+    .map((match) => jsonPayloadVisibleText(match.payload))
+    .filter(Boolean)
+    .join("\n\n");
   const visibleText = [inlineVisibleText, frameVisibleText].filter(Boolean).join("\n\n").trim();
   const commands = dedupeWorkspaceCommandCalls([
     ...parseXmlCommandCalls(contentWithoutJson),
     ...jsonCommands,
     ...parseBracketCommandCalls(contentWithoutJson),
   ]);
+  const protocolValid = matches.length > 0;
+  const explicitStop = [...matches].reverse().find((match) => jsonPayloadStopValue(match.payload) !== undefined);
+  const explicitStopValue = explicitStop ? jsonPayloadStopValue(explicitStop.payload) : undefined;
+  const stop = explicitStopValue ?? (commands.length === 0 && protocolValid);
   return {
     visibleText,
     commands,
-    assistantHistoryContent: visibleText || stripWorkspaceCommands(content) || " ",
+    stop,
+    protocolValid,
+    assistantHistoryContent: assistantHistoryContentForAction({ visibleText, commands, stop }),
   };
 }
 
@@ -1175,6 +1206,7 @@ export class ProfessorMariWorkspaceService {
         args.onEvent({ type: "thinking", data: delta });
       });
       const commandResultsForContinuity: WorkspaceCommandResult[] = [];
+      let protocolRepairRounds = 0;
 
       for (let round = 0; round < MAX_COMMAND_ROUNDS; round += 1) {
         if (controller.signal.aborted) throw new Error("aborted");
@@ -1192,13 +1224,52 @@ export class ProfessorMariWorkspaceService {
           parsedAction.visibleText &&
           visibleTextRequestsUserApproval(parsedAction.visibleText) &&
           parsedAction.commands.some(isMutatingWorkspaceCommand);
-        const action = shouldDeferMutations ? { ...parsedAction, commands: [] } : parsedAction;
+        const action = shouldDeferMutations
+          ? {
+              ...parsedAction,
+              commands: [],
+              stop: true,
+              assistantHistoryContent: assistantHistoryContentForAction({
+                visibleText: parsedAction.visibleText,
+                commands: [],
+                stop: true,
+              }),
+            }
+          : parsedAction;
         if (shouldDeferMutations) {
           const content =
             "Deferred hidden mutating workspace commands because the assistant asked the user for approval in the same turn.";
           appendTraceStatus(workspaceTrace, content);
           args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
         }
+        if (action.commands.length === 0 && !action.stop) {
+          if (!action.protocolValid) {
+            protocolRepairRounds += 1;
+            if (protocolRepairRounds > MAX_PROTOCOL_REPAIR_ROUNDS) {
+              const content =
+                "Professor Mari kept returning plain text instead of the required JSON command object, so I stopped before burning more requests. Ask her to continue and she can pick up from the saved trace.";
+              assistantText = appendVisibleText(assistantText, content);
+              appendTraceStatus(workspaceTrace, content);
+              args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
+              for (const chunk of chunkText(content)) args.onEvent({ type: "token", data: chunk });
+              break;
+            }
+          } else {
+            protocolRepairRounds = 0;
+          }
+          messages.push({ role: "assistant", content: action.assistantHistoryContent });
+          messages.push({
+            role: "user",
+            content: action.protocolValid
+              ? "Continue the same workspace task. Return exactly one JSON object with commands to run now, or set stop to true if the task is complete."
+              : "Your previous assistant message violated the workspace protocol because it was not a JSON object. Do not repeat the prose outside JSON. Return exactly one JSON object now. If work remains, include the next commands and set stop to false. If the task is complete, put the final user-facing text in say and set stop to true.",
+            contextKind: "history",
+          });
+          continue;
+        }
+
+        protocolRepairRounds = 0;
+
         if (action.visibleText) {
           assistantText = appendVisibleText(assistantText, action.visibleText);
           appendTraceText(workspaceTrace, `${action.visibleText}\n`);
@@ -1323,7 +1394,12 @@ export class ProfessorMariWorkspaceService {
       if (extra.hiddenFromAI === true) continue;
       const content = typeof row.content === "string" ? row.content : String(row.content ?? "");
       if (!content.trim()) continue;
-      messages.push({ role: roleForMessage(row), content, contextKind: "history" });
+      const role = roleForMessage(row);
+      messages.push({
+        role,
+        content: role === "assistant" ? assistantHistoryContentFromVisibleText(content) : content,
+        contextKind: "history",
+      });
     }
     if (continuityPrompt) messages.push({ role: "system", content: continuityPrompt, contextKind: "injection" });
     return messages;
