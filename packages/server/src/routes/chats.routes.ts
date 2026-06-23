@@ -1418,7 +1418,7 @@ export async function chatsRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: "hidden must be a boolean" });
       }
       const updatedIds = await storage.bulkSetHiddenFromAI(req.params.chatId, messageIds, hidden);
-      return { updated: updatedIds.length, updatedIds };
+      return { updated: updatedIds.length };
     },
   );
 
