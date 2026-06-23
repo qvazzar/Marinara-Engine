@@ -1,9 +1,9 @@
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, ChevronDown, Eye, EyeOff, RefreshCw, Settings2, Trash2 } from "lucide-react";
+import { CalendarClock, ChevronDown, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import type { ConversationPresenceStatus, ConversationStatusOverride } from "@marinara-engine/shared";
+import type { ConversationPresenceStatus, ConversationStatusOverride, WeekSchedule as SharedWeekSchedule } from "@marinara-engine/shared";
 import type { Message } from "@marinara-engine/shared";
 import { useUpdateChatMetadata } from "../../hooks/use-chats";
 import { characterKeys } from "../../hooks/use-characters";
@@ -25,32 +25,12 @@ import {
   ROLEPLAY_POPOVER_SUBTITLE,
   ROLEPLAY_POPOVER_TITLE,
 } from "./roleplay-popover-styles";
-
-type ScheduleBlock = {
-  time?: string;
-  activity?: string;
-  status?: ConversationPresenceStatus;
-};
-
-type WeekSchedule = {
-  weekStart?: string;
-  days?: Record<string, ScheduleBlock[]>;
-};
-
-const SCHEDULE_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const UPCOMING_SCHEDULE_PREVIEW_COUNT = 4;
-
-type UpcomingScheduleBlock = {
-  label: string;
-  time: string;
-  activity: string;
-  status: ConversationPresenceStatus;
-};
+import { ConversationPresenceScheduleSection } from "./ConversationPresenceScheduleSection";
 
 type StatusEntry = {
   status: ConversationPresenceStatus;
   activity: string;
-  schedule?: WeekSchedule;
+  schedule?: SharedWeekSchedule;
   override?: ConversationStatusOverride;
   lastContact?: string;
 };
@@ -116,11 +96,11 @@ function parseOverrides(raw: unknown): Record<string, ConversationStatusOverride
   return overrides;
 }
 
-function parseSchedules(raw: unknown): Record<string, WeekSchedule> {
+function parseSchedules(raw: unknown): Record<string, SharedWeekSchedule> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const schedules: Record<string, WeekSchedule> = {};
+  const schedules: Record<string, SharedWeekSchedule> = {};
   for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (value && typeof value === "object" && !Array.isArray(value)) schedules[id] = value as WeekSchedule;
+    if (value && typeof value === "object" && !Array.isArray(value)) schedules[id] = value as SharedWeekSchedule;
   }
   return schedules;
 }
@@ -168,65 +148,6 @@ function resizeActivityField(field: HTMLTextAreaElement | null) {
   field.style.height = `${Math.min(field.scrollHeight, 112)}px`;
 }
 
-function parseTimeToMinutes(value?: string) {
-  if (!value) return null;
-  const [hours, minutes] = value.split(":").map(Number);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
-  return hours * 60 + minutes;
-}
-
-function formatScheduleTimeRange(value: string) {
-  const [start, end] = value.split("-");
-  const formatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
-
-  const formatPart = (part?: string) => {
-    const [hours, minutes] = (part ?? "").split(":").map(Number);
-    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return part ?? "";
-    const date = new Date();
-    date.setHours(hours, minutes, 0, 0);
-    return formatter.format(date);
-  };
-
-  const formattedStart = formatPart(start);
-  const formattedEnd = formatPart(end);
-  return formattedStart && formattedEnd ? `${formattedStart} - ${formattedEnd}` : value;
-}
-
-function getUpcomingScheduleBlocks(schedule?: WeekSchedule, limit = UPCOMING_SCHEDULE_PREVIEW_COUNT): UpcomingScheduleBlock[] {
-  if (!schedule?.days) return [];
-
-  const now = new Date();
-  const todayIndex = (now.getDay() + 6) % 7;
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const upcoming: UpcomingScheduleBlock[] = [];
-
-  for (let dayOffset = 0; dayOffset < SCHEDULE_DAYS.length; dayOffset += 1) {
-    const dayIndex = (todayIndex + dayOffset) % SCHEDULE_DAYS.length;
-    const dayName = SCHEDULE_DAYS[dayIndex];
-    const blocks = [...(schedule.days[dayName] ?? [])].sort((left, right) => {
-      const leftStart = parseTimeToMinutes(left.time?.split("-")[0]) ?? Number.MAX_SAFE_INTEGER;
-      const rightStart = parseTimeToMinutes(right.time?.split("-")[0]) ?? Number.MAX_SAFE_INTEGER;
-      return leftStart - rightStart;
-    });
-
-    for (const block of blocks) {
-      const startMinutes = parseTimeToMinutes(block.time?.split("-")[0]);
-      if (startMinutes == null) continue;
-      if (dayOffset === 0 && startMinutes <= currentMinutes) continue;
-
-      const dayPrefix = dayOffset === 0 ? "" : dayOffset === 1 ? "Next day" : dayName;
-      upcoming.push({
-        label: dayPrefix,
-        time: block.time ?? "",
-        activity: block.activity || statusLabel(block.status),
-        status: block.status ?? "online",
-      });
-      if (upcoming.length >= limit) return upcoming;
-    }
-  }
-
-  return upcoming;
-}
 
 export function ConversationPresenceCard({
   chatId,
@@ -240,7 +161,6 @@ export function ConversationPresenceCard({
   const [editingCharacterId, setEditingCharacterId] = useState<string | null>(null);
   const [statusMenuCharacterId, setStatusMenuCharacterId] = useState<string | null>(null);
   const [pendingStatuses, setPendingStatuses] = useState<Record<string, ConversationPresenceStatus>>({});
-  const [visibleNextSchedule, setVisibleNextSchedule] = useState<Record<string, boolean>>({});
   const [replyNowCharacterId, setReplyNowCharacterId] = useState<string | null>(null);
   const [draftActivity, setDraftActivity] = useState("");
   const buttonRef = useRef<HTMLButtonElement | null>(null);
@@ -269,10 +189,6 @@ export function ConversationPresenceCard({
   const setPerChatDelayed = useChatStore((s) => s.setPerChatDelayed);
   const overrides = useMemo(() => parseOverrides(chatMeta.conversationStatusOverrides), [chatMeta.conversationStatusOverrides]);
   const schedules = useMemo(() => parseSchedules(chatMeta.characterSchedules), [chatMeta.characterSchedules]);
-  const hasGeneratedSchedules =
-    typeof chatMeta.scheduleWeekStart === "string" &&
-    chatMeta.scheduleWeekStart.length > 0 &&
-    (chatMeta.conversationSchedulesEnabled === true || chatMeta.conversationSchedulesEnabled == null);
   const statusesQuery = useQuery({
     queryKey: ["conversation-status", chatId],
     queryFn: async ({ signal }) => api.get<StatusResponse>(`/conversation/status/${chatId}`, { signal }),
@@ -693,9 +609,6 @@ export function ConversationPresenceCard({
                 const isManual = !!character.override;
                 const isEditing = editingCharacterId === character.id;
                 const primaryText = activity || statusLabel(character.status);
-                const upcomingScheduleBlocks = hasGeneratedSchedules ? getUpcomingScheduleBlocks(character.schedule) : [];
-                const hasUpcomingScheduleBlocks = upcomingScheduleBlocks.length > 0;
-                const isNextScheduleVisible = !!visibleNextSchedule[character.id];
                 const isStatusMenuOpen = statusMenuCharacterId === character.id;
                 const lastContact = statusesQuery.data?.statuses[character.id]?.lastContact ?? lastContactByCharacterId[character.id];
                 const lastContactLabel = lastContact ? formatRelativeContact(lastContact) : null;
@@ -821,65 +734,14 @@ export function ConversationPresenceCard({
                           )}
                       </div>
 
-                      {hasUpcomingScheduleBlocks && (
-                        <div className="mt-1.5">
-                          <button
-                            type="button"
-                            className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[0.625rem] leading-4 text-[var(--muted-foreground)]/72 transition-colors hover:bg-[var(--accent)]/12 hover:text-[var(--muted-foreground)]/90"
-                            title={isNextScheduleVisible ? "Hide upcoming schedule" : "Show upcoming schedule"}
-                            onClick={() =>
-                              setVisibleNextSchedule((current) => ({
-                                ...current,
-                                [character.id]: !current[character.id],
-                              }))
-                            }
-                          >
-                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)]/70">
-                              {isNextScheduleVisible ? <EyeOff size="0.75rem" /> : <Eye size="0.75rem" />}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              {isNextScheduleVisible ? "Hide upcoming schedule" : `Upcoming schedule (${upcomingScheduleBlocks.length})`}
-                            </span>
-                          </button>
-
-                          {isNextScheduleVisible ? (
-                            <div className="mt-2 w-full rounded-lg bg-[var(--foreground)]/[0.03] px-2.5 py-2">
-                              <div className="space-y-2">
-                                {upcomingScheduleBlocks.map((block, index) => {
-                                  const previousBlock = index > 0 ? upcomingScheduleBlocks[index - 1] : null;
-                                  const showLabel = !!block.label && block.label !== previousBlock?.label;
-
-                                  return (
-                                    <div key={`${block.label}-${block.time}-${block.activity}`} className="min-w-0">
-                                      {showLabel ? (
-                                        <div className="mb-1 text-[0.5625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/52">
-                                          {block.label}
-                                        </div>
-                                      ) : null}
-                                      <div className="grid min-w-0 grid-cols-[auto_6.75rem_minmax(0,1fr)] items-start gap-x-2">
-                                        <span
-                                          className={cn(
-                                            "mt-[0.4rem] h-1.5 w-1.5 shrink-0 rounded-full",
-                                            statusDotClass(block.status),
-                                          )}
-                                        />
-                                          <span className="justify-self-start rounded-full bg-[var(--foreground)]/6 px-1.5 py-0.5 text-center text-[0.5625rem] tabular-nums text-[var(--muted-foreground)]/78 ring-1 ring-[var(--border)]/45">
-                                            {formatScheduleTimeRange(block.time)}
-                                          </span>
-                                        <div className="min-w-0 flex-1 whitespace-pre-wrap break-words pt-[0.05rem] text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">
-                                          {block.activity}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ) : (
-                            <></>
-                          )}
-                        </div>
-                      )}
+                      <ConversationPresenceScheduleSection
+                        chatId={chatId}
+                        chatMeta={chatMeta}
+                        characterId={character.id}
+                        characterName={character.name}
+                        schedule={schedules[character.id]}
+                        onOpenSettings={onOpenSettings}
+                      />
 
                       {canReplyNow && (
                         <button
@@ -892,9 +754,9 @@ export function ConversationPresenceCard({
                         </button>
                       )}
                     </div>
-
-                    {isStatusMenuOpen &&
-                      createPortal(
+  
+      {isStatusMenuOpen &&
+        createPortal(
                         <div
                           ref={statusMenuRef}
                           role="menu"
@@ -941,6 +803,7 @@ export function ConversationPresenceCard({
           document.body,
         )
       )}
+
     </>
   );
 }
