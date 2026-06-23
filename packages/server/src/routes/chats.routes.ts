@@ -664,8 +664,10 @@ export async function chatsRoutes(app: FastifyInstance) {
         }
         const toUnhide = covered.filter((id) => !stillCovered.has(id));
         if (toUnhide.length > 0) {
-          await storage.bulkSetHiddenFromAI(req.params.id, toUnhide, false);
-          unhidden = toUnhide;
+          // Capture the exact rows the store actually unhid (request scoped to
+          // this chat) so compensation re-hides precisely that set, not the
+          // speculative request.
+          unhidden = await storage.bulkSetHiddenFromAI(req.params.id, toUnhide, false);
         }
       }
     }
@@ -1415,8 +1417,8 @@ export async function chatsRoutes(app: FastifyInstance) {
       if (typeof hidden !== "boolean") {
         return reply.status(400).send({ error: "hidden must be a boolean" });
       }
-      const count = await storage.bulkSetHiddenFromAI(req.params.chatId, messageIds, hidden);
-      return { updated: count };
+      const updatedIds = await storage.bulkSetHiddenFromAI(req.params.chatId, messageIds, hidden);
+      return { updated: updatedIds.length };
     },
   );
 

@@ -876,10 +876,11 @@ export function createChatsStorage(db: DB) {
      * Bulk-set hiddenFromAI on many messages at once.
      * Reuses updateMessageExtra() for each message (read-parse-merge-write) and
      * syncs the flag to every swipe row so it survives setActiveSwipe() overwrites.
-     * Returns the number of messages updated.
+     * Returns the IDs actually updated (the request IDs scoped to this chat), so
+     * callers can compensate against the exact change set rather than what they asked for.
      */
-    async bulkSetHiddenFromAI(chatId: string, messageIds: string[], hidden: boolean): Promise<number> {
-      if (messageIds.length === 0) return 0;
+    async bulkSetHiddenFromAI(chatId: string, messageIds: string[], hidden: boolean): Promise<string[]> {
+      if (messageIds.length === 0) return [];
       const uniqueIds = Array.from(new Set(messageIds));
       const scopedRows: { id: string }[] = [];
       const CHUNK = 500;
@@ -902,7 +903,7 @@ export function createChatsStorage(db: DB) {
           await this.updateSwipeExtra(id, swipe.index, { hiddenFromAI: hidden });
         }
       }
-      return scopedIds.length;
+      return scopedIds;
     },
 
     /** Atomically append an attachment to a message's extra JSON field. */
