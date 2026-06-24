@@ -23,6 +23,8 @@ interface ModalProps {
   mobileFullScreen?: boolean;
   contentRef?: Ref<HTMLDivElement>;
   chatFloatingPanel?: boolean;
+  closeOnBackdropClick?: boolean;
+  closeOnEscape?: boolean;
 }
 
 export function Modal({
@@ -34,6 +36,8 @@ export function Modal({
   mobileFullScreen = false,
   contentRef,
   chatFloatingPanel = false,
+  closeOnBackdropClick = true,
+  closeOnEscape = true,
 }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   // Track mounted state separately so we can play the exit animation
@@ -68,13 +72,13 @@ export function Modal({
 
   // Close on Escape
   useEffect(() => {
-    if (!open) return;
+    if (!open || !closeOnEscape) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [open, onClose]);
+  }, [closeOnEscape, open, onClose]);
 
   // Remove from DOM after exit animation completes
   const handleAnimationEnd = () => {
@@ -108,9 +112,13 @@ export function Modal({
         transition: "opacity 150ms ease-out",
       }}
       onTransitionEnd={handleAnimationEnd}
-      onClick={(e) => {
-        if (e.target === overlayRef.current) onClose();
-      }}
+      onClick={
+        closeOnBackdropClick
+          ? (e) => {
+              if (e.target === overlayRef.current) onClose();
+            }
+          : undefined
+      }
     >
       {/* Backdrop */}
       <div
@@ -131,6 +139,7 @@ export function Modal({
         }}
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className={`shrink-0 flex items-center justify-between ${NEUTRAL_PANEL_HEADER}`}>

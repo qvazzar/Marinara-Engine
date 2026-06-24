@@ -1037,6 +1037,7 @@ type RoleplaySurfaceProps = {
   settingsOpen: boolean;
   settingsAnchor: ComponentProps<typeof ChatCommonOverlays>["settingsAnchor"];
   settingsInitialSection?: ComponentProps<typeof ChatCommonOverlays>["settingsInitialSection"];
+  onOpenScheduleEditor?: ComponentProps<typeof ChatCommonOverlays>["onOpenScheduleEditor"];
   filesOpen: boolean;
   galleryOpen: boolean;
   galleryAnchor: ComponentProps<typeof ChatCommonOverlays>["galleryAnchor"];
@@ -1146,6 +1147,7 @@ export function ChatRoleplaySurface({
   settingsOpen,
   settingsAnchor,
   settingsInitialSection,
+  onOpenScheduleEditor,
   filesOpen,
   galleryOpen,
   galleryAnchor,
@@ -1932,6 +1934,7 @@ export function ChatRoleplaySurface({
         settingsOpen={settingsOpen}
         settingsAnchor={settingsAnchor}
         settingsInitialSection={settingsInitialSection}
+        onOpenScheduleEditor={onOpenScheduleEditor}
         filesOpen={filesOpen}
         galleryOpen={galleryOpen}
         galleryAnchor={galleryAnchor}

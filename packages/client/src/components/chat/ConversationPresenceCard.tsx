@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, ChevronDown, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,7 +24,6 @@ import {
   ROLEPLAY_POPOVER_SHELL,
   ROLEPLAY_POPOVER_TITLE,
 } from "./roleplay-popover-styles";
-import { CharacterScheduleEditorModal } from "./CharacterScheduleEditorModal";
 import { ConversationPresenceScheduleSection } from "./ConversationPresenceScheduleSection";
 
 type StatusEntry = {
@@ -51,6 +50,7 @@ type ConversationPresenceCardProps = {
   characterMap: CharacterMap;
   messages?: Message[];
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>, options?: OpenSettingsOptions) => void;
+  onOpenScheduleEditor: (characterId: string, options?: OpenScheduleEditorOptions) => void;
 };
 
 const STATUS_OPTIONS: Array<{ status: ConversationPresenceStatus; label: string }> = [
@@ -132,6 +132,7 @@ export function ConversationPresenceCard({
   characterMap,
   messages,
   onOpenSettings,
+  onOpenScheduleEditor,
 }: ConversationPresenceCardProps) {
   const [open, setOpen] = useState(false);
   const [editingCharacterId, setEditingCharacterId] = useState<string | null>(null);
@@ -139,8 +140,6 @@ export function ConversationPresenceCard({
   const [pendingStatuses, setPendingStatuses] = useState<Record<string, ConversationPresenceStatus>>({});
   const [replyNowCharacterId, setReplyNowCharacterId] = useState<string | null>(null);
   const [draftActivity, setDraftActivity] = useState("");
-  const [scheduleModalCharacterId, setScheduleModalCharacterId] = useState<string | null>(null);
-  const [scheduleModalInitialDay, setScheduleModalInitialDay] = useState<string | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const statusButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -240,8 +239,9 @@ export function ConversationPresenceCard({
   useEffect(() => {
     if (!open) return;
     const handleMouseDown = (event: MouseEvent) => {
+      const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+      if (path.some((node) => node instanceof Element && node.closest('[data-component="Modal"]'))) return;
       const target = event.target as Node;
-      if (target instanceof Element && target.closest('[data-component="Modal"]')) return;
       if (
         buttonRef.current?.contains(target) ||
         popoverRef.current?.contains(target) ||
@@ -387,27 +387,6 @@ export function ConversationPresenceCard({
       toast.error(error instanceof Error ? error.message : "Failed to clear presence override");
     }
   };
-
-  const saveCharacterSchedule = useCallback(
-    (savedCharacterId: string, updated: SharedWeekSchedule) => {
-      updateMeta.mutate({
-        id: chatId,
-        characterSchedules: {
-          ...(chatMeta.characterSchedules ?? {}),
-          [savedCharacterId]: updated,
-        },
-      });
-    },
-    [chatId, chatMeta.characterSchedules, updateMeta],
-  );
-
-  const openCharacterScheduleEditor = useCallback(
-    (targetCharacterId: string, options?: OpenScheduleEditorOptions) => {
-      setScheduleModalInitialDay(options?.initialDay ?? null);
-      setScheduleModalCharacterId(targetCharacterId);
-    },
-    [],
-  );
 
   if (characters.length === 0) return <div />;
 
@@ -725,7 +704,7 @@ export function ConversationPresenceCard({
                         schedule={schedules[character.id]}
                         lastContact={lastContact}
                         onOpenSettings={onOpenSettings}
-                        onOpenScheduleEditor={(options) => openCharacterScheduleEditor(character.id, options)}
+                        onOpenScheduleEditor={(options) => onOpenScheduleEditor(character.id, options)}
                       />
 
                       {canReplyNow && (
@@ -739,21 +718,6 @@ export function ConversationPresenceCard({
                         </button>
                       )}
                     </div>
-                  {character.id === scheduleModalCharacterId && (
-                    <CharacterScheduleEditorModal
-                      open
-                      characterId={scheduleModalCharacterId}
-                      characterName={character.name}
-                      schedule={schedules[character.id]}
-                      initialDay={scheduleModalInitialDay}
-                      onClose={() => {
-                        setScheduleModalCharacterId(null);
-                        setScheduleModalInitialDay(null);
-                      }}
-                      onSave={saveCharacterSchedule}
-                    />
-                  )}
-
       {isStatusMenuOpen &&
         createPortal(
                         <div

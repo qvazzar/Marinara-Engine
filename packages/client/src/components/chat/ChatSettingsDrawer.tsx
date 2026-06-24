@@ -79,7 +79,6 @@ import { Modal } from "../ui/Modal";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SecretPlotPanel } from "../agents/SecretPlotPanel";
 import { SummariesEditorModal } from "./SummariesEditorModal";
-import { CharacterScheduleEditorModal } from "./CharacterScheduleEditorModal";
 import { useCharacters, usePersonas, useCharacterGroups, type SpriteInfo } from "../../hooks/use-characters";
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../hooks/use-lorebooks";
 import { useDefaultPreset, usePresetFull, usePresets } from "../../hooks/use-presets";
@@ -227,6 +226,7 @@ interface ChatSettingsDrawerProps {
   onClose: () => void;
   anchor?: { right: number; top: number } | null;
   initialSection?: "autonomous" | null;
+  onOpenScheduleEditor?: (characterId: string, options?: { initialDay?: string | null }) => void;
   spriteArrangeMode?: boolean;
   onToggleSpriteArrange?: () => void;
   onResetSpritePlacements?: () => void;
@@ -607,6 +607,7 @@ export function ChatSettingsDrawer({
   onClose,
   anchor,
   initialSection,
+  onOpenScheduleEditor,
   spriteArrangeMode = false,
   onToggleSpriteArrange,
   onResetSpritePlacements,
@@ -2190,7 +2191,6 @@ export function ChatSettingsDrawer({
   const [showConnectionPicker, setShowConnectionPicker] = useState(false);
   const [showSummariesModal, setShowSummariesModal] = useState(false);
   const [showMemoriesModal, setShowMemoriesModal] = useState(false);
-  const [scheduleModalCharacterId, setScheduleModalCharacterId] = useState<string | null>(null);
   // Session-ephemeral: did the user change Day Rollover Hour in this drawer mount?
   // Used to gate the "transitional duplication" warning so it only appears
   // immediately after a change (when the warning is operationally useful) and
@@ -4552,7 +4552,7 @@ export function ChatSettingsDrawer({
                             <button
                               key={charId}
                               type="button"
-                              onClick={() => setScheduleModalCharacterId(charId)}
+                              onClick={() => onOpenScheduleEditor?.(charId)}
                               className={cn(
                                 "flex items-center justify-between gap-2 rounded-md px-3 py-2 text-left transition-colors ring-1 ring-[var(--border)]",
                                 schedule ? "bg-[var(--secondary)] hover:bg-[var(--accent)]" : "bg-[var(--background)] hover:bg-[var(--accent)]/70",
@@ -7064,22 +7064,6 @@ export function ChatSettingsDrawer({
       {/* Automatic summarization editor */}
       <SummariesEditorModal chat={chat} open={showSummariesModal} onClose={() => setShowSummariesModal(false)} />
 
-      <CharacterScheduleEditorModal
-        open={!!scheduleModalCharacterId}
-        characterId={scheduleModalCharacterId}
-        characterName={scheduleModalCharacterId ? (charNameMap.get(scheduleModalCharacterId) ?? "Unknown") : "Character"}
-        schedule={scheduleModalCharacterId ? metadata.characterSchedules?.[scheduleModalCharacterId] : undefined}
-        onClose={() => setScheduleModalCharacterId(null)}
-        onSave={(characterId, updated) => {
-          updateMeta.mutate({
-            id: chat.id,
-            characterSchedules: {
-              ...(metadata.characterSchedules ?? {}),
-              [characterId]: updated,
-            },
-          });
-        }}
-      />
 
       {/* Memory recall chunk viewer */}
       <MemoryRecallMemoriesModal

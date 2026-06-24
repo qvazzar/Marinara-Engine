@@ -193,6 +193,7 @@ type ChatCommonOverlaysProps = {
   settingsOpen: boolean;
   settingsAnchor: ChatFloatingPanelAnchor;
   settingsInitialSection?: ChatSettingsInitialSection;
+  onOpenScheduleEditor?: (characterId: string, options?: { initialDay?: string | null }) => void;
   filesOpen: boolean;
   galleryOpen: boolean;
   galleryAnchor: ChatFloatingPanelAnchor;
@@ -228,6 +229,7 @@ export function ChatCommonOverlays({
   settingsOpen,
   settingsAnchor,
   settingsInitialSection,
+  onOpenScheduleEditor,
   filesOpen,
   galleryOpen,
   galleryAnchor,
@@ -287,6 +289,7 @@ export function ChatCommonOverlays({
             onSpriteSideChange={sceneSettings.onSpriteSideChange}
             spriteVisualSettings={sceneSettings.spriteVisualSettings}
             onSpriteVisualSettingsChange={sceneSettings.onSpriteVisualSettingsChange}
+            onOpenScheduleEditor={onOpenScheduleEditor}
           />
         </Suspense>
       )}

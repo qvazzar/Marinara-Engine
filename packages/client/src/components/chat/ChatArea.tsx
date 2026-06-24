@@ -56,12 +56,14 @@ import {
   type AchievementEvent,
   type SpritePlacement,
   type SpriteSide,
+  type WeekSchedule,
 } from "@marinara-engine/shared";
 import { resolveLiveConversationStatus } from "../../lib/conversation-presence-status";
 import { useUIStore } from "../../stores/ui.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { cn, parseAvatarCropJson } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
+import { CharacterScheduleEditorModal } from "./CharacterScheduleEditorModal";
 import { useEncounter } from "../../hooks/use-encounter";
 import { useScene } from "../../hooks/use-scene";
 import { useEncounterStore } from "../../stores/encounter.store";
@@ -396,6 +398,8 @@ export function ChatArea() {
   const hasAnimatedRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<ChatSettingsInitialSection>(null);
+  const [scheduleModalCharacterId, setScheduleModalCharacterId] = useState<string | null>(null);
+  const [scheduleModalInitialDay, setScheduleModalInitialDay] = useState<string | null>(null);
   const [filesOpen, setFilesOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [settingsAnchor, setSettingsAnchor] = useState<FloatingPanelAnchor>(null);
@@ -455,6 +459,27 @@ export function ChatArea() {
       setGalleryOpen(true);
     },
     [readFloatingPanelAnchor],
+  );
+  const handleOpenScheduleEditor = useCallback((characterId: string, options?: { initialDay?: string | null }) => {
+    setScheduleModalInitialDay(options?.initialDay ?? null);
+    setScheduleModalCharacterId(characterId);
+  }, []);
+  const handleCloseScheduleEditor = useCallback(() => {
+    setScheduleModalCharacterId(null);
+    setScheduleModalInitialDay(null);
+  }, []);
+  const handleSaveCharacterSchedule = useCallback(
+    (savedCharacterId: string, updated: WeekSchedule) => {
+      if (!chat?.id) return;
+      updateMeta.mutate({
+        id: chat.id,
+        characterSchedules: {
+          ...(chatMeta.characterSchedules ?? {}),
+          [savedCharacterId]: updated,
+        },
+      });
+    },
+    [chat?.id, chatMeta.characterSchedules, updateMeta],
   );
   const handleCloseSettingsPanel = useCallback(() => {
     setSettingsOpen(false);
@@ -773,6 +798,18 @@ export function ChatArea() {
     const raw = (chat as unknown as { metadata?: string | Record<string, unknown> }).metadata;
     return parseChatMetadata(raw);
   }, [chat]);
+
+  const scheduleEditorModal = scheduleModalCharacterId ? (
+    <CharacterScheduleEditorModal
+      open
+      characterId={scheduleModalCharacterId}
+      characterName={characterMap.get(scheduleModalCharacterId)?.name ?? "Character"}
+      schedule={chatMeta.characterSchedules?.[scheduleModalCharacterId]}
+      initialDay={scheduleModalInitialDay}
+      onClose={handleCloseScheduleEditor}
+      onSave={handleSaveCharacterSchedule}
+    />
+  ) : null;
 
   useEffect(() => {
     setLocalSpriteVisualSettings(loadLocalSpriteVisualSettings(chat?.id));
@@ -2327,6 +2364,7 @@ export function ChatArea() {
             chat={chat}
             settingsOpen={settingsOpen}
             settingsAnchor={settingsAnchor}
+            onOpenScheduleEditor={handleOpenScheduleEditor}
             filesOpen={filesOpen}
             galleryOpen={galleryOpen}
             galleryAnchor={galleryAnchor}
@@ -2346,6 +2384,7 @@ export function ChatArea() {
               spriteVisualSettings: effectiveSpriteVisualSettings,
               onSpriteVisualSettingsChange: patchLocalSpriteVisualSettings,
             }}
+            onOpenScheduleEditor={handleOpenScheduleEditor}
             onCloseSettings={handleCloseSettingsPanel}
             onCloseFiles={() => setFilesOpen(false)}
             onCloseGallery={handleCloseGalleryPanel}
@@ -2365,6 +2404,7 @@ export function ChatArea() {
             onSelectAllAboveSelection={handleSelectAllAboveSelection}
             onSelectAllBelowSelection={handleSelectAllBelowSelection}
           />
+          {scheduleEditorModal}
         </>
       </Suspense>
     );
@@ -2415,6 +2455,7 @@ export function ChatArea() {
             onSetActiveSwipe={handleSetActiveSwipe}
             onToggleHiddenFromAI={handleToggleHiddenFromAI}
             onPeekPrompt={handlePeekPrompt}
+            onOpenScheduleEditor={handleOpenScheduleEditor}
             onBranch={isSceneChat ? undefined : handleBranch}
             onToggleSelectMessage={handleToggleSelectMessage}
             onSwitchChat={chat?.connectedChatId ? () => setActiveChatId(chat.connectedChatId!) : undefined}
@@ -2443,6 +2484,7 @@ export function ChatArea() {
             onSelectAllBelowSelection={handleSelectAllBelowSelection}
             lastAssistantMessageId={lastAssistantMessageId}
           />
+          {scheduleEditorModal}
         </Suspense>
         {pendingNewChatMode && (
           <NewChatConnectionGate
@@ -2464,7 +2506,7 @@ export function ChatArea() {
     <>
       {cardCssInjector}
       <Suspense fallback={surfaceFallback}>
-        <ChatRoleplaySurface
+          <ChatRoleplaySurface
           activeChatId={activeChatId}
           chat={chat}
           allChats={chatList}
@@ -2506,10 +2548,11 @@ export function ChatArea() {
           summaryContextSize={summaryContextSize}
           totalMessageCount={totalMessageCount}
           lastAssistantMessageId={lastAssistantMessageId}
-          settingsOpen={settingsOpen}
-          settingsAnchor={settingsAnchor}
-          settingsInitialSection={settingsInitialSection}
-          filesOpen={filesOpen}
+            settingsOpen={settingsOpen}
+            settingsAnchor={settingsAnchor}
+            settingsInitialSection={settingsInitialSection}
+            onOpenScheduleEditor={handleOpenScheduleEditor}
+            filesOpen={filesOpen}
           galleryOpen={galleryOpen}
           galleryAnchor={galleryAnchor}
           wizardOpen={wizardOpen}
@@ -2574,6 +2617,7 @@ export function ChatArea() {
           isGrouped={isGrouped}
         />
       </Suspense>
+      {scheduleEditorModal}
       {agentInjectionReview && (
         <AgentInjectionReviewModal
           request={agentInjectionReview}

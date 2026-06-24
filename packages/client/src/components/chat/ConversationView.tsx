@@ -65,6 +65,7 @@ interface ConversationViewProps {
   onPeekPrompt: () => void;
   lastAssistantMessageId: string | null;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>, options?: { initialSection?: "autonomous" | null }) => void;
+  onOpenScheduleEditor?: (characterId: string, options?: { initialDay?: string | null }) => void;
   onOpenGallery: (event?: ReactMouseEvent<HTMLElement>) => void;
   onBranch?: (messageId: string) => void;
   multiSelectMode?: boolean;
@@ -261,6 +262,7 @@ export function ConversationView({
   onPeekPrompt,
   lastAssistantMessageId,
   onOpenSettings,
+  onOpenScheduleEditor,
   onOpenGallery,
   onBranch,
   multiSelectMode,
@@ -484,6 +486,7 @@ export function ConversationView({
     () => getTranscriptRenderWindow(messages, { startIndex: transcriptWindowStart }),
     [messages, transcriptWindowStart],
   );
+
 
   const showOlderTranscriptMessages = useCallback(() => {
     setTranscriptWindowStart((current) => {
@@ -898,10 +901,11 @@ export function ConversationView({
             chatId={chatId}
             chatMeta={chatMeta}
             chatCharIds={chatCharIds}
-            characterMap={characterMap}
-            messages={messages}
-            onOpenSettings={onOpenSettings}
-          />
+          characterMap={characterMap}
+          messages={messages}
+          onOpenSettings={onOpenSettings}
+            onOpenScheduleEditor={onOpenScheduleEditor}
+        />
 
           <ChatToolbarMenu
             className="flex-1"
@@ -1205,6 +1209,7 @@ export function ConversationView({
           })}
         onPeekPrompt={onPeekPrompt}
       />
+
     </div>
   );
 }

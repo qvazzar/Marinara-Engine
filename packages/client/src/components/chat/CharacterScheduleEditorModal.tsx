@@ -308,7 +308,15 @@ export function CharacterScheduleEditorModal({
   );
 
   return (
-    <Modal open={open} onClose={onClose} title={`Edit ${characterName} Schedule`} width="max-w-5xl" mobileFullScreen>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Edit ${characterName} Schedule`}
+      closeOnBackdropClick={false}
+      closeOnEscape={false}
+      width="max-w-5xl"
+      mobileFullScreen
+    >
       {!draft ? null : (
         <div className="space-y-4">
           <section className="rounded-md border border-[var(--border)]/75 bg-[var(--foreground)]/[0.03] px-3 py-3 transition-colors hover:bg-[var(--foreground)]/[0.05]">
