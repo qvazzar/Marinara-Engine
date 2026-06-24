@@ -35,14 +35,14 @@ export function getChatCharacterIds(chat: { characterIds?: unknown } | null | un
   if (!chat) return [];
 
   const raw = chat.characterIds;
-  if (Array.isArray(raw)) {
-    return raw.filter((value): value is string => typeof value === "string" && value.length > 0);
-  }
+  let ids: string[] = [];
 
-  if (typeof raw === "string") {
+  if (Array.isArray(raw)) {
+    ids = raw.filter((value): value is string => typeof value === "string" && value.length > 0);
+  } else if (typeof raw === "string") {
     try {
       const parsed = JSON.parse(raw) as unknown;
-      return Array.isArray(parsed)
+      ids = Array.isArray(parsed)
         ? parsed.filter((value): value is string => typeof value === "string" && value.length > 0)
         : [];
     } catch {
@@ -50,7 +50,7 @@ export function getChatCharacterIds(chat: { characterIds?: unknown } | null | un
     }
   }
 
-  return [];
+  return [...new Set(ids)];
 }
 
 export function parseCharacterMacroData(

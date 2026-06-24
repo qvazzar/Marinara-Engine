@@ -251,8 +251,12 @@ export function buildAssetManifest(): AssetManifest {
     byCategory,
   };
 
-  // Persist to disk for quick reload
-  writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2), "utf-8");
+  // Persist to disk for quick reload (best-effort — skip if file is not writable)
+  try {
+    writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2), "utf-8");
+  } catch {
+    // ignore
+  }
 
   return manifest;
 }

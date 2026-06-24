@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, ChevronDown, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -22,9 +22,9 @@ import {
   ROLEPLAY_POPOVER_HEADER,
   ROLEPLAY_POPOVER_SCROLL_AREA,
   ROLEPLAY_POPOVER_SHELL,
-  ROLEPLAY_POPOVER_SUBTITLE,
   ROLEPLAY_POPOVER_TITLE,
 } from "./roleplay-popover-styles";
+import { CharacterScheduleEditorModal } from "./CharacterScheduleEditorModal";
 import { ConversationPresenceScheduleSection } from "./ConversationPresenceScheduleSection";
 
 type StatusEntry = {
@@ -41,6 +41,8 @@ type StatusResponse = {
 };
 
 type OpenSettingsOptions = { initialSection?: "autonomous" | null };
+
+type OpenScheduleEditorOptions = { initialDay?: string | null };
 
 type ConversationPresenceCardProps = {
   chatId: string;
@@ -116,32 +118,6 @@ function buildOverrides(
   return next;
 }
 
-function formatRelativeContact(isoTimestamp: string, now = Date.now()) {
-  const timestamp = new Date(isoTimestamp).getTime();
-  if (!Number.isFinite(timestamp)) return null;
-
-  const diffMs = now - timestamp;
-  if (diffMs < 60_000) return "just now";
-
-  const minutes = Math.floor(diffMs / 60_000);
-  if (minutes < 60) return `${minutes}m ago`;
-
-  const hours = Math.floor(diffMs / 3_600_000);
-  if (hours < 24) return `${hours}h ago`;
-
-  const days = Math.floor(diffMs / 86_400_000);
-  if (days < 7) return `${days}d ago`;
-
-  const weeks = Math.floor(days / 7);
-  if (weeks < 5) return `${weeks}w ago`;
-
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-
-  const years = Math.floor(days / 365);
-  return `${years}y ago`;
-}
-
 function resizeActivityField(field: HTMLTextAreaElement | null) {
   if (!field) return;
   field.style.height = "0px";
@@ -163,6 +139,8 @@ export function ConversationPresenceCard({
   const [pendingStatuses, setPendingStatuses] = useState<Record<string, ConversationPresenceStatus>>({});
   const [replyNowCharacterId, setReplyNowCharacterId] = useState<string | null>(null);
   const [draftActivity, setDraftActivity] = useState("");
+  const [scheduleModalCharacterId, setScheduleModalCharacterId] = useState<string | null>(null);
+  const [scheduleModalInitialDay, setScheduleModalInitialDay] = useState<string | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const statusButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -320,9 +298,12 @@ export function ConversationPresenceCard({
   }, [draftActivity, editingCharacterId, open]);
 
   const characters = useMemo(
-    () =>
-      chatCharIds
+    () => {
+      const seen = new Set<string>();
+      return chatCharIds
         .map((id) => {
+          if (seen.has(id)) return null;
+          seen.add(id);
           const character = characterMap.get(id);
           if (!character) return null;
           const statusEntry = statusesQuery.data?.statuses[id];
@@ -330,7 +311,8 @@ export function ConversationPresenceCard({
           const activity = statusEntry?.activity ?? character.conversationActivity ?? "";
           return { id, ...character, status, activity, schedule: statusEntry?.schedule ?? schedules[id], override: overrides[id] };
         })
-        .filter((value): value is NonNullable<typeof value> => value !== null),
+        .filter((value): value is NonNullable<typeof value> => value !== null);
+    },
     [characterMap, chatCharIds, overrides, pendingStatuses, schedules, statusesQuery.data?.statuses],
   );
   const lastContactByCharacterId = useMemo(() => {
@@ -346,7 +328,6 @@ export function ConversationPresenceCard({
 
     return latestByCharacterId;
   }, [messages]);
-
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshStatuses = async () => {
     if (isRefreshing) return;
@@ -420,6 +401,27 @@ export function ConversationPresenceCard({
       toast.error(error instanceof Error ? error.message : "Failed to clear presence override");
     }
   };
+
+  const saveCharacterSchedule = useCallback(
+    (savedCharacterId: string, updated: SharedWeekSchedule) => {
+      updateMeta.mutate({
+        id: chatId,
+        characterSchedules: {
+          ...(chatMeta.characterSchedules ?? {}),
+          [savedCharacterId]: updated,
+        },
+      });
+    },
+    [chatId, chatMeta.characterSchedules, updateMeta],
+  );
+
+  const openCharacterScheduleEditor = useCallback(
+    (targetCharacterId: string, options?: OpenScheduleEditorOptions) => {
+      setScheduleModalInitialDay(options?.initialDay ?? null);
+      setScheduleModalCharacterId(targetCharacterId);
+    },
+    [],
+  );
 
   const replyNow = async (characterId: string) => {
     if (replyNowCharacterId || !delayedInfo?.characterIds?.includes(characterId)) return;
@@ -575,20 +577,17 @@ export function ConversationPresenceCard({
                     <CalendarClock size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
                     Conversation Presence
                   </div>
-                  <div className={ROLEPLAY_POPOVER_SUBTITLE}>
-                    See who is following schedule and step in manually only when needed.
-                  </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      type="button"
-                      className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                      title="Open autonomous settings"
-                      onClick={() => {
-                        setOpen(false);
-                        onOpenSettings(undefined, { initialSection: "autonomous" });
-                      }}
-                    >
+                  <button
+                    type="button"
+                    className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    title="Open autonomous settings"
+                    onClick={() => {
+                      setOpen(false);
+                      onOpenSettings(undefined, { initialSection: "autonomous" });
+                    }}
+                  >
                     <Settings2 size="0.8125rem" />
                   </button>
                   <button
@@ -611,7 +610,6 @@ export function ConversationPresenceCard({
                 const primaryText = activity || statusLabel(character.status);
                 const isStatusMenuOpen = statusMenuCharacterId === character.id;
                 const lastContact = statusesQuery.data?.statuses[character.id]?.lastContact ?? lastContactByCharacterId[character.id];
-                const lastContactLabel = lastContact ? formatRelativeContact(lastContact) : null;
                 const canReplyNow = !!activeAbortController && !!delayedInfo?.characterIds?.includes(character.id);
                 const isReplyNowPending = replyNowCharacterId === character.id;
 
@@ -650,88 +648,72 @@ export function ConversationPresenceCard({
                             >
                               {character.name}
                             </button>
-                            {isManual && (
-                              <span className="shrink-0 rounded-full bg-[var(--foreground)]/10 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--foreground)]/75 ring-1 ring-[var(--border)]/70">
-                                Override
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="text-[0.625rem] text-[var(--muted-foreground)]">
-                              {isManual ? "Manual override" : "Following schedule"}
-                            </span>
-                            {lastContactLabel && (
-                              <span className="text-[0.625rem] text-[var(--muted-foreground)]/90">
-                                Last contact {lastContactLabel}
-                              </span>
-                            )}
                           </div>
                         </div>
                       </div>
 
                       <div className="mt-2 flex w-full min-w-0 items-stretch overflow-hidden rounded-md bg-[var(--background)] ring-1 ring-[var(--border)] transition-colors hover:ring-[var(--border)]/80">
-                          <div className="flex shrink-0 flex-col border-r border-[var(--border)]">
-                            <button
-                              ref={(node) => {
-                                statusButtonRefs.current[character.id] = node;
-                              }}
-                              type="button"
-                              aria-haspopup="menu"
-                              aria-expanded={isStatusMenuOpen}
-                              className={cn(
-                                "inline-flex min-h-[2rem] items-center justify-center gap-1 px-2 text-[0.6875rem] font-medium transition-colors hover:bg-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]",
-                                isStatusMenuOpen && "bg-[var(--accent)]",
-                              )}
-                              onClick={() => setStatusMenuCharacterId((current) => (current === character.id ? null : character.id))}
-                            >
-                              <span className={cn("h-2 w-2 rounded-full", statusDotClass(character.status))} />
-                              <ChevronDown size="0.625rem" className="shrink-0 opacity-60" />
-                            </button>
-                          </div>
-
-                          <textarea
+                        <div className="flex shrink-0 flex-col border-r border-[var(--border)]">
+                          <button
                             ref={(node) => {
-                              activityFieldRefs.current[character.id] = node;
+                              statusButtonRefs.current[character.id] = node;
                             }}
-                            value={isEditing ? draftActivity : primaryText}
-                            disabled={updateMeta.isPending}
-                            rows={1}
-                            className="min-h-[2rem] max-h-28 w-full min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2.5 py-1.5 text-[0.75rem] leading-5 text-[var(--foreground)]/88 outline-none placeholder:text-[var(--muted-foreground)]/55 disabled:opacity-60"
-                            placeholder="Manual activity"
-                            onFocus={() => {
-                              beginEditing(character);
-                              resizeActivityField(activityFieldRefs.current[character.id]);
-                            }}
-                            onChange={(event) => {
-                              if (!isEditing) setEditingCharacterId(character.id);
-                              setDraftActivity(event.currentTarget.value);
-                              resizeActivityField(event.currentTarget);
-                            }}
-                            onBlur={() => void saveActivityOverride(character)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" && !event.shiftKey) {
-                                event.preventDefault();
-                                void saveActivityOverride(character);
-                              }
-                              if (event.key === "Escape") {
-                                event.preventDefault();
-                                cancelEditing();
-                              }
-                            }}
-                          />
+                            type="button"
+                            aria-haspopup="menu"
+                            aria-expanded={isStatusMenuOpen}
+                            className={cn(
+                              "inline-flex min-h-[2rem] items-center justify-center gap-1 px-2 text-[0.6875rem] font-medium transition-colors hover:bg-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]",
+                              isStatusMenuOpen && "bg-[var(--accent)]",
+                            )}
+                            onClick={() => setStatusMenuCharacterId((current) => (current === character.id ? null : character.id))}
+                          >
+                            <span className={cn("h-2 w-2 rounded-full", statusDotClass(character.status))} />
+                            <ChevronDown size="0.625rem" className="shrink-0 opacity-60" />
+                          </button>
+                        </div>
 
-                          {isManual && (
-                            <button
-                              type="button"
-                              disabled={updateMeta.isPending}
-                              className="shrink-0 border-l border-[var(--border)] px-2.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]/20 hover:text-[var(--foreground)] disabled:opacity-60"
-                              title="Clear manual override"
-                              onClick={() => void restoreSchedule(character.id)}
-                            >
-                              <Trash2 size="0.75rem" />
-                            </button>
-                          )}
+                        <textarea
+                          ref={(node) => {
+                            activityFieldRefs.current[character.id] = node;
+                          }}
+                          value={isEditing ? draftActivity : primaryText}
+                          disabled={updateMeta.isPending}
+                          rows={1}
+                          className="min-h-[2rem] max-h-28 w-full min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2.5 py-1.5 text-[0.75rem] leading-5 text-[var(--foreground)]/88 outline-none placeholder:text-[var(--muted-foreground)]/55 disabled:opacity-60"
+                          placeholder="Manual activity"
+                          onFocus={() => {
+                            beginEditing(character);
+                            resizeActivityField(activityFieldRefs.current[character.id]);
+                          }}
+                          onChange={(event) => {
+                            if (!isEditing) setEditingCharacterId(character.id);
+                            setDraftActivity(event.currentTarget.value);
+                            resizeActivityField(event.currentTarget);
+                          }}
+                          onBlur={() => void saveActivityOverride(character)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && !event.shiftKey) {
+                              event.preventDefault();
+                              void saveActivityOverride(character);
+                            }
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              cancelEditing();
+                            }
+                          }}
+                        />
+
+                        {isManual && (
+                          <button
+                            type="button"
+                            disabled={updateMeta.isPending}
+                            className="shrink-0 border-l border-[var(--border)] px-2.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]/20 hover:text-[var(--foreground)] disabled:opacity-60"
+                            title="Clear manual override"
+                            onClick={() => void restoreSchedule(character.id)}
+                          >
+                            <Trash2 size="0.75rem" />
+                          </button>
+                        )}
                       </div>
 
                       <ConversationPresenceScheduleSection
@@ -740,7 +722,9 @@ export function ConversationPresenceCard({
                         characterId={character.id}
                         characterName={character.name}
                         schedule={schedules[character.id]}
+                        lastContact={lastContact}
                         onOpenSettings={onOpenSettings}
+                        onOpenScheduleEditor={(options) => openCharacterScheduleEditor(character.id, options)}
                       />
 
                       {canReplyNow && (
@@ -754,7 +738,21 @@ export function ConversationPresenceCard({
                         </button>
                       )}
                     </div>
-  
+                  {character.id === scheduleModalCharacterId && (
+                    <CharacterScheduleEditorModal
+                      open
+                      characterId={scheduleModalCharacterId}
+                      characterName={character.name}
+                      schedule={schedules[character.id]}
+                      initialDay={scheduleModalInitialDay}
+                      onClose={() => {
+                        setScheduleModalCharacterId(null);
+                        setScheduleModalInitialDay(null);
+                      }}
+                      onSave={saveCharacterSchedule}
+                    />
+                  )}
+
       {isStatusMenuOpen &&
         createPortal(
                         <div

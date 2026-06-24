@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowRight, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, ChevronRight, Trash2 } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { cn } from "../../lib/utils";
 import type { ScheduleBlock, WeekSchedule } from "@marinara-engine/shared";
@@ -14,10 +14,13 @@ const STATUS_COLORS: Record<ScheduleBlock["status"], string> = {
 };
 const AUTONOMOUS_DAILY_CAP_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
-const SCHEDULE_HINTS = ["Keep the week compact, readable, and easy to edit later."] as const;
 const CURRENT_SCHEDULE_DAY = CONVERSATION_SCHEDULE_DAYS[(new Date().getDay() + 6) % 7];
 const CURRENT_SCHEDULE_MINUTES = new Date().getHours() * 60 + new Date().getMinutes();
 const RULER_HOURS = Array.from({ length: 25 }, (_, hour) => hour);
+
+type StatusMenuState = {
+  key: string;
+};
 
 function parseScheduleMinutes(value: string) {
   const [hoursPart, minutesPart] = value.split(":");
@@ -86,6 +89,7 @@ export function CharacterScheduleEditorModal({
   const [idleResponseDelayMinutes, setIdleResponseDelayMinutes] = useState("");
   const [dndResponseDelayMinutes, setDndResponseDelayMinutes] = useState("");
   const [autonomousDailyCapOverride, setAutonomousDailyCapOverride] = useState("");
+  const [statusMenu, setStatusMenu] = useState<StatusMenuState | null>(null);
 
   useEffect(() => {
     if (!open || !characterId) return;
@@ -162,6 +166,24 @@ export function CharacterScheduleEditorModal({
     });
   }, []);
 
+  const toggleStatusMenu = useCallback(
+    (key: string) => {
+      setStatusMenu((current) => (current?.key === key ? null : { key }));
+    },
+    [],
+  );
+
+  const selectBlockStatus = useCallback(
+    (menuKey: string, status: ScheduleBlock["status"]) => {
+      const [day, idxString] = menuKey.split(":");
+      const idx = Number(idxString);
+      if (!day || !Number.isInteger(idx)) return;
+      updateBlock(day, idx, "status", status);
+      setStatusMenu(null);
+    },
+    [updateBlock],
+  );
+
   const handleSave = useCallback(() => {
     if (!characterId || !draft) return;
     const parsedAutonomousDailyCap = parseOptionalCap(autonomousDailyCapOverride, 1, 8);
@@ -204,49 +226,79 @@ export function CharacterScheduleEditorModal({
   const renderBlockEditor = (day: string, block: ScheduleBlock, idx: number) => (
     <div
       key={`${day}-${idx}-${block.time}`}
-      className="rounded-2xl border border-[var(--border)]/65 bg-[var(--foreground)]/[0.035] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+      className="relative rounded-2xl border border-[var(--border)]/65 bg-[var(--foreground)]/[0.035] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
     >
       <div className="flex flex-col gap-3 md:flex-row md:items-start">
         <div className="flex shrink-0 flex-row items-start gap-1.5 md:flex-col md:pt-0.5">
-          <div className="relative w-[7.25rem]">
-            <select
-              value={block.status}
-              onChange={(e) => updateBlock(day, idx, "status", e.target.value)}
+          <div className="relative shrink-0">
+            <button
+              type="button"
               aria-label={`Change status: ${statusLabel(block.status)}`}
-              className={cn(
-                "mari-chrome-control mari-chrome-control--small h-[2rem] w-full appearance-none gap-1 px-2 py-1.5 pr-6 text-[0.625rem]",
-                STATUS_COLORS[block.status],
-              )}
+              title="Change status"
+              className="mari-chrome-control mari-chrome-control--small min-w-0 shrink-0 px-2 py-1.5 max-md:h-9 max-md:min-h-9"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleStatusMenu(`${day}:${idx}`);
+              }}
             >
-              {STATUS_OPTIONS.map((status) => (
-                <option key={status} value={status}>
-                  {statusLabel(status)}
-                </option>
-              ))}
-            </select>
-            <ChevronDown
-              size="0.625rem"
-              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]/70"
-            />
+              <span className={cn("h-2 w-2 shrink-0 rounded-full", STATUS_COLORS[block.status])} />
+              <span className="mari-chrome-text max-w-20 truncate text-xs">{statusLabel(block.status)}</span>
+            </button>
+
+            {statusMenu?.key === `${day}:${idx}` ? (
+              <div
+                role="menu"
+                aria-label="Change block status"
+                className="absolute left-0 top-full z-[20] mt-1 min-w-[10.5rem] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-xl ring-1 ring-[var(--border)]"
+                onClick={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                {STATUS_OPTIONS.map((status) => {
+                  const selected = block.status === status;
+                  return (
+                    <button
+                      key={status}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={selected}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        selectBlockStatus(`${day}:${idx}`, status);
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.6875rem] transition-colors",
+                        selected ? "bg-[var(--accent)] text-[var(--foreground)]" : "text-[var(--popover-foreground)] hover:bg-[var(--accent)]",
+                      )}
+                    >
+                      <span className={cn("h-2 w-2 shrink-0 rounded-full", STATUS_COLORS[status])} />
+                      <span>{statusLabel(status)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
           <input
             value={block.time}
             onChange={(e) => updateBlock(day, idx, "time", e.target.value)}
-            className="mari-chrome-control mari-chrome-control--small w-[7.25rem] min-h-[2rem] px-2 py-1.5 text-center text-[0.625rem] tabular-nums"
+            className="mari-chrome-control mari-chrome-control--small w-[7.25rem] min-w-0 shrink-0 px-2 py-1.5 text-center text-xs tabular-nums max-md:h-9 max-md:min-h-9"
             placeholder="06:00-08:00"
           />
         </div>
         <textarea
           value={block.activity}
           onChange={(e) => updateBlock(day, idx, "activity", e.target.value)}
-          rows={5}
-          className="mari-chrome-field min-h-[7.5rem] min-w-0 flex-1 resize-none px-3 py-2 text-[0.625rem] leading-5"
+          rows={2}
+          className="mari-chrome-field min-h-[4rem] min-w-0 flex-1 resize-none px-3 py-2 text-[0.625rem] leading-5"
           placeholder="Activity description"
         />
         <button
           type="button"
           onClick={() => removeBlock(day, idx)}
-          className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] md:mt-0.5"
+          className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] max-md:absolute max-md:right-3 max-md:top-3 md:mt-0.5"
           title="Delete block"
         >
           <Trash2 size="0.7rem" />
@@ -262,13 +314,7 @@ export function CharacterScheduleEditorModal({
           <section className="rounded-md border border-[var(--border)]/75 bg-[var(--foreground)]/[0.03] px-3 py-3 transition-colors hover:bg-[var(--foreground)]/[0.05]">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 space-y-1">
-                <p className="text-[0.5625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/72">
-                  Weekly routine
-                </p>
                 <h3 className="text-[0.9rem] font-semibold text-[var(--foreground)]">{characterName}</h3>
-                <p className="max-w-[68ch] text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]/78">
-                  Adjust how this character moves through the week, how fast they check in, and how many autonomous touches they can make.
-                </p>
               </div>
 
               <div className="flex flex-wrap gap-1.5">
@@ -284,9 +330,6 @@ export function CharacterScheduleEditorModal({
               </div>
             </div>
 
-            <p className="mt-3 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/55 px-3 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]/76">
-              {SCHEDULE_HINTS[0]}
-            </p>
           </section>
 
           <section className="rounded-md border border-[var(--border)]/75 bg-[var(--foreground)]/[0.03] p-3 transition-colors hover:bg-[var(--foreground)]/[0.045]">
@@ -304,10 +347,7 @@ export function CharacterScheduleEditorModal({
                   onChange={(e) => setInactivityThresholdMinutes(e.target.value)}
                   className="w-full rounded-lg border border-[var(--border)]/70 bg-[var(--background)] px-3 py-2 text-[0.6875rem] text-[var(--foreground)] outline-none transition-shadow focus:border-[var(--primary)]/40 focus:ring-2 focus:ring-[var(--primary)]/20"
                 />
-                <span className="block text-[0.5625rem] leading-snug text-[var(--muted-foreground)]/68">
-                  Minutes before the character nudges again.
-                </span>
-              </label>
+                </label>
 
               <label className="space-y-1.5 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/72 px-3 py-2.5">
                 <span className="block text-[0.5625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/78">
@@ -323,9 +363,6 @@ export function CharacterScheduleEditorModal({
                   className="w-full rounded-lg border border-[var(--border)]/70 bg-[var(--background)] px-3 py-2 text-[0.6875rem] text-[var(--foreground)] outline-none transition-shadow focus:border-[var(--primary)]/40 focus:ring-2 focus:ring-[var(--primary)]/20"
                   placeholder="Default"
                 />
-                <span className="block text-[0.5625rem] leading-snug text-[var(--muted-foreground)]/68">
-                  Leave blank to keep the default idle response timing.
-                </span>
               </label>
 
               <label className="space-y-1.5 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/72 px-3 py-2.5">
@@ -342,9 +379,6 @@ export function CharacterScheduleEditorModal({
                   className="w-full rounded-lg border border-[var(--border)]/70 bg-[var(--background)] px-3 py-2 text-[0.6875rem] text-[var(--foreground)] outline-none transition-shadow focus:border-[var(--primary)]/40 focus:ring-2 focus:ring-[var(--primary)]/20"
                   placeholder="Default"
                 />
-                <span className="block text-[0.5625rem] leading-snug text-[var(--muted-foreground)]/68">
-                  Leave blank to keep the default busy response timing.
-                </span>
               </label>
 
               <label className="space-y-1.5 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/72 px-3 py-2.5">
@@ -363,25 +397,11 @@ export function CharacterScheduleEditorModal({
                     </option>
                   ))}
                 </select>
-                <span className="block text-[0.5625rem] leading-snug text-[var(--muted-foreground)]/68">
-                  Blank uses the chat limit, then talkativeness.
-                </span>
               </label>
             </div>
           </section>
 
           <section className="space-y-2">
-            <div className="flex items-center justify-between gap-3 px-1">
-              <div>
-                <p className="text-[0.625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/72">
-                  Weekly blocks
-                </p>
-                <p className="text-[0.5625rem] text-[var(--muted-foreground)]/60">
-                  Expand a day, edit the block, then collapse it again to keep the week readable.
-                </p>
-              </div>
-            </div>
-
             <div className="space-y-2.5">
               {CONVERSATION_SCHEDULE_DAYS.map((day) => {
                 const blocks = draft.days[day] ?? [];
@@ -575,15 +595,9 @@ export function CharacterScheduleEditorModal({
                         </div>
 
                         <div className="space-y-2">
-                          <div className="rounded-md border border-[var(--border)]/55 bg-[var(--background)]/45 px-3 py-2 text-[0.5625rem] text-[var(--muted-foreground)]/64">
-                            {blocks.length === 0
-                              ? "No blocks yet in this day."
-                              : `${blocks.length} block${blocks.length === 1 ? "" : "s"} scheduled.`}
-                          </div>
-
                           {blocks.length === 0 ? (
                             <div className="rounded-md border border-dashed border-[var(--border)]/75 bg-[var(--background)]/60 px-3 py-3 text-[0.625rem] text-[var(--muted-foreground)]/76">
-                              No blocks yet for {day}. Add one to start shaping this day.
+                              No blocks yet.
                             </div>
                           ) : (
                             <div className="space-y-2">{blocks.map((block, idx) => renderBlockEditor(day, block, idx))}</div>
@@ -595,7 +609,6 @@ export function CharacterScheduleEditorModal({
                           onClick={() => addBlock(day)}
                           className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-[var(--border)]/80 bg-[var(--foreground)]/[0.03] px-3 py-2 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/30 hover:bg-[var(--foreground)]/[0.06] hover:text-[var(--foreground)]"
                         >
-                          <Plus size="0.625rem" />
                           Add time block
                         </button>
                       </div>
@@ -607,9 +620,6 @@ export function CharacterScheduleEditorModal({
           </section>
 
           <div className="flex flex-col gap-2 border-t border-[var(--border)]/60 pt-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-[0.5625rem] leading-relaxed text-[var(--muted-foreground)]/68">
-              Save returns the edited routine to chat settings immediately.
-            </p>
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"

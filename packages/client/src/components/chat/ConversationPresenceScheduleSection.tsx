@@ -4,9 +4,9 @@ import type { ConversationPresenceStatus, WeekSchedule as SharedWeekSchedule } f
 import { useUpdateChatMetadata } from "../../hooks/use-chats";
 import { cn } from "../../lib/utils";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
-import { CharacterScheduleEditorModal } from "./CharacterScheduleEditorModal";
 
 type OpenSettingsOptions = { initialSection?: "autonomous" | null };
+type OpenScheduleEditorOptions = { initialDay?: string | null };
 
 type ConversationPresenceScheduleSectionProps = {
   chatId: string;
@@ -14,7 +14,9 @@ type ConversationPresenceScheduleSectionProps = {
   characterId: string;
   characterName: string;
   schedule?: SharedWeekSchedule;
+  lastContact?: string;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>, options?: OpenSettingsOptions) => void;
+  onOpenScheduleEditor: (options?: OpenScheduleEditorOptions) => void;
 };
 
 type UpcomingScheduleBlock = {
@@ -40,6 +42,32 @@ function statusDotClass(status?: string) {
 
 function statusLabel(status?: string) {
   return status === "offline" ? "Offline" : status === "dnd" ? "Busy" : status === "idle" ? "Away" : "Online";
+}
+
+function formatRelativeContact(isoTimestamp: string, now = Date.now()) {
+  const timestamp = new Date(isoTimestamp).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+
+  const diffMs = now - timestamp;
+  if (diffMs < 60_000) return "just now";
+
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.floor(diffMs / 3_600_000);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(diffMs / 86_400_000);
+  if (days < 7) return `${days}d ago`;
+
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w ago`;
+
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+
+  const years = Math.floor(days / 365);
+  return `${years}y ago`;
 }
 
 function parseTimeToMinutes(value?: string) {
@@ -112,11 +140,11 @@ export function ConversationPresenceScheduleSection({
   characterId,
   characterName,
   schedule,
+  lastContact,
   onOpenSettings,
+  onOpenScheduleEditor,
 }: ConversationPresenceScheduleSectionProps) {
   const updateMeta = useUpdateChatMetadata();
-  const [scheduleModalCharacterId, setScheduleModalCharacterId] = useState<string | null>(null);
-  const [scheduleModalInitialDay, setScheduleModalInitialDay] = useState<string | null>(null);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ x: number; y: number } | null>(null);
 
   const hasGeneratedConversationSchedules =
@@ -130,6 +158,7 @@ export function ConversationPresenceScheduleSection({
   const upcomingScheduleBlocks = useMemo(() => getUpcomingScheduleBlocks(schedule), [schedule]);
   const hasUpcomingScheduleBlocks = upcomingScheduleBlocks.length > 0;
   const scheduledDaysCount = schedule ? Object.keys(schedule.days ?? {}).length : 0;
+  const lastContactLabel = lastContact ? formatRelativeContact(lastContact) : null;
 
   const scheduleSummary = !conversationSchedulesEnabled
     ? hasGeneratedConversationSchedules
@@ -157,14 +186,13 @@ export function ConversationPresenceScheduleSection({
     });
   }, [chatId, conversationSchedulesEnabled, updateMeta]);
 
-  const openFullScheduleEditor = useCallback(() => setScheduleModalCharacterId(characterId), [characterId]);
+  const openFullScheduleEditor = useCallback(() => onOpenScheduleEditor(), [onOpenScheduleEditor]);
 
   const openDayInEditor = useCallback(
     (day: string) => {
-      setScheduleModalInitialDay(day);
-      setScheduleModalCharacterId(characterId);
+      onOpenScheduleEditor({ initialDay: day });
     },
-    [characterId],
+    [onOpenScheduleEditor],
   );
 
   const saveCharacterSchedule = useCallback(
@@ -215,41 +243,56 @@ export function ConversationPresenceScheduleSection({
   );
 
   return (
-    <div className="mt-1.5 rounded-md border border-[var(--border)]/75 bg-[var(--foreground)]/[0.025] px-2.5 py-2 transition-colors hover:bg-[var(--foreground)]/[0.035]">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
+    <div className="mt-1.5 overflow-hidden rounded-2xl border border-[var(--border)]/65 bg-[var(--foreground)]/[0.03] transition-colors hover:bg-[var(--foreground)]/[0.045]">
+      <div className="flex flex-wrap items-start justify-between gap-3 px-3 py-3">
+        <div className="min-w-0 flex-1 space-y-1.5">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="text-[0.625rem] font-medium uppercase tracking-[0.08em] text-[var(--muted-foreground)]/72">
               Schedule
             </span>
             <span
               className={cn(
-                "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.5625rem] ring-1",
+                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.5625rem] ring-1",
                 conversationSchedulesEnabled
                   ? "bg-[var(--accent)]/12 text-[var(--foreground)] ring-[var(--border)]/60"
                   : "bg-[var(--foreground)]/6 text-[var(--muted-foreground)]/82 ring-[var(--border)]/45",
               )}
             >
-              <span className={cn("h-1.5 w-1.5 rounded-full", conversationSchedulesEnabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/65")} />
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  conversationSchedulesEnabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/65",
+                )}
+              />
               {conversationSchedulesEnabled ? (hasSchedule ? "Active" : "Ready") : "Off"}
             </span>
-            <span className="text-[0.5625rem] text-[var(--muted-foreground)]/56">•</span>
-            <span className="truncate text-[0.5625rem] text-[var(--muted-foreground)]/72">{scheduleSummary}</span>
+            <span className="inline-flex items-center rounded-full bg-[var(--foreground)]/8 px-2 py-0.5 text-[0.5625rem] font-medium text-[var(--foreground)]/82 ring-1 ring-[var(--border)]/45">
+              {hasSchedule ? `${scheduledDaysCount} day${scheduledDaysCount === 1 ? "" : "s"}` : "No schedule"}
+            </span>
+          </div>
+          <div className="space-y-0.5">
+            <p className="text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">{scheduleSummary}</p>
+            {lastContactLabel && (
+              <p className="text-[0.625rem] leading-4 text-[var(--muted-foreground)]/70">Last contact {lastContactLabel}</p>
+            )}
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
-          <button
-            type="button"
-            className="inline-flex min-h-[2rem] items-center gap-1.5 rounded-md bg-[var(--foreground)]/8 px-2 text-[0.625rem] leading-4 text-[var(--foreground)]/82 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--foreground)]/12 hover:text-[var(--foreground)]"
-            onClick={() => setScheduleModalCharacterId(characterId)}
-          >
+        <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              className="inline-flex min-h-[2rem] items-center gap-1.5 rounded-lg bg-[var(--foreground)]/8 px-2.5 text-[0.625rem] leading-4 text-[var(--foreground)]/82 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--foreground)]/12 hover:text-[var(--foreground)]"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenScheduleEditor();
+              }}
+            >
             <PencilLine size="0.75rem" className="shrink-0" />
             <span>{editScheduleLabel}</span>
           </button>
           <button
             type="button"
-            className="inline-flex min-h-[2rem] items-center rounded-md px-1.5 text-[var(--muted-foreground)]/72 transition-colors hover:bg-[var(--foreground)]/6 hover:text-[var(--muted-foreground)]/92"
+            className="inline-flex min-h-[2rem] items-center rounded-lg px-1.5 text-[var(--muted-foreground)]/72 transition-colors hover:bg-[var(--foreground)]/6 hover:text-[var(--muted-foreground)]/92"
             title="More"
             onClick={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
@@ -261,9 +304,9 @@ export function ConversationPresenceScheduleSection({
         </div>
       </div>
 
-      <div className="mt-2 border-t border-[var(--border)]/50 pt-2">
+      <div className="border-t border-[var(--border)]/50 px-3 py-3">
         {!hasSchedule ? (
-          <div className="flex items-center justify-between gap-2 rounded-md bg-[var(--foreground)]/[0.03] px-2 py-1.5 ring-1 ring-[var(--border)]/50">
+          <div className="flex items-center justify-between gap-3 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/72 px-3 py-2.5">
             <p className="min-w-0 text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">
               {conversationSchedulesEnabled
                 ? `${characterName} is ready for a schedule, but nothing has been generated yet.`
@@ -288,8 +331,11 @@ export function ConversationPresenceScheduleSection({
                   key={`${block.day}-${block.index}`}
                   role="button"
                   tabIndex={0}
-                  className="group min-w-0 rounded-md bg-[var(--foreground)]/[0.03] px-2 py-1.5 text-left ring-1 ring-[var(--border)]/45 transition-colors hover:bg-[var(--foreground)]/[0.05]"
-                  onClick={() => openDayInEditor(block.day)}
+                  className="group min-w-0 rounded-md border border-[var(--border)]/55 bg-[var(--background)]/72 px-3 py-2.5 text-left transition-colors hover:bg-[var(--foreground)]/[0.045]"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openDayInEditor(block.day);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
@@ -340,7 +386,7 @@ export function ConversationPresenceScheduleSection({
             })}
           </div>
         ) : hasSchedule ? (
-          <div className="rounded-md bg-[var(--foreground)]/[0.03] px-2 py-1.5 ring-1 ring-[var(--border)]/50">
+          <div className="rounded-md border border-[var(--border)]/55 bg-[var(--background)]/72 px-3 py-2.5">
             <p className="text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">No upcoming blocks right now.</p>
           </div>
         ) : null}
@@ -350,15 +396,6 @@ export function ConversationPresenceScheduleSection({
         <ContextMenu x={moreMenuPosition.x} y={moreMenuPosition.y} items={menuItems} onClose={() => setMoreMenuPosition(null)} />
       )}
 
-      <CharacterScheduleEditorModal
-        open={!!scheduleModalCharacterId}
-        characterId={scheduleModalCharacterId}
-        characterName={characterName}
-        schedule={schedule}
-        initialDay={scheduleModalInitialDay}
-        onClose={() => setScheduleModalCharacterId(null)}
-        onSave={saveCharacterSchedule}
-      />
     </div>
   );
 }
