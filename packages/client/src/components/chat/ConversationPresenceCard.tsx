@@ -241,6 +241,7 @@ export function ConversationPresenceCard({
     if (!open) return;
     const handleMouseDown = (event: MouseEvent) => {
       const target = event.target as Node;
+      if (target instanceof Element && target.closest('[data-component="Modal"]')) return;
       if (
         buttonRef.current?.contains(target) ||
         popoverRef.current?.contains(target) ||
@@ -343,21 +344,6 @@ export function ConversationPresenceCard({
     }
   };
 
-  if (characters.length === 0) return <div />;
-
-  const identityPillClass = getChatToolbarButtonClass({
-    compact: true,
-    open,
-    sizeClassName: CHAT_TOOLBAR_IDENTITY_PILL_SIZE_CLASS,
-    className:
-      "min-w-[8.5rem] max-w-[min(20rem,calc(100vw-8rem))] justify-start gap-2 px-2.5 text-[var(--foreground)]/80 hover:text-[var(--foreground)]/90 max-md:min-w-[7.5rem] max-md:max-w-[calc(100vw-5.75rem)]",
-  });
-  const avatarShellClass =
-    "relative block h-5 w-5 overflow-hidden rounded-full ring-1 ring-[var(--border)]/80 max-md:h-6 max-md:w-6";
-  const avatarFallbackClass =
-    "flex h-5 w-5 items-center justify-center rounded-full bg-[var(--foreground)]/10 text-[0.5rem] font-bold text-[var(--foreground)]/70 ring-1 ring-[var(--border)]/80 max-md:h-6 max-md:w-6 max-md:text-[0.5625rem]";
-  const title = characters.map((c) => `${c.name}: ${c.activity || statusLabel(c.status)}`).join(", ");
-
   const saveOverride = async (characterId: string, status: ConversationPresenceStatus, activity?: string | null): Promise<boolean> => {
     setPendingStatuses((current) => ({ ...current, [characterId]: status }));
     try {
@@ -422,6 +408,21 @@ export function ConversationPresenceCard({
     },
     [],
   );
+
+  if (characters.length === 0) return <div />;
+
+  const identityPillClass = getChatToolbarButtonClass({
+    compact: true,
+    open,
+    sizeClassName: CHAT_TOOLBAR_IDENTITY_PILL_SIZE_CLASS,
+    className:
+      "min-w-[8.5rem] max-w-[min(20rem,calc(100vw-8rem))] justify-start gap-2 px-2.5 text-[var(--foreground)]/80 hover:text-[var(--foreground)]/90 max-md:min-w-[7.5rem] max-md:max-w-[calc(100vw-5.75rem)]",
+  });
+  const avatarShellClass =
+    "relative block h-5 w-5 overflow-hidden rounded-full ring-1 ring-[var(--border)]/80 max-md:h-6 max-md:w-6";
+  const avatarFallbackClass =
+    "flex h-5 w-5 items-center justify-center rounded-full bg-[var(--foreground)]/10 text-[0.5rem] font-bold text-[var(--foreground)]/70 ring-1 ring-[var(--border)]/80 max-md:h-6 max-md:w-6 max-md:text-[0.5625rem]";
+  const title = characters.map((c) => `${c.name}: ${c.activity || statusLabel(c.status)}`).join(", ");
 
   const replyNow = async (characterId: string) => {
     if (replyNowCharacterId || !delayedInfo?.characterIds?.includes(characterId)) return;
