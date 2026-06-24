@@ -219,7 +219,7 @@ import {
   type AgentAddSpriteSubject,
   type MusicProvider,
 } from "./AgentAddSetupFields";
-import { GameWidgetSetupEditor, normalizeGameHudWidgets } from "../game/GameWidgetSetupEditor";
+import { GameWidgetFileControls, GameWidgetSetupEditor, normalizeGameHudWidgets } from "../game/GameWidgetSetupEditor";
 
 interface ChatSettingsDrawerProps {
   chat: Chat;
@@ -594,6 +594,13 @@ function getChatActiveLorebookIds(chat: Chat): string[] {
   return Array.isArray(activeIds) ? activeIds.filter((id): id is string => typeof id === "string") : [];
 }
 
+function getChatExcludedLorebookIds(chat: Chat): string[] {
+  const metadata = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
+  const excludedIds =
+    metadata && typeof metadata === "object" ? (metadata as { excludedLorebookIds?: unknown }).excludedLorebookIds : [];
+  return Array.isArray(excludedIds) ? excludedIds.filter((id): id is string => typeof id === "string") : [];
+}
+
 export function ChatSettingsDrawer({
   chat,
   open,
@@ -829,11 +836,20 @@ export function ChatSettingsDrawer({
     const latestChat = qc.getQueryData<Chat>(chatKeys.detail(chat.id));
     return latestChat ? getChatActiveLorebookIds(latestChat) : [...activeLorebookIds];
   }, [activeLorebookIds, chat.id, qc]);
+  const excludedLorebookIds = useMemo<string[]>(
+    () => (Array.isArray(metadata.excludedLorebookIds) ? metadata.excludedLorebookIds : []),
+    [metadata.excludedLorebookIds],
+  );
+  const readLatestExcludedLorebookIds = useCallback(() => {
+    const latestChat = qc.getQueryData<Chat>(chatKeys.detail(chat.id));
+    return latestChat ? getChatExcludedLorebookIds(latestChat) : [...excludedLorebookIds];
+  }, [chat.id, excludedLorebookIds, qc]);
   const gameLorebookKeeperEnabled = metadata.gameLorebookKeeperEnabled === true;
   const gameLorebookKeeperLorebookId =
     typeof metadata.gameLorebookKeeperLorebookId === "string" ? metadata.gameLorebookKeeperLorebookId : null;
   const activeLorebooks = useMemo<ActiveLorebookView[]>(() => {
     const pinnedIds = new Set(activeLorebookIds);
+    const excludedIds = new Set(excludedLorebookIds);
     const lorebookList = (lorebooks ?? []) as Lorebook[];
 
     return lorebookList.flatMap((lorebook) => {
@@ -866,10 +882,13 @@ export function ChatSettingsDrawer({
         if (lorebook.chatId === chat.id && !reasons.includes("Chat")) reasons.push("Chat");
       }
 
-      return reasons.length > 0 ? [{ ...lorebook, activeReasons: reasons, isPinned }] : [];
+      return reasons.length > 0
+        ? [{ ...lorebook, activeReasons: reasons, isPinned, isExcluded: excludedIds.has(lorebook.id) }]
+        : [];
     });
   }, [
     activeLorebookIds,
+    excludedLorebookIds,
     chat.id,
     chat.personaId,
     chatCharIds,
@@ -1921,10 +1940,15 @@ export function ChatSettingsDrawer({
     updateMeta.mutate({ id: chat.id, activeLorebookIds: current });
   };
 
-  const pinLorebookToChat = (lbId: string) => {
-    const current = readLatestActiveLorebookIds();
-    if (current.includes(lbId)) return;
-    updateMeta.mutate({ id: chat.id, activeLorebookIds: [...current, lbId] });
+  // Disable / re-enable an auto-activated (character/global/persona) lorebook for
+  // this chat. Unlike unpinning, this does not touch activeLorebookIds — it adds
+  // the book to excludedLorebookIds so the scope filter drops it before injection.
+  const setLorebookExcluded = (lbId: string, excluded: boolean) => {
+    const current = readLatestExcludedLorebookIds();
+    const has = current.includes(lbId);
+    if (excluded === has) return;
+    const next = excluded ? [...current, lbId] : current.filter((id) => id !== lbId);
+    updateMeta.mutate({ id: chat.id, excludedLorebookIds: next });
   };
 
   const hasSecretPlotMemory = (memory: Record<string, unknown> | null | undefined) => {
@@ -2431,14 +2455,13 @@ export function ChatSettingsDrawer({
     setAddingAgentToChat(true);
     try {
       if (config) {
-        await updateAgentConfig.mutateAsync({ id: config.id, enabled: true, settings: nextSettings });
+        await updateAgentConfig.mutateAsync({ id: config.id, settings: nextSettings });
       } else if (builtInMeta) {
         await createAgent.mutateAsync({
           type: builtInMeta.id,
           name: agent.name,
           description: agent.description,
           phase: normalizeAgentPhaseForType(agent.id, agent.phase),
-          enabled: true,
           connectionId: null,
           promptTemplate: "",
           settings: nextSettings,
@@ -2453,6 +2476,7 @@ export function ChatSettingsDrawer({
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
         }),
       });
+      toast.success(`Added ${agent.name}! You can access its settings in Agents section in Chat Settings!`);
       setAgentAddPreview(null);
     } catch (error) {
       await showAlertDialog({
@@ -2478,7 +2502,7 @@ export function ChatSettingsDrawer({
       };
 
       if (config) {
-        await updateAgentConfig.mutateAsync({ id: config.id, enabled: true, settings: nextSettings });
+        await updateAgentConfig.mutateAsync({ id: config.id, settings: nextSettings });
         return;
       }
 
@@ -2487,7 +2511,6 @@ export function ChatSettingsDrawer({
         name: builtInMeta.name,
         description: builtInMeta.description,
         phase: normalizeAgentPhaseForType(builtInMeta.id, builtInMeta.phase),
-        enabled: true,
         connectionId: null,
         promptTemplate: "",
         settings: nextSettings,
@@ -2535,12 +2558,13 @@ export function ChatSettingsDrawer({
   );
 
   const toggleGameMusicDj = useCallback(async () => {
+    const latestActiveAgentIds = readLatestActiveAgentIds();
     if (gameMusicDjEnabled) {
       await updateMeta.mutateAsync({
         id: chat.id,
         gameUseMusicDj: false,
         gameUseSpotifyMusic: false,
-        activeAgentIds: activeAgentIds.filter((id) => id !== "spotify" && id !== "youtube"),
+        activeAgentIds: latestActiveAgentIds.filter((id) => id !== "spotify" && id !== "youtube"),
       });
       return;
     }
@@ -2553,7 +2577,7 @@ export function ChatSettingsDrawer({
         gameUseMusicDj: true,
         gameUseSpotifyMusic: musicPlayerSource === "spotify",
         gameSpotifySourceType,
-        activeAgentIds: Array.from(new Set([...activeAgentIds.filter((id) => id !== "youtube"), "spotify"])),
+        activeAgentIds: Array.from(new Set([...latestActiveAgentIds.filter((id) => id !== "youtube"), "spotify"])),
       });
     } catch (error) {
       await showAlertDialog({
@@ -2565,12 +2589,12 @@ export function ChatSettingsDrawer({
       });
     }
   }, [
-    activeAgentIds,
     chat.id,
     ensureMusicDjAgent,
     gameMusicDjEnabled,
     gameSpotifySourceType,
     musicPlayerSource,
+    readLatestActiveAgentIds,
     updateMeta,
   ]);
 
@@ -2585,7 +2609,8 @@ export function ChatSettingsDrawer({
   }, [chat.id, gameWidgetDrafts, updateGameWidgets]);
 
   const toggleGameLorebookKeeper = useCallback(() => {
-    const nextActiveAgentIds = activeAgentIds.filter((id) => id !== "lorebook-keeper");
+    const latestActiveAgentIds = readLatestActiveAgentIds();
+    const nextActiveAgentIds = latestActiveAgentIds.filter((id) => id !== "lorebook-keeper");
     if (gameLorebookKeeperEnabled) {
       const keeperLorebookIds = new Set(
         ((lorebooks ?? []) as Lorebook[])
@@ -2608,12 +2633,12 @@ export function ChatSettingsDrawer({
       activeAgentIds: nextActiveAgentIds,
     });
   }, [
-    activeAgentIds,
     activeLorebookIds,
     chat.id,
     gameLorebookKeeperEnabled,
     gameLorebookKeeperLorebookId,
     lorebooks,
+    readLatestActiveAgentIds,
     updateMeta,
   ]);
 
@@ -5134,9 +5159,9 @@ export function ChatSettingsDrawer({
               onLorebookTokenBudgetChange={(lorebookTokenBudget) =>
                 updateMeta.mutate({ id: chat.id, lorebookTokenBudget })
               }
-              onPinLorebook={pinLorebookToChat}
               onShowLorebookPickerChange={setShowLbPicker}
               onToggleLorebook={toggleLorebook}
+              onSetLorebookExcluded={setLorebookExcluded}
             />
           </div>
 
@@ -6565,15 +6590,17 @@ export function ChatSettingsDrawer({
                                 <div key={agent.id} className="space-y-1.5">
                                   <button
                                     onClick={() => {
+                                      const latestActiveAgentIds = readLatestActiveAgentIds();
                                       if (active) {
                                         updateMeta.mutate({
                                           id: chat.id,
-                                          activeAgentIds: activeAgentIds.filter((id) => id !== agent.id),
+                                          activeAgentIds: latestActiveAgentIds.filter((id) => id !== agent.id),
                                         });
                                       } else {
                                         updateMeta.mutate({
                                           id: chat.id,
-                                          activeAgentIds: [...activeAgentIds, agent.id],
+                                          enableAgents: true,
+                                          activeAgentIds: Array.from(new Set([...latestActiveAgentIds, agent.id])),
                                         });
                                       }
                                     }}
@@ -6681,7 +6708,7 @@ export function ChatSettingsDrawer({
 
                         {visibleActiveAgentIds.length === 0 && (
                           <p className="text-[0.6875rem] text-[var(--muted-foreground)] px-1">
-                            No per-chat agent overrides. Workspace default agents will be used for this chat.
+                            No agents are active for this chat yet. Add one below to let it run here.
                           </p>
                         )}
 
@@ -6838,6 +6865,15 @@ export function ChatSettingsDrawer({
                     <span>{updateGameWidgets.isPending ? "Saving..." : "Save Widgets"}</span>
                   </button>
                 </div>
+                <GameWidgetFileControls
+                  widgets={gameWidgetDrafts}
+                  onImport={(widgets) => setGameWidgetDrafts(normalizeGameHudWidgets(widgets))}
+                  disabled={updateGameWidgets.isPending}
+                  exportFilename={`${chat.name || "game"}-widgets`}
+                  importSuccessMessage={(count) =>
+                    `Imported ${count === 1 ? "1 widget" : `${count} widgets`}. Save Widgets to apply them.`
+                  }
+                />
               </div>
             </Section>
           )}
@@ -7022,6 +7058,7 @@ export function ChatSettingsDrawer({
         presetId={choiceModalPresetId}
         chatId={chat.id}
         existingChoices={metadata.presetChoices ?? {}}
+        chatFloatingPanel
       />
 
       {/* Automatic summarization editor */}
@@ -7058,6 +7095,7 @@ export function ChatSettingsDrawer({
         }}
         title={agentAddPreview ? `Add ${agentAddPreview.agent.name}` : "Add Agent"}
         width="max-w-lg"
+        chatFloatingPanel
       >
         {agentAddPreview && (
           <div className="space-y-4">

@@ -22,9 +22,19 @@ interface ModalProps {
   width?: string;
   mobileFullScreen?: boolean;
   contentRef?: Ref<HTMLDivElement>;
+  chatFloatingPanel?: boolean;
 }
 
-export function Modal({ open, onClose, title, children, width = "max-w-md", mobileFullScreen = false, contentRef }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  width = "max-w-md",
+  mobileFullScreen = false,
+  contentRef,
+  chatFloatingPanel = false,
+}: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   // Track mounted state separately so we can play the exit animation
   // before actually removing the DOM nodes.
@@ -90,6 +100,7 @@ export function Modal({ open, onClose, title, children, width = "max-w-md", mobi
       role="dialog"
       aria-modal="true"
       aria-label={title}
+      data-chat-floating-panel={chatFloatingPanel ? "true" : undefined}
       data-component="Modal"
       className={overlayClassName}
       style={{
@@ -113,7 +124,6 @@ export function Modal({ open, onClose, title, children, width = "max-w-md", mobi
       {/* Panel */}
       <div
         className={panelClassName}
-        data-chat-floating-panel
         style={{
           opacity: isEntering ? 1 : 0,
           transform: isEntering ? "scale(1) translateY(0)" : "scale(0.97) translateY(6px)",

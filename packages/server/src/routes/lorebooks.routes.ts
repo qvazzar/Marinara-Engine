@@ -28,7 +28,7 @@ import { createCharactersStorage } from "../services/storage/characters.storage.
 import { createGameStateStorage } from "../services/storage/game-state.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { processLorebooks } from "../services/lorebook/index.js";
-import { resolveGameLorebookScopeExclusions } from "../services/lorebook/game-lorebook-scope.js";
+import { resolveLorebookScopeExclusions } from "../services/lorebook/game-lorebook-scope.js";
 import {
   buildPromptMacroContext,
   resolveMacrosWithVariableSnapshot,
@@ -128,6 +128,81 @@ function stRole(value: unknown): number {
 function resolveScanGenerationTriggers(mode: unknown): string[] {
   const modeTrigger = mode === "game" ? "game" : typeof mode === "string" && mode.trim() ? mode.trim() : "roleplay";
   return Array.from(new Set(["test_scan", modeTrigger, "chat"]));
+}
+
+type CachedLorebookScanEntry = {
+  id: string;
+  content: string;
+  matchedKeys: string[];
+};
+
+type CachedLorebookScan = {
+  activatedEntries: CachedLorebookScanEntry[];
+  budgetSkippedEntries: Array<Record<string, unknown>>;
+  totalTokensEstimate: number;
+  totalEntries: number;
+};
+
+function parseRecord(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+}
+
+function normalizeCachedLorebookScan(raw: unknown): CachedLorebookScan | null {
+  const value = parseRecord(raw);
+  if (
+    !Object.prototype.hasOwnProperty.call(value, "activatedEntries") &&
+    !Object.prototype.hasOwnProperty.call(value, "budgetSkippedEntries")
+  ) {
+    return null;
+  }
+
+  const activatedEntries = Array.isArray(value.activatedEntries)
+    ? value.activatedEntries.flatMap((entry): CachedLorebookScanEntry[] => {
+        const candidate = parseRecord(entry);
+        if (typeof candidate.id !== "string") return [];
+        return [
+          {
+            id: candidate.id,
+            content: typeof candidate.content === "string" ? candidate.content : "",
+            matchedKeys: Array.isArray(candidate.matchedKeys)
+              ? candidate.matchedKeys.filter((key): key is string => typeof key === "string")
+              : [],
+          },
+        ];
+      })
+    : [];
+
+  const budgetSkippedEntries = Array.isArray(value.budgetSkippedEntries)
+    ? value.budgetSkippedEntries.flatMap((entry): Array<Record<string, unknown>> => {
+        const candidate = parseRecord(entry);
+        return typeof candidate.id === "string" ? [candidate] : [];
+      })
+    : [];
+
+  const totalTokensEstimate =
+    typeof value.totalTokensEstimate === "number" && Number.isFinite(value.totalTokensEstimate)
+      ? value.totalTokensEstimate
+      : Math.ceil(activatedEntries.reduce((total, entry) => total + entry.content.length, 0) / 4);
+  const totalEntries =
+    typeof value.totalEntries === "number" && Number.isFinite(value.totalEntries)
+      ? value.totalEntries
+      : activatedEntries.length;
+
+  return {
+    activatedEntries,
+    budgetSkippedEntries,
+    totalTokensEstimate,
+    totalEntries,
+  };
 }
 
 function selectMessagesForLastGenerationScan<T extends { role: string }>(messages: T[]): T[] {
@@ -737,7 +812,56 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       }
     }
 
-    const lorebookScopeExclusions = resolveGameLorebookScopeExclusions(chat?.mode, chatMeta);
+    const latestGeneratedMessage = (() => {
+      for (let index = chatMessages.length - 1; index >= 0; index--) {
+        const message = chatMessages[index]!;
+        if (message.role === "assistant" || message.role === "narrator") return message;
+      }
+      return null;
+    })();
+    if (latestGeneratedMessage) {
+      let cachedScan: CachedLorebookScan | null = null;
+      try {
+        const swipes = await chatsStorage.getSwipes(latestGeneratedMessage.id);
+        const activeSwipe = swipes.find((swipe: any) => swipe.index === latestGeneratedMessage.activeSwipeIndex);
+        cachedScan = normalizeCachedLorebookScan(parseRecord(activeSwipe?.extra).lorebookScan);
+      } catch {
+        cachedScan = null;
+      }
+      cachedScan ??= normalizeCachedLorebookScan(parseRecord(latestGeneratedMessage.extra).lorebookScan);
+
+      if (cachedScan) {
+        const resolvedContentById = new Map(cachedScan.activatedEntries.map((entry) => [entry.id, entry.content]));
+        const matchedKeysById = new Map(cachedScan.activatedEntries.map((entry) => [entry.id, entry.matchedKeys]));
+        const activeEntries =
+          cachedScan.activatedEntries.length > 0
+            ? await Promise.all(cachedScan.activatedEntries.map((entry) => storage.getEntry(entry.id))).then((entries) =>
+                entries.filter(Boolean),
+              )
+            : [];
+
+        return {
+          entries: activeEntries.map((e) => ({
+            id: (e as Record<string, unknown>).id,
+            name: (e as Record<string, unknown>).name,
+            content:
+              resolvedContentById.get(String((e as Record<string, unknown>).id)) ??
+              (e as Record<string, unknown>).content,
+            keys: (e as Record<string, unknown>).keys,
+            lorebookId: (e as Record<string, unknown>).lorebookId,
+            order: (e as Record<string, unknown>).order,
+            constant: (e as Record<string, unknown>).constant,
+            selective: (e as Record<string, unknown>).selective === true,
+            matchedKeys: matchedKeysById.get(String((e as Record<string, unknown>).id)) ?? [],
+          })),
+          totalTokens: cachedScan.totalTokensEstimate,
+          totalEntries: cachedScan.totalEntries,
+          budgetSkippedEntries: cachedScan.budgetSkippedEntries,
+        };
+      }
+    }
+
+    const lorebookScopeExclusions = resolveLorebookScopeExclusions(chat?.mode, chatMeta);
     const scanSourceMessages = selectMessagesForLastGenerationScan(chatMessages);
     const scanMessages = scanSourceMessages.map((m) => ({
       role: (m.role === "narrator" ? "system" : m.role) as string,
@@ -848,6 +972,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     });
 
     const resolvedContentById = new Map(result.activatedEntries.map((entry) => [entry.id, entry.content]));
+    const matchedKeysById = new Map(result.activatedEntries.map((entry) => [entry.id, entry.matchedKeys]));
 
     // Fetch full entry data for the activated IDs
     const activeEntries =
@@ -868,6 +993,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
         order: (e as Record<string, unknown>).order,
         constant: (e as Record<string, unknown>).constant,
         selective: (e as Record<string, unknown>).selective === true,
+        matchedKeys: matchedKeysById.get(String((e as Record<string, unknown>).id)) ?? [],
       })),
       totalTokens: result.totalTokensEstimate,
       totalEntries: result.totalEntries,

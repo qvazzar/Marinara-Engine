@@ -75,7 +75,7 @@ import {
 } from "./generate/generate-route-utils.js";
 import {
   filterGameInternalAgentIds,
-  resolveGameLorebookScopeExclusions,
+  resolveLorebookScopeExclusions,
 } from "../services/lorebook/game-lorebook-scope.js";
 import {
   isMemoryRecallVectorizerAvailable,
@@ -442,14 +442,16 @@ export async function chatsRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { connectionId?: string; personaId?: string } }>("/internal/professor-mari", async (req) => {
     const chats = await storage.list();
     const existing = chats.find(isHomeProfessorMariChat);
+    const hasConnectionOverride = "connectionId" in req.query;
     const connectionId =
       typeof req.query.connectionId === "string" && req.query.connectionId ? req.query.connectionId : null;
     const personaId = typeof req.query.personaId === "string" && req.query.personaId ? req.query.personaId : null;
 
     if (existing) {
+      const nextConnectionId = hasConnectionOverride ? connectionId : (existing.connectionId ?? null);
       await storage.update(existing.id, {
         characterIds: [PROFESSOR_MARI_ID],
-        connectionId,
+        connectionId: nextConnectionId,
         personaId,
         promptPresetId: null,
       });
@@ -568,6 +570,15 @@ export async function chatsRoutes(app: FastifyInstance) {
       incoming.inactiveCharacterIds = Array.from(
         new Set((incoming.inactiveCharacterIds as string[]).filter((id) => validIds.has(id))),
       );
+    }
+    if (incoming.excludedLorebookIds !== undefined) {
+      if (
+        !Array.isArray(incoming.excludedLorebookIds) ||
+        !incoming.excludedLorebookIds.every((id) => typeof id === "string")
+      ) {
+        return reply.status(400).send({ error: "excludedLorebookIds must be an array of strings" });
+      }
+      incoming.excludedLorebookIds = Array.from(new Set(incoming.excludedLorebookIds as string[]));
     }
     if (incoming.conversationSchedulesEnabled === false) {
       await clearConversationScheduleState(chat);
@@ -1874,7 +1885,7 @@ export async function chatsRoutes(app: FastifyInstance) {
             };
           }
           const entryStateOverrides = resolveEntryStateOverrides(chatMeta.entryStateOverrides);
-          const lorebookScopeExclusions = resolveGameLorebookScopeExclusions(chatMode, chatMeta);
+          const lorebookScopeExclusions = resolveLorebookScopeExclusions(chatMode, chatMeta);
           const promptActiveAgentIds = Array.isArray(chatMeta.activeAgentIds)
             ? (chatMeta.activeAgentIds as string[])
             : [];
