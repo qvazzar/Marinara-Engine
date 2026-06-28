@@ -405,7 +405,20 @@ export function ChatArea() {
   const [agentInjectionReview, setAgentInjectionReview] = useState<AgentInjectionReviewRequest | null>(null);
   const [agentInjectionDrafts, setAgentInjectionDrafts] = useState<Record<string, string>>({});
   const [creditsOpen, setCreditsOpen] = useState(false);
+  const [homeProfessorChatOpen, setHomeProfessorChatOpen] = useState(false);
+  const [homeProfessorChatActive, setHomeProfessorChatActive] = useState(false);
+  const homeProfessorChatOpenRef = useRef(false);
   const queryClient = useQueryClient();
+  useEffect(() => {
+    homeProfessorChatOpenRef.current = homeProfessorChatOpen;
+  }, [homeProfessorChatOpen]);
+  const handleHomeProfessorChatOpenChange = useCallback((open: boolean) => {
+    if (open) setHomeProfessorChatActive(true);
+    setHomeProfessorChatOpen(open);
+  }, []);
+  const handleHomeProfessorChatExitComplete = useCallback(() => {
+    if (!homeProfessorChatOpenRef.current) setHomeProfessorChatActive(false);
+  }, []);
   const trackHomeFooterAchievement = useCallback(
     (event: AchievementEvent) => {
       void trackAchievementEvent(event, { keepalive: true })
@@ -465,6 +478,10 @@ export function ChatArea() {
     setGalleryOpen(false);
     setGalleryAnchor(null);
   }, []);
+
+  useEffect(() => {
+    if (activeChatId) setHomeProfessorChatOpen(false);
+  }, [activeChatId]);
   const closeFloatingChatDrawers = useCallback(() => {
     setSettingsOpen(false);
     setSettingsAnchor(null);
@@ -2126,63 +2143,86 @@ export function ChatArea() {
         <HomeCreditsModal open={creditsOpen} onClose={() => setCreditsOpen(false)} />
         <div
           data-component="ChatArea.EmptyState"
-          className="mari-app-background-paint mari-chrome-token-scope relative isolate flex flex-1 flex-col items-center overflow-y-auto p-1.5 sm:p-3 lg:p-3"
+          className={cn(
+            "mari-app-background-paint mari-chrome-token-scope relative isolate flex flex-1 flex-col items-center",
+            homeProfessorChatActive ? "overflow-hidden p-0 sm:p-3 lg:p-3" : "overflow-y-auto p-1.5 sm:p-3 lg:p-3",
+          )}
         >
-          {showEmptyStateEffects && <HomeStarfield />}
-          <div className="relative z-[1] flex w-full max-w-3xl flex-col items-center gap-1.5 py-0 sm:gap-2 lg:pt-0 lg:pb-2">
-            {/* Central hero */}
-            <div className="relative">
-              <div
-                className={cn(
-                  "flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl shadow-xl shadow-orange-500/20 sm:h-16 sm:w-16",
-                  showEmptyStateEffects && "animate-pulse-ring bunny-glow",
-                )}
-              >
-                <img
-                  src={showEmptyStateEffects ? "/logo-splash.gif" : "/logo.png"}
-                  alt="Marinara Engine"
-                  width={80}
-                  height={80}
-                  decoding="async"
+          {showEmptyStateEffects && !homeProfessorChatActive && <HomeStarfield />}
+          <div
+            className={cn(
+              "relative z-[1] flex w-full flex-col items-center",
+              homeProfessorChatActive
+                ? "min-h-0 flex-1 max-w-none gap-0 py-0"
+                : "max-w-5xl gap-1.5 py-0 sm:gap-2 lg:pt-0 lg:pb-2",
+            )}
+          >
+            {!homeProfessorChatActive && (
+              <>
+                {/* Central hero */}
+                <div className="relative">
+                  <div
+                    className={cn(
+                      "flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl shadow-xl shadow-orange-500/20 sm:h-16 sm:w-16",
+                      showEmptyStateEffects && "animate-pulse-ring bunny-glow",
+                    )}
+                  >
+                    <img
+                      src={showEmptyStateEffects ? "/logo-splash.gif" : "/logo.png"}
+                      alt="Marinara Engine"
+                      width={80}
+                      height={80}
+                      decoding="async"
+                      className={cn(
+                        "h-full w-full",
+                        showEmptyStateEffects ? "object-cover" : "object-contain p-1.5 sm:p-2",
+                      )}
+                    />
+                  </div>
+                </div>
+
+                <div className="text-center">
+                  <h3
+                    className={cn(
+                      "mari-logo-gradient-text text-base font-bold sm:text-xl",
+                      isPageActive && "mari-logo-gradient-text--active",
+                    )}
+                  >
+                    Marinara Engine
+                  </h3>
+                  <p className="mari-chrome-text-muted mt-0.5 text-[0.625rem] tracking-wide opacity-65">
+                    v{APP_VERSION}
+                  </p>
+                </div>
+
+                {/* Recent Chats */}
+                <RecentChats />
+              </>
+            )}
+
+            <div className={cn("flex w-full flex-col", homeProfessorChatActive ? "min-h-0 flex-1 max-w-none" : "max-w-5xl")}>
+              <HomeProfessorMariChat
+                pageActive={isPageActive}
+                attachedFooter={!homeProfessorChatActive}
+                chatWindowOpen={homeProfessorChatOpen}
+                launchHidden={homeProfessorChatActive}
+                onChatWindowOpenChange={handleHomeProfessorChatOpenChange}
+                onChatWindowExitComplete={handleHomeProfessorChatExitComplete}
+              />
+              {!homeProfessorChatActive && <HomeAchievements attached />}
+            </div>
+
+            {!homeProfessorChatActive && (
+              <>
+                <div
                   className={cn(
-                    "h-full w-full",
-                    showEmptyStateEffects ? "object-cover" : "object-contain p-1.5 sm:p-2",
+                    "w-48 [--retro-divider-margin:0]",
+                    showEmptyStateEffects ? "retro-divider" : "h-px rounded-[1px] bg-[var(--border)]/40",
                   )}
                 />
-              </div>
-            </div>
 
-            <div className="text-center">
-              <h3
-                className={cn(
-                  "mari-logo-gradient-text text-base font-bold sm:text-xl",
-                  isPageActive && "mari-logo-gradient-text--active",
-                )}
-              >
-                Marinara Engine
-              </h3>
-              <p className="mari-chrome-text-muted mt-0.5 text-[0.625rem] tracking-wide opacity-65">
-                v{APP_VERSION}
-              </p>
-            </div>
-
-            {/* Recent Chats */}
-            <RecentChats />
-
-            <div className="flex w-full max-w-3xl flex-col">
-              <HomeProfessorMariChat pageActive={isPageActive} attachedFooter />
-              <HomeAchievements attached />
-            </div>
-
-            <div
-              className={cn(
-                "w-48 [--retro-divider-margin:0]",
-                showEmptyStateEffects ? "retro-divider" : "h-px rounded-[1px] bg-[var(--border)]/40",
-              )}
-            />
-
-            {/* Footer */}
-            <div className="flex w-full max-w-2xl flex-col items-center gap-1">
+                {/* Footer */}
+                <div className="flex w-full max-w-2xl flex-col items-center gap-1">
               <div className="mari-chrome-text-muted flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5 text-center text-[0.625rem] leading-tight sm:text-xs">
                 <span>
                   Created by{" "}
@@ -2265,7 +2305,9 @@ export function ChatArea() {
                 <HelpCircle size="0.875rem" />
                 Replay Tutorial
               </button>
-            </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
         {pendingNewChatMode && (

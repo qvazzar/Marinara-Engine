@@ -1101,11 +1101,11 @@ export function SettingsPanel() {
             tabIndex={settingsTab === tab.id ? 0 : -1}
             onClick={() => setSettingsTab(tab.id)}
             className={cn(
-              "mari-chrome-control mari-settings-tab-button min-h-[2.5rem] w-full min-w-0 px-2 py-2 text-[0.6875rem] leading-tight sm:text-xs",
+              "mari-chrome-control mari-settings-tab-button min-h-[2.5rem] w-full min-w-0 px-2 py-2 text-[0.625rem] leading-tight sm:text-[0.6875rem]",
               settingsTab === tab.id && "mari-chrome-control--selected",
             )}
           >
-            <span className="mari-settings-tab-label min-w-0 max-w-full truncate text-center">{tab.label}</span>
+            <span className="mari-settings-tab-label min-w-0 max-w-full text-center">{tab.label}</span>
           </button>
         ))}
       </div>
@@ -1250,7 +1250,7 @@ function GeneralSettings() {
       >
         <div className="flex flex-col gap-2.5">
           <ToggleSetting
-            label="Enable streaming responses"
+            label="Enable streaming"
             checked={enableStreaming}
             onChange={setEnableStreaming}
             help="When on, AI responses appear word-by-word as they're generated. When off, the full response appears at once after completion."
@@ -1291,6 +1291,7 @@ function GeneralSettings() {
 
           <label className="flex flex-wrap items-center gap-2.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
             <span className="text-xs">Messages per page</span>
+            <HelpTooltip text="How many messages to load at a time. Click 'Load More' in the chat to see older messages. Set to 0 to load all messages at once." />
             <DraftNumberInput
               value={messagesPerPage}
               min={0}
@@ -1299,7 +1300,6 @@ function GeneralSettings() {
               onCommit={(nextValue) => setMessagesPerPage(Math.max(0, Math.min(500, nextValue)))}
               className="w-16 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs"
             />
-            <HelpTooltip text="How many messages to load at a time. Click 'Load More' in the chat to see older messages. Set to 0 to load all messages at once." />
           </label>
         </div>
       </SettingsSection>
@@ -1675,10 +1675,10 @@ function GameAssetsSettings() {
       icon={<FolderOpen size="0.875rem" />}
     >
       <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-2">
           <button
             onClick={openGameAssetsBrowser}
-            className="mari-chrome-control mari-chrome-control--primary text-[0.6875rem]"
+            className="mari-chrome-control mari-chrome-control--primary w-full gap-2 text-xs"
             title="Open Asset Browser"
           >
             <Image size="0.75rem" />
@@ -1690,11 +1690,14 @@ function GameAssetsSettings() {
                 .then(() => toast.success("Game assets rescanned."))
                 .catch(() => toast.error("Failed to rescan game assets."));
             }}
-            className={SETTINGS_BUTTON_CLASS}
+            className={cn(SETTINGS_BUTTON_CLASS, "w-full justify-center")}
           >
             <RefreshCw size="0.75rem" />
             Rescan
           </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
           {GAME_ASSET_CATEGORIES.map((folder) => (
             <button
               key={folder.id}
@@ -5314,18 +5317,18 @@ function AdvancedSettings() {
         description="Save the browser-side admin secret for protected maintenance actions."
         icon={<Power size="0.875rem" />}
       >
-        <div className="flex min-w-0 flex-wrap gap-2">
+        <div className="flex min-w-0 flex-col gap-2">
           <input
             type="password"
             value={adminSecret}
             onChange={(e) => setAdminSecret(e.target.value)}
             placeholder="ADMIN_SECRET"
-            className="min-w-0 flex-[1_1_12rem] rounded-lg bg-[var(--background)] px-3 py-2 text-xs outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
+            className="w-full min-w-0 rounded-lg bg-[var(--background)] px-3 py-2 text-xs outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
           />
           <button
             type="button"
             onClick={saveAdminSecret}
-            className={cn(SETTINGS_PRIMARY_BUTTON_CLASS, "max-w-full shrink-0 whitespace-nowrap")}
+            className={cn(SETTINGS_PRIMARY_BUTTON_CLASS, "w-full gap-2 whitespace-nowrap")}
           >
             <span className="flex min-w-0 items-center justify-center gap-1.5">
               <Save size="0.75rem" className="shrink-0" />
@@ -5341,13 +5344,13 @@ function AdvancedSettings() {
         icon={<RefreshCw size="0.875rem" />}
       >
         <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex min-w-[12rem] flex-col gap-1 text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+          <div className="flex flex-col gap-2">
+            <label className="flex min-w-0 flex-col gap-1 text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
               Release Channel
               <select
                 value={updateChannel}
                 onChange={(event) => setUpdateChannel(event.target.value as UpdateChannelId)}
-                className="rounded-lg bg-[var(--background)] px-3 py-2 text-xs font-medium normal-case tracking-normal text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
+                className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs font-medium normal-case tracking-normal text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
               >
                 {updateChannelOptions.map((channel) => (
                   <option key={channel.id} value={channel.id}>
@@ -5359,7 +5362,7 @@ function AdvancedSettings() {
             <button
               onClick={() => updateCheck.refetch()}
               disabled={updateCheck.isFetching}
-              className={SETTINGS_PRIMARY_BUTTON_CLASS}
+              className={cn(SETTINGS_PRIMARY_BUTTON_CLASS, "w-full gap-2")}
             >
               {updateCheck.isFetching ? (
                 <>
@@ -5373,7 +5376,7 @@ function AdvancedSettings() {
                 </>
               )}
             </button>
-            <div className="flex flex-col text-[0.6875rem] text-[var(--muted-foreground)]">
+            <div className="flex flex-col px-1 text-[0.6875rem] text-[var(--muted-foreground)]">
               <span>Release: {currentReleaseLabel}</span>
               <span>{currentBuildLabel}</span>
             </div>

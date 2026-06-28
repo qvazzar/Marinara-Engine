@@ -1385,6 +1385,7 @@ function getProvider(id: string): ProviderConfig {
 
 export function BotBrowserView() {
   const qc = useQueryClient();
+  const botBrowserOpen = useUIStore((s) => s.botBrowserOpen);
   const closeBotBrowser = useUIStore((s) => s.closeBotBrowser);
 
   const [sourceId, setSourceId] = useState("chub");
@@ -1432,6 +1433,10 @@ export function BotBrowserView() {
       window.removeEventListener("scroll", updateSourceMenuPosition, true);
     };
   }, [sourceOpen, updateSourceMenuPosition]);
+
+  useEffect(() => {
+    if (!botBrowserOpen) setSourceOpen(false);
+  }, [botBrowserOpen]);
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState(provider.defaultSort);
@@ -1969,7 +1974,7 @@ export function BotBrowserView() {
           sourceMenuPosition &&
           createPortal(
             <div
-              className="mari-chrome-token-scope mari-chrome-selection-bar fixed z-[9999] min-w-[180px] overflow-y-auto shadow-xl"
+              className="mari-chrome-token-scope mari-chrome-selection-bar mari-chrome-selection-bar--opaque fixed z-[9999] min-w-[180px] overflow-y-auto shadow-xl"
               style={{
                 left: sourceMenuPosition.left,
                 top: sourceMenuPosition.top,

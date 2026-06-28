@@ -1937,7 +1937,7 @@ export function LorebookEditor() {
                 </div>
 
                 {/* Scan settings */}
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                   <div>
                     <label className="mb-1.5 flex items-center gap-1 text-xs font-medium">
                       Scan Depth{" "}
@@ -1951,7 +1951,7 @@ export function LorebookEditor() {
                         markLorebookDirty();
                       }}
                       min={0}
-                      className="mari-editor-field w-full px-3 py-2.5 text-sm"
+                      className="mari-editor-field h-10 w-full px-3 py-2.5 text-sm"
                     />
                   </div>
                   <div>
@@ -1967,7 +1967,7 @@ export function LorebookEditor() {
                         markLorebookDirty();
                       }}
                       min={0}
-                      className="mari-editor-field w-full px-3 py-2.5 text-sm"
+                      className="mari-editor-field h-10 w-full px-3 py-2.5 text-sm"
                     />
                   </div>
                   <div>
@@ -1991,12 +1991,15 @@ export function LorebookEditor() {
                       }}
                       min={LIMITS.LOREBOOK_ENTRY_LIMIT_MIN}
                       max={LIMITS.LOREBOOK_ENTRY_LIMIT_MAX}
-                      className="mari-editor-field w-full px-3 py-2.5 text-sm"
+                      className="mari-editor-field h-10 w-full px-3 py-2.5 text-sm"
                     />
                   </div>
-                  <div className="flex items-end gap-2">
-                    <div className="mari-editor-panel flex items-center justify-between px-3 py-2.5">
-                      <span className="mr-2 text-xs">Recursive</span>
+                  <div className="flex min-w-0 flex-col justify-end">
+                    <div className="mari-editor-panel flex h-10 w-full items-center justify-between px-3 py-2.5">
+                      <span className="mr-2 inline-flex items-center gap-1 text-xs">
+                        Recursive
+                        <HelpTooltip text="When on, activated entry content is scanned for additional keyword matches during extra recursive passes. Use it when lore should chain into related lore." />
+                      </span>
                       <SettingsSwitch
                         ariaLabel={formRecursive ? "Disable recursive scanning" : "Enable recursive scanning"}
                         checked={formRecursive}
@@ -2007,28 +2010,9 @@ export function LorebookEditor() {
                         className="p-0 hover:bg-transparent"
                       />
                     </div>
-                    {formRecursive && (
-                      <div>
-                        <label className="mb-1.5 flex items-center gap-1 text-xs font-medium">
-                          Max Depth{" "}
-                          <HelpTooltip text="Maximum number of recursive passes. Each pass scans activated entry content for additional keyword matches. Higher values find more connections but use more processing." />
-                        </label>
-                        <input
-                          type="number"
-                          value={formMaxRecursionDepth}
-                          onChange={(e) => {
-                            setFormMaxRecursionDepth(Math.max(1, Math.min(10, parseInt(e.target.value) || 3)));
-                            markLorebookDirty();
-                          }}
-                          min={1}
-                          max={10}
-                          className="mari-editor-field w-20 px-3 py-2.5 text-sm"
-                        />
-                      </div>
-                    )}
                   </div>
-                  <div className="flex items-end">
-                    <div className="mari-editor-panel flex w-full items-center justify-between px-3 py-2.5">
+                  <div className="flex min-w-0 flex-col justify-end">
+                    <div className="mari-editor-panel flex h-10 w-full items-center justify-between px-3 py-2.5">
                       <span className="mr-2 inline-flex items-center gap-1 text-xs">
                         Vectors
                         <HelpTooltip text="When on, entries in this lorebook may use semantic embeddings. When off, keyword matching still works and vectorization skips this lorebook." />
@@ -2047,6 +2031,26 @@ export function LorebookEditor() {
                     </div>
                   </div>
                 </div>
+
+                {formRecursive && (
+                  <div className="max-w-[12rem]">
+                    <label className="mb-1.5 flex items-center gap-1 text-xs font-medium">
+                      Max Depth{" "}
+                      <HelpTooltip text="Maximum number of recursive passes. Each pass scans activated entry content for additional keyword matches. Higher values find more connections but use more processing." />
+                    </label>
+                    <input
+                      type="number"
+                      value={formMaxRecursionDepth}
+                      onChange={(e) => {
+                        setFormMaxRecursionDepth(Math.max(1, Math.min(10, parseInt(e.target.value) || 3)));
+                        markLorebookDirty();
+                      }}
+                      min={1}
+                      max={10}
+                      className="mari-editor-field h-10 w-full px-3 py-2.5 text-sm"
+                    />
+                  </div>
+                )}
 
                 {/* Vectorize (Embeddings) */}
                 <VectorizeSection
@@ -2560,7 +2564,9 @@ function VectorizeSection({
   const vectorizedCount = vectorizableEntries.filter(
     (entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0,
   ).length;
-  const storedVectorCount = entries.filter((entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0).length;
+  const storedVectorCount = entries.filter(
+    (entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0,
+  ).length;
   const missingCount = Math.max(0, vectorizableEntryCount - vectorizedCount);
   const allVectorized = vectorizableEntryCount > 0 && missingCount === 0;
 
@@ -2571,10 +2577,7 @@ function VectorizeSection({
   }, [fetchSidecarStatus]);
 
   useEffect(() => {
-    if (
-      selectedConnectionId &&
-      !embeddingConnections.some((connection) => connection.id === selectedConnectionId)
-    ) {
+    if (selectedConnectionId && !embeddingConnections.some((connection) => connection.id === selectedConnectionId)) {
       setSelectedConnectionId("");
       try {
         window.localStorage.removeItem(LOREBOOK_VECTORIZE_CONNECTION_STORAGE_KEY);
