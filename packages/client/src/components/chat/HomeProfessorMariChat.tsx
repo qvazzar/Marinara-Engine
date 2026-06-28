@@ -3049,7 +3049,6 @@ export function HomeProfessorMariChat({
                             className={cn(
                               "inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50",
                               "mari-chrome-accent-text-muted mari-accent-animated hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
-                              chatHistoryOpen && "bg-[var(--marinara-chat-chrome-highlight-bg)]",
                             )}
                             title="Open previous Professor Mari chats"
                             aria-expanded={chatHistoryOpen}

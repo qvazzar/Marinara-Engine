@@ -839,7 +839,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,
         });
         const now = new Date().toISOString();
-        let nextEntries = currentEntries;
+        let nextEntries: ChatSummaryEntry[];
 
         if (incoming.hideSummarisedMessages) {
           const tail = resolveRoleplaySummaryTail(freshMeta.summaryTailMessages);
