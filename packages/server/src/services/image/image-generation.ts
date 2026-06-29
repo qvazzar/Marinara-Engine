@@ -1268,6 +1268,7 @@ const NOVELAI_SIZE_MULTIPLE = 64;
 const NOVELAI_MIN_DIMENSION = 64;
 const NOVELAI_MAX_DIMENSION = 2048;
 const NOVELAI_MAX_PIXELS = 1024 * 1024;
+const NOVELAI_REFERENCE_MAX_INPUT_PIXELS = 32_000_000;
 const NOVELAI_DIRECTOR_REFERENCE_SIZES = [
   { width: 1024, height: 1536 },
   { width: 1536, height: 1024 },
@@ -1343,12 +1344,12 @@ async function prepareNovelAiDirectorReferenceImages(referenceImages: string[]):
     referenceImages.map(async (reference, index) => {
       try {
         const buffer = Buffer.from(reference, "base64");
-        const metadata = await sharpFn(buffer, { limitInputPixels: false }).metadata();
+        const metadata = await sharpFn(buffer, { limitInputPixels: NOVELAI_REFERENCE_MAX_INPUT_PIXELS }).metadata();
         if (!metadata.width || !metadata.height) {
           throw new Error("image dimensions could not be read");
         }
         const size = selectNovelAiDirectorReferenceSize(metadata.width, metadata.height);
-        const resized = await sharpFn(buffer, { limitInputPixels: false })
+        const resized = await sharpFn(buffer, { limitInputPixels: NOVELAI_REFERENCE_MAX_INPUT_PIXELS })
           .resize(size.width, size.height, {
             fit: "contain",
             background: { r: 0, g: 0, b: 0, alpha: 1 },
